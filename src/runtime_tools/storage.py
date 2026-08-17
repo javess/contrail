@@ -151,6 +151,14 @@ def _checked_json(value: object) -> JsonValue:
     raise RunpackError("invalid value in runpack JSON")
 
 
+def _blob(value: object) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    raise RunpackError("invalid binary attachment content in runpack")
+
+
 def _validate_connection(connection: sqlite3.Connection) -> None:
     application_id = connection.execute("PRAGMA application_id").fetchone()
     if application_id is None or application_id[0] != APPLICATION_ID:
@@ -785,7 +793,7 @@ class RunpackReader:
                 kind=row["kind"],
                 name=row["name"],
                 media_type=row["media_type"],
-                content=bytes(row["content"]),
+                content=_blob(row["content"]),
                 attributes=_object(row["attributes_json"]),
             )
             for row in rows

@@ -185,6 +185,20 @@ def test_reader_rejects_non_finite_embedded_json_numbers(tmp_path: Path) -> None
         inspect_runpack(output)
 
 
+def test_reader_normalizes_invalid_attachment_content(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-attachment.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="invalid-attachment")
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?)",
+            ("bad", "output", "stdout", "text/plain", "not-a-blob", "{}"),
+        )
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="invalid binary attachment content"):
+            reader.attachments()
+
+
 def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) -> None:
     output = tmp_path / "collision.runpack"
     with RunpackWriter(output) as writer:
