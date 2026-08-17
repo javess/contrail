@@ -13,6 +13,7 @@ from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_su
 from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
 from runtime_tools.otel import OtelImportError, import_otlp_json
 from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
+from runtime_tools.query import QueryError, query_runpack, render_query
 from runtime_tools.storage import RunpackError
 from runtime_tools.ui import TimelineError, serve_runpacks
 
@@ -56,6 +57,12 @@ def _parser() -> argparse.ArgumentParser:
     prometheus.add_argument("runpack", type=Path)
     prometheus.add_argument("response", type=Path)
     prometheus.add_argument("--output", type=Path, required=True)
+
+    query = subparsers.add_parser("query", help="run bounded read-only SQL over a runpack")
+    query.add_argument("runpack", type=Path)
+    query.add_argument("sql")
+    query.add_argument("--limit", type=int, default=1000)
+    query.add_argument("--format", choices=("table", "json", "jsonl"), default="table")
     return parser
 
 
@@ -127,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 0
+        if args.subcommand == "query":
+            print(
+                render_query(query_runpack(args.runpack, args.sql, limit=args.limit), args.format)
+            )
+            return 0
         if args.tree and args.format != "text":
             raise RunpackError("--tree is only available with text output")
         summary = inspect_runpack(args.runpack)
@@ -140,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         KubernetesImportError,
         OtelImportError,
         PrometheusImportError,
+        QueryError,
         RunpackError,
         TimelineError,
     ) as exc:

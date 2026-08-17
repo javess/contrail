@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Local-first tools for capturing and comparing runtime behavior"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "Apache-2.0"
+license = "MIT"
 authors = [{ name = "Contrail contributors" }]
 dependencies = [
     "hypothesis>=6.140",

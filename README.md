@@ -38,6 +38,15 @@ sqlite3 demo.runpack '.tables'
 
 Use `runtime inspect demo.runpack --format json` for machine-readable output.
 
+Run bounded, read-only SQL directly against the portable artifact:
+
+```bash
+uv run runtime query demo.runpack \
+  'SELECT kind, name, started_at_ns FROM events ORDER BY started_at_ns'
+```
+
+See [querying runpacks](docs/querying.md) for schema and output details.
+
 Bounded OpenTelemetry trace exports in OTLP/JSON can be normalized into the
 same artifact and inspected as a causal tree:
 
