@@ -12,6 +12,7 @@ from runtime_tools.capture import CaptureError, record_process
 from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
 from runtime_tools.otel import OtelImportError, import_otlp_json
 from runtime_tools.storage import RunpackError
+from runtime_tools.ui import TimelineError, serve_runpacks
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -32,6 +33,13 @@ def _parser() -> argparse.ArgumentParser:
     import_otel.add_argument("source", type=Path)
     import_otel.add_argument("--name", help="logical execution name")
     import_otel.add_argument("--output", type=Path, help="output .runpack path")
+
+    serve = subparsers.add_parser("serve", help="open a local execution timeline")
+    serve.add_argument("runpack", type=Path)
+    serve.add_argument("--compare", type=Path, help="candidate runpack for compare mode")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--no-open", action="store_true", help="do not open a browser")
     return parser
 
 
@@ -76,6 +84,15 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 0
+        if args.subcommand == "serve":
+            serve_runpacks(
+                args.runpack,
+                args.compare,
+                host=args.host,
+                port=args.port,
+                open_browser=not args.no_open,
+            )
+            return 0
         if args.tree and args.format != "text":
             raise RunpackError("--tree is only available with text output")
         summary = inspect_runpack(args.runpack)
@@ -84,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
             print()
             print(render_causal_tree(args.runpack))
         return 0
-    except (CaptureError, OtelImportError, RunpackError) as exc:
+    except (CaptureError, OtelImportError, RunpackError, TimelineError) as exc:
         print(f"runtime: {exc}", file=sys.stderr)
         return 2
 

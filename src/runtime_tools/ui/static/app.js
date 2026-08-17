@@ -1,0 +1,90 @@
+const state = { data: null, runIndex: 0, zoom: 1, entity: "", kind: "" };
+
+const fmtDuration = seconds => seconds == null ? "unknown" : seconds < 1 ? `${(seconds * 1000).toFixed(1)} ms` : `${seconds.toFixed(3)} s`;
+const fmtBytes = bytes => bytes == null ? "unknown" : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1048576).toFixed(1)} MiB`;
+const escapeHtml = value => String(value).replace(/[&<>'"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[char]);
+
+function currentRun() { return state.data.runs[state.runIndex]; }
+
+function renderSwitcher() {
+  const node = document.querySelector("#run-switcher");
+  node.innerHTML = state.data.runs.map((run, index) => `<button class="${index === state.runIndex ? "active" : ""}" data-run="${index}">${escapeHtml(run.summary.name)}</button>`).join("");
+  node.querySelectorAll("button").forEach(button => button.addEventListener("click", () => {
+    state.runIndex = Number(button.dataset.run); renderAll();
+  }));
+}
+
+function renderSummary() {
+  const run = currentRun();
+  const values = [
+    ["Outcome", run.summary.exit_code == null ? "No exit evidence" : `Exit ${run.summary.exit_code}`],
+    ["Wall time", fmtDuration(run.summary.wall_time_seconds)],
+    ["Peak memory", fmtBytes(run.summary.peak_memory_bytes)],
+    ["Evidence", `${run.events.length} events / ${run.edges.length} edges`],
+  ];
+  document.querySelector("#summary").innerHTML = values.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+}
+
+function renderComparison() {
+  const section = document.querySelector("#comparison");
+  const diff = state.data.comparison;
+  if (!diff) { section.classList.add("hidden"); return; }
+  section.classList.remove("hidden");
+  const operations = diff.operation_count_changes.slice(0, 5).map(item => `<p><span class="positive">${item.baseline} → ${item.candidate}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No count changes</p>";
+  const edges = diff.edge_count_changes.slice(0, 5).map(item => `<p>${escapeHtml(item.change_kind.toUpperCase())} ${escapeHtml(item.source_name)} → ${escapeHtml(item.target_name)}</p>`).join("") || "<p>No dependency changes</p>";
+  const timing = `<p>Outcome: ${escapeHtml(diff.outcome)}</p><p>Runtime: ${fmtDuration(diff.wall_time.baseline)} → <span class="positive">${fmtDuration(diff.wall_time.candidate)}</span></p>`;
+  document.querySelector("#comparison-grid").innerHTML = `<div class="change-list"><h3>Outcome & timing</h3>${timing}</div><div class="change-list"><h3>Operation counts</h3>${operations}</div><div class="change-list"><h3>Dependencies</h3>${edges}</div>`;
+}
+
+function renderFilters() {
+  const run = currentRun();
+  const entities = [...run.entities].sort((a, b) => a.name.localeCompare(b.name));
+  const kinds = [...new Set(run.events.map(event => event.kind))].sort();
+  document.querySelector("#entity-filter").innerHTML = `<option value="">All</option>${entities.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`;
+  document.querySelector("#kind-filter").innerHTML = `<option value="">All</option>${kinds.map(kind => `<option value="${escapeHtml(kind)}">${escapeHtml(kind)}</option>`).join("")}`;
+  state.entity = ""; state.kind = "";
+}
+
+function renderTimeline() {
+  const run = currentRun();
+  const totalNs = Math.max(1, Math.round((run.summary.wall_time_seconds || 0) * 1e9));
+  const entities = new Map(run.entities.map(entity => [entity.id, entity]));
+  const visible = run.events.filter(event => (!state.entity || event.entity_id === state.entity) && (!state.kind || event.kind === state.kind));
+  const grouped = new Map();
+  visible.forEach(event => {
+    const key = event.entity_id || "unowned";
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(event);
+  });
+  const width = state.zoom * 100;
+  const lanes = [...grouped].map(([entityId, events]) => {
+    const entity = entities.get(entityId) || { name: "Unowned", kind: "unknown" };
+    const bars = events.map(event => {
+      const left = Math.max(0, (event.start_offset_ns || 0) / totalNs * 100);
+      const barWidth = Math.max(.15, (event.duration_ns || 0) / totalNs * 100);
+      return `<button class="event" data-id="${escapeHtml(event.id)}" data-kind="${escapeHtml(event.kind)}" style="left:${left}%;width:${barWidth}%" title="${escapeHtml(event.name)}">${escapeHtml(event.name)}</button>`;
+    }).join("");
+    return `<div class="lane"><div class="lane-label">${escapeHtml(entity.name)}<small>${escapeHtml(entity.kind)} · ${events.length} events</small></div><div class="track">${bars}</div></div>`;
+  }).join("");
+  document.querySelector("#timeline").innerHTML = `<div class="timeline-inner" style="width:${width}%">${lanes || '<div class="lane-label">No matching events</div>'}</div>`;
+  document.querySelector("#axis").innerHTML = `<span>0</span><span>${fmtDuration(run.summary.wall_time_seconds / 2)}</span><span>${fmtDuration(run.summary.wall_time_seconds)}</span>`;
+  document.querySelectorAll(".event").forEach(button => button.addEventListener("click", () => showDetail(visible.find(event => event.id === button.dataset.id), entities)));
+}
+
+function showDetail(event, entities) {
+  const entity = entities.get(event.entity_id);
+  document.querySelector("#detail").innerHTML = `<p class="eyebrow">SELECTED EVIDENCE</p><h2>${escapeHtml(event.name)}</h2><dl><dt>Entity</dt><dd>${escapeHtml(entity ? `${entity.name} / ${entity.kind}` : "unowned")}</dd><dt>Kind</dt><dd>${escapeHtml(event.kind)}</dd><dt>Start offset</dt><dd>${fmtDuration(event.start_offset_ns / 1e9)}</dd><dt>Duration</dt><dd>${fmtDuration(event.duration_ns / 1e9)}</dd><dt>Normalized attributes</dt><dd class="attributes">${escapeHtml(JSON.stringify(event.attributes, null, 2))}</dd></dl>`;
+}
+
+function renderAll() { renderSwitcher(); renderSummary(); renderComparison(); renderFilters(); renderTimeline(); }
+
+document.querySelector("#entity-filter").addEventListener("change", event => { state.entity = event.target.value; renderTimeline(); });
+document.querySelector("#kind-filter").addEventListener("change", event => { state.kind = event.target.value; renderTimeline(); });
+document.querySelector("#zoom").addEventListener("input", event => { state.zoom = Number(event.target.value); renderTimeline(); });
+
+fetch("/api/data").then(response => {
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}).then(data => { state.data = data; renderAll(); }).catch(error => {
+  document.querySelector("main").innerHTML = `<p>Could not load execution evidence: ${escapeHtml(error.message)}</p>`;
+});

@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+import json
+import sys
+import threading
+import urllib.request
+from pathlib import Path
+
+from runtime_tools import record_process
+from runtime_tools.ui import build_timeline_payload, create_server
+
+
+def test_timeline_payload_exposes_normalized_evidence_and_comparison(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    record_process((sys.executable, "-c", "print('same')"), baseline, name="baseline")
+    record_process((sys.executable, "-c", "print('same')"), candidate, name="candidate")
+
+    payload = build_timeline_payload(baseline, candidate)
+
+    runs = payload["runs"]
+    assert isinstance(runs, list)
+    assert len(runs) == 2
+    baseline_value = runs[0]
+    assert isinstance(baseline_value, dict)
+    summary = baseline_value["summary"]
+    assert isinstance(summary, dict)
+    assert summary["name"] == "baseline"
+    events = baseline_value["events"]
+    assert isinstance(events, list)
+    first_event = events[0]
+    assert isinstance(first_event, dict)
+    assert first_event["kind"] == "process.run"
+    comparison = payload["comparison"]
+    assert isinstance(comparison, dict)
+    assert comparison["outcome"] == "equivalent"
+
+
+def test_local_ui_serves_packaged_assets_and_read_only_data(tmp_path: Path) -> None:
+    runpack = tmp_path / "run.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="served")
+    server = create_server(runpack, None, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as response:
+            html = response.read().decode()
+            assert (
+                response.headers["Content-Security-Policy"]
+                == "default-src 'self'; style-src 'self' 'unsafe-inline'"
+            )
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/data", timeout=2) as response:
+            payload = json.load(response)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert "Runtime timeline" in html
+    assert payload["runs"][0]["summary"]["name"] == "served"

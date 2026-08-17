@@ -54,3 +54,10 @@ for automation.
 uv run rundiff compare baseline.runpack candidate.runpack
 uv run rundiff compare baseline.runpack candidate.runpack --format json
 ```
+
+Open a read-only local timeline, optionally with the structured comparison
+facts above it:
+
+```bash
+uv run runtime serve baseline.runpack --compare candidate.runpack
+```
