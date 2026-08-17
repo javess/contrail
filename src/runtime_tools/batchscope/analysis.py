@@ -123,11 +123,21 @@ def _merge_intervals(intervals: tuple[tuple[int, int], ...]) -> tuple[tuple[int,
 @dataclass(frozen=True, slots=True)
 class _Path:
     intervals: tuple[tuple[int, int], ...]
-    event_ids: tuple[str, ...]
+    event_id: str
+    child: _Path | None
+    length: int
 
     @property
     def duration_ns(self) -> int:
         return sum(end - start for start, end in self.intervals)
+
+    def event_ids(self) -> tuple[str, ...]:
+        result = []
+        current: _Path | None = self
+        while current is not None:
+            result.append(current.event_id)
+            current = current.child
+        return tuple(result)
 
 
 def _event_interval(event: Event) -> tuple[int, int]:
@@ -186,15 +196,17 @@ def _critical_path(
             candidates = [
                 _Path(
                     _merge_intervals((event_interval, *memo[child_id].intervals)),
-                    (current_id, *memo[child_id].event_ids),
+                    current_id,
+                    memo[child_id],
+                    memo[child_id].length + 1,
                 )
                 for child_id in children[current_id]
                 if child_id in memo
             ]
             result = max(
                 candidates,
-                key=lambda path: (path.duration_ns, len(path.event_ids)),
-                default=_Path((event_interval,), (current_id,)),
+                key=lambda path: (path.duration_ns, path.length),
+                default=_Path((event_interval,), current_id, None, 1),
             )
             state[current_id] = 2
             memo[current_id] = result
@@ -207,15 +219,15 @@ def _critical_path(
             candidates.append(visit(event_id))
     best_path = max(
         candidates,
-        key=lambda path: (path.duration_ns, len(path.event_ids)),
-        default=_Path((), ()),
+        key=lambda path: (path.duration_ns, path.length),
     )
+    event_ids = best_path.event_ids()
     duration_seconds = best_path.duration_ns / 1_000_000_000
     return CriticalPath(
         duration_seconds,
         max(0.0, round((total or duration_seconds) - duration_seconds, 12)),
-        best_path.event_ids,
-        tuple(timed[event_id].name for event_id in best_path.event_ids),
+        event_ids,
+        tuple(timed[event_id].name for event_id in event_ids),
         "observed" if used_edge_count and not clock_inconsistent else "inferred",
         cycle_detected,
     )

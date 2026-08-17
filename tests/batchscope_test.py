@@ -238,7 +238,7 @@ def test_batchscope_handles_causal_chains_beyond_python_recursion_limit(
     tmp_path: Path,
 ) -> None:
     runpack = tmp_path / "long-chain.runpack"
-    chain_length = 1_100
+    chain_length = 10_000
     with RunpackWriter(runpack) as writer:
         writer.add_execution(
             Execution(
