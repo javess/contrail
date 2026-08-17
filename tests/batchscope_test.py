@@ -264,6 +264,32 @@ def test_batchscope_calculates_observed_post_compute_drain_rate(tmp_path: Path) 
     assert analysis.throughput.post_compute_rate_per_second == 1500.0
 
 
+def test_completed_progress_needs_no_rate_to_estimate_zero_drain(tmp_path: Path) -> None:
+    runpack = tmp_path / "completed.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("completed", "completed", 0, 10_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(
+            _event(
+                "progress",
+                "progress",
+                "progress",
+                10_000_000,
+                10_000_000,
+                {"completed": 100, "total": 100},
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.throughput is not None
+    assert analysis.throughput.remaining == 0.0
+    assert analysis.throughput.rate_per_second is None
+    assert analysis.throughput.estimated_drain_seconds == 0.0
+
+
 def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> None:
     runpack = tmp_path / "clock-skew.runpack"
     with RunpackWriter(runpack) as writer:

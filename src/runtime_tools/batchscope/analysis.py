@@ -335,12 +335,13 @@ def _throughput(
             delta = after_compute[-1][1] - after_compute[0][1]
             if elapsed > 0 and delta > 0:
                 post_compute_rate = delta / elapsed
+    estimated_drain = 0.0 if remaining == 0 else (remaining / rate if rate else None)
     return Throughput(
         latest[1],
         latest[2],
         rate,
         remaining,
-        remaining / rate if rate else None,
+        estimated_drain,
         compute_finished_at_ns,
         remaining_at_compute,
         post_compute_seconds,
