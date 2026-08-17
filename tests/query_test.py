@@ -51,6 +51,23 @@ def test_runpack_query_rejects_excessive_output_limits(tmp_path: Path) -> None:
         query_runpack(runpack, "SELECT name FROM events", limit=100_001)
 
 
+def test_runpack_query_encodes_non_finite_sql_results_as_json_safe_values(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "query.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="query")
+
+    result = query_runpack(runpack, "SELECT 1e999 AS value")
+
+    assert result.rows == (({"encoding": "non-finite-float", "value": "infinity"},),)
+    assert json.loads(render_query(result, "json"))["rows"] == [
+        [{"encoding": "non-finite-float", "value": "infinity"}]
+    ]
+    assert json.loads(render_query(result, "jsonl")) == {
+        "value": {"encoding": "non-finite-float", "value": "infinity"}
+    }
+
+
 def test_runpack_query_cannot_mutate_the_artifact(tmp_path: Path) -> None:
     runpack = tmp_path / "query.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="query")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +52,12 @@ class QueryResult:
 
 
 def _value(value: object) -> JsonValue:
+    if isinstance(value, float) and not math.isfinite(value):
+        if math.isnan(value):
+            label = "nan"
+        else:
+            label = "infinity" if value > 0 else "-infinity"
+        return {"encoding": "non-finite-float", "value": label}
     if value is None or isinstance(value, (str, int, float)):
         return value
     if isinstance(value, bytes):
@@ -85,10 +92,10 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
 
 def render_query(result: QueryResult, output_format: str) -> str:
     if output_format == "json":
-        return json.dumps(result.as_json_value(), indent=2, sort_keys=True)
+        return json.dumps(result.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
     if output_format == "jsonl":
         return "\n".join(
-            json.dumps(dict(zip(result.columns, row, strict=True)), sort_keys=True)
+            json.dumps(dict(zip(result.columns, row, strict=True)), allow_nan=False, sort_keys=True)
             for row in result.rows
         )
     widths = [len(column) for column in result.columns]

@@ -12,7 +12,8 @@ runtime query run.runpack \
 The default output cap is 1,000 rows. `--limit` can raise it to at most 100,000;
 aggregation inside SQLite is unaffected by this output safety limit.
 
-Machine-readable formats preserve column order and JSON-safe values:
+Machine-readable formats preserve column order and JSON-safe values. BLOBs and
+non-finite SQLite floats use tagged objects rather than non-standard JSON:
 
 ```bash
 runtime query run.runpack \
