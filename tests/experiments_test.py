@@ -80,9 +80,7 @@ def test_proofline_preserves_primary_error_when_worktree_cleanup_also_fails(
     )
     git = experiments._git
 
-    def fail_after_worktree_removal(
-        git_repo: Path, *args: str, capture: bool = False
-    ) -> str:
+    def fail_after_worktree_removal(git_repo: Path, *args: str, capture: bool = False) -> str:
         result = git(git_repo, *args, capture=capture)
         if args[:2] == ("worktree", "remove"):
             raise ExperimentError("simulated cleanup failure")
@@ -90,9 +88,7 @@ def test_proofline_preserves_primary_error_when_worktree_cleanup_also_fails(
 
     monkeypatch.setattr(experiments, "_git", fail_after_worktree_removal)
 
-    with pytest.raises(
-        ExperimentError, match="must resolve inside the isolated worktree"
-    ) as error:
+    with pytest.raises(ExperimentError, match="must resolve inside the isolated worktree") as error:
         run_experiment(
             contract,
             baseline_ref="main",

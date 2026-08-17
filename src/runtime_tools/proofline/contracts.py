@@ -53,9 +53,7 @@ def _json_value(value: object, label: str, active_containers: set[int] | None = 
             if isinstance(value, list):
                 return [_json_value(item, label, active) for item in value]
             if all(isinstance(key, str) for key in value):
-                return {
-                    str(key): _json_value(item, label, active) for key, item in value.items()
-                }
+                return {str(key): _json_value(item, label, active) for key, item in value.items()}
         finally:
             active.remove(identity)
     raise ContractError(f"{label} must contain only JSON-compatible values")

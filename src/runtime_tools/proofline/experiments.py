@@ -76,9 +76,7 @@ def _workload_path(worktree: Path, workload: Path) -> Path:
     except (OSError, RuntimeError) as exc:
         raise ExperimentError(f"workload does not exist at ref: {workload}") from exc
     if not resolved.is_relative_to(worktree.resolve()):
-        raise ExperimentError(
-            f"workload must resolve inside the isolated worktree: {workload}"
-        )
+        raise ExperimentError(f"workload must resolve inside the isolated worktree: {workload}")
     if not resolved.is_file():
         raise ExperimentError(f"workload is not a file at ref: {workload}")
     return resolved
