@@ -256,3 +256,36 @@ def test_kubernetes_enrichment_reports_identity_collisions_without_publishing(
         import_kubernetes_snapshot(base, snapshot, output)
 
     assert not output.exists()
+
+
+def test_kubernetes_snapshot_preserves_rfc3339_nanoseconds(tmp_path: Path) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "nanoseconds.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata(
+                            "worker",
+                            "pod",
+                            creationTimestamp="1970-01-01T00:00:00.123456789Z",
+                        ),
+                        "spec": {"containers": []},
+                        "status": {},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_kubernetes_snapshot(base, snapshot, output)
+
+    with RunpackReader(output) as reader:
+        pod = next(event for event in reader.events() if event.kind == "workload.pod")
+    assert pod.started_at_ns == 123_456_789

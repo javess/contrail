@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from runtime_tools.enrichment import EnrichmentError, enrich_copy
@@ -22,6 +23,18 @@ class KubernetesImportResult:
     event_count: int
     edge_count: int
     correlation_count: int
+
+
+_RFC3339_TIMESTAMP = re.compile(
+    r"^(?P<whole>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+    r"(?:\.(?P<fraction>\d{1,9}))?(?P<zone>Z|[+-]\d{2}:\d{2})$"
+)
+_RFC3339_WITHOUT_ZONE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$"
+)
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_MIN_RUNPACK_TIMESTAMP_NS = -(1 << 63)
+_MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
 
 
 def _object(value: object, label: str) -> dict[str, object]:
@@ -57,13 +70,23 @@ def _uid(item: dict[str, object]) -> str:
 def _timestamp(value: object) -> int | None:
     if not isinstance(value, str) or not value:
         return None
+    match = _RFC3339_TIMESTAMP.fullmatch(value)
+    if match is None:
+        if _RFC3339_WITHOUT_ZONE.fullmatch(value):
+            raise KubernetesImportError(f"Kubernetes timestamp requires a timezone: {value}")
+        raise KubernetesImportError(f"invalid Kubernetes timestamp: {value}")
+    zone = "+00:00" if match.group("zone") == "Z" else match.group("zone")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(f"{match.group('whole')}{zone}")
     except ValueError as exc:
         raise KubernetesImportError(f"invalid Kubernetes timestamp: {value}") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise KubernetesImportError(f"Kubernetes timestamp requires a timezone: {value}")
-    return int(parsed.timestamp() * 1_000_000_000)
+    delta = parsed.astimezone(UTC) - _EPOCH
+    whole_seconds = delta.days * 86_400 + delta.seconds
+    fraction = match.group("fraction") or ""
+    timestamp_ns = whole_seconds * 1_000_000_000 + int(fraction.ljust(9, "0") or "0")
+    if not _MIN_RUNPACK_TIMESTAMP_NS <= timestamp_ns <= _MAX_RUNPACK_TIMESTAMP_NS:
+        raise KubernetesImportError(f"Kubernetes timestamp exceeds runpack range: {value}")
+    return timestamp_ns
 
 
 def _integer(value: object, label: str) -> int:
