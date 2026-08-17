@@ -37,18 +37,19 @@ def _event_value(event: Event, execution_start_ns: int) -> dict[str, JsonValue]:
     }
 
 
-def _run_value(path: Path) -> dict[str, JsonValue]:
+def _run_value(path: Path, event_limit: int) -> dict[str, JsonValue]:
     summary = inspect_runpack(path)
-    analysis = analyze_runpack(path)
     with RunpackReader(path) as reader:
+        event_count = reader.counts()["events"]
+        if event_count > event_limit:
+            raise TimelineError(
+                f"timeline has {event_count:,} events; local UI limit is {event_limit:,}"
+            )
         entities = reader.entities()
         events = reader.events()
         edges = reader.causal_edges()
         clock_inconsistencies = reader.clock_inconsistency_count()
-    if len(events) > MAX_TIMELINE_EVENTS:
-        raise TimelineError(
-            f"timeline has {len(events):,} events; local UI limit is {MAX_TIMELINE_EVENTS:,}"
-        )
+    analysis = analyze_runpack(path)
     return {
         "summary": summary.as_json_value(),
         "entities": [
@@ -76,10 +77,17 @@ def _run_value(path: Path) -> dict[str, JsonValue]:
     }
 
 
-def build_timeline_payload(baseline: Path, candidate: Path | None = None) -> dict[str, JsonValue]:
-    runs: list[JsonValue] = [_run_value(baseline)]
+def build_timeline_payload(
+    baseline: Path,
+    candidate: Path | None = None,
+    *,
+    event_limit: int = MAX_TIMELINE_EVENTS,
+) -> dict[str, JsonValue]:
+    if event_limit <= 0:
+        raise TimelineError("event limit must be positive")
+    runs: list[JsonValue] = [_run_value(baseline, event_limit)]
     comparison: JsonValue = None
     if candidate is not None:
-        runs.append(_run_value(candidate))
+        runs.append(_run_value(candidate, event_limit))
         comparison = compare_runpacks(baseline, candidate).as_json_value()
     return {"runs": runs, "comparison": comparison}

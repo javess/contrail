@@ -6,8 +6,10 @@ import threading
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 from runtime_tools import record_process
-from runtime_tools.ui import build_timeline_payload, create_server
+from runtime_tools.ui import TimelineError, build_timeline_payload, create_server
 
 
 def test_timeline_payload_exposes_normalized_evidence_and_comparison(tmp_path: Path) -> None:
@@ -64,3 +66,19 @@ def test_local_ui_serves_packaged_assets_and_read_only_data(tmp_path: Path) -> N
 
     assert "Runtime timeline" in html
     assert payload["runs"][0]["summary"]["name"] == "served"
+
+
+def test_timeline_rejects_oversized_artifact_before_analysis(tmp_path: Path) -> None:
+    runpack = tmp_path / "run.runpack"
+    record_process(
+        (
+            sys.executable,
+            "-c",
+            "from runtime_tools import runtime; runtime.event('extra')",
+        ),
+        runpack,
+        name="served",
+    )
+
+    with pytest.raises(TimelineError, match="timeline has 2 events; local UI limit is 1"):
+        build_timeline_payload(runpack, event_limit=1)
