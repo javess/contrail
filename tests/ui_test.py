@@ -4,6 +4,7 @@ import json
 import sys
 import threading
 import urllib.request
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,17 @@ def test_local_ui_serves_packaged_assets_and_read_only_data(tmp_path: Path) -> N
 
     assert "Runtime timeline" in html
     assert payload["runs"][0]["summary"]["name"] == "served"
+
+
+def test_packaged_ui_renders_batchscope_analysis() -> None:
+    static = files("runtime_tools.ui").joinpath("static")
+    html = static.joinpath("index.html").read_text()
+    javascript = static.joinpath("app.js").read_text()
+
+    assert 'id="analysis"' in html
+    assert "renderAnalysis()" in javascript
+    assert "Remaining after compute" in javascript
+    assert "No constraint classified from available evidence" in javascript
 
 
 def test_timeline_rejects_oversized_artifact_before_analysis(tmp_path: Path) -> None:
