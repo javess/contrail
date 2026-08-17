@@ -33,7 +33,10 @@ def _typed_value(value: object) -> JsonValue:
     if not isinstance(value, dict):
         raise OtelImportError("OTLP attribute value must be an object")
     if "stringValue" in value:
-        return str(value["stringValue"])
+        string = value["stringValue"]
+        if not isinstance(string, str):
+            raise OtelImportError("OTLP stringValue is invalid")
+        return string
     if "boolValue" in value:
         boolean = value["boolValue"]
         if not isinstance(boolean, bool):
@@ -53,7 +56,10 @@ def _typed_value(value: object) -> JsonValue:
             raise OtelImportError("OTLP doubleValue must be finite")
         return number
     if "bytesValue" in value:
-        return str(value["bytesValue"])
+        encoded = value["bytesValue"]
+        if not isinstance(encoded, str):
+            raise OtelImportError("OTLP bytesValue is invalid")
+        return encoded
     if "arrayValue" in value:
         array = value["arrayValue"]
         if not isinstance(array, dict) or not isinstance(array.get("values", []), list):

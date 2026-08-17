@@ -321,3 +321,42 @@ def test_otlp_json_import_keeps_execution_open_when_any_span_is_incomplete(
     summary = inspect_runpack(output)
     assert summary.finished_at_ns is None
     assert summary.wall_time_seconds is None
+
+
+def test_otlp_json_import_rejects_non_string_string_attributes(tmp_path: Path) -> None:
+    source = tmp_path / "malformed-attribute.json"
+    output = tmp_path / "malformed-attribute.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "attributes": [
+                                            {
+                                                "key": "malformed",
+                                                "value": {"stringValue": {"not": "a string"}},
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="OTLP stringValue is invalid"):
+        import_otlp_json(source, output, name="malformed")
+
+    assert not output.exists()
