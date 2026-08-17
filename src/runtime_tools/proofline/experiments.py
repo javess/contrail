@@ -63,6 +63,21 @@ def _repo_root(cwd: Path) -> Path:
     return root
 
 
+def _workload_path(worktree: Path, workload: Path) -> Path:
+    candidate = worktree / workload
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ExperimentError(f"workload does not exist at ref: {workload}") from exc
+    if not resolved.is_relative_to(worktree.resolve()):
+        raise ExperimentError(
+            f"workload must resolve inside the isolated worktree: {workload}"
+        )
+    if not resolved.is_file():
+        raise ExperimentError(f"workload is not a file at ref: {workload}")
+    return resolved
+
+
 def run_experiment(
     contract: Path,
     *,
@@ -96,10 +111,8 @@ def run_experiment(
         added.append(baseline_tree)
         _git(repo, "worktree", "add", "--detach", str(candidate_tree), candidate_ref)
         added.append(candidate_tree)
-        baseline_workload = baseline_tree / workload
-        candidate_workload = candidate_tree / workload
-        if not baseline_workload.is_file() or not candidate_workload.is_file():
-            raise ExperimentError(f"workload does not exist at both refs: {workload}")
+        baseline_workload = _workload_path(baseline_tree, workload)
+        candidate_workload = _workload_path(candidate_tree, workload)
         try:
             baseline_exit = record_process(
                 (sys.executable, str(baseline_workload), *workload_args),
