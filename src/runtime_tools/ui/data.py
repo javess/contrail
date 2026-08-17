@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.inspect import inspect_runpack
 from runtime_tools.model import Event, JsonValue
 from runtime_tools.rundiff import compare_runpacks
@@ -38,6 +39,7 @@ def _event_value(event: Event, execution_start_ns: int) -> dict[str, JsonValue]:
 
 def _run_value(path: Path) -> dict[str, JsonValue]:
     summary = inspect_runpack(path)
+    analysis = analyze_runpack(path)
     with RunpackReader(path) as reader:
         entities = reader.entities()
         events = reader.events()
@@ -70,6 +72,7 @@ def _run_value(path: Path) -> dict[str, JsonValue]:
             for edge in edges
         ],
         "clock_inconsistencies": clock_inconsistencies,
+        "analysis": analysis.as_json_value(),
     }
 
 

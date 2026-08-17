@@ -80,6 +80,7 @@ def test_batchscope_derives_overlap_aware_critical_path_and_throughput(tmp_path:
     assert analysis.critical_path is not None
     assert analysis.critical_path.duration_seconds == 0.1
     assert analysis.critical_path.parallel_slack_seconds == 0.0
+    assert analysis.critical_path.event_ids[:2] == ("process", "run")
     assert analysis.critical_path.event_names[:2] == ("python", "pipeline")
     assert analysis.throughput is not None
     assert analysis.throughput.rate_per_second == 1000.0
@@ -111,6 +112,7 @@ def test_batchscope_cli_emits_structured_json(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["name"] == "batch"
     assert payload["critical_path"]["certainty"] == "observed"
+    assert payload["critical_path"]["event_ids"][:2] == ["process", "run"]
     assert payload["bottlenecks"][0]["classification"] == "serialized_stage"
 
 

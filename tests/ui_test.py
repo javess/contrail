@@ -31,6 +31,11 @@ def test_timeline_payload_exposes_normalized_evidence_and_comparison(tmp_path: P
     first_event = events[0]
     assert isinstance(first_event, dict)
     assert first_event["kind"] == "process.run"
+    analysis = baseline_value["analysis"]
+    assert isinstance(analysis, dict)
+    critical_path = analysis["critical_path"]
+    assert isinstance(critical_path, dict)
+    assert critical_path["event_ids"] == [first_event["id"]]
     comparison = payload["comparison"]
     assert isinstance(comparison, dict)
     assert comparison["outcome"] == "equivalent"

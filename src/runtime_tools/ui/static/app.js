@@ -16,11 +16,12 @@ function renderSwitcher() {
 
 function renderSummary() {
   const run = currentRun();
+  const critical = run.analysis.critical_path;
   const values = [
     ["Outcome", run.summary.exit_code == null ? "No exit evidence" : `Exit ${run.summary.exit_code}`],
     ["Wall time", fmtDuration(run.summary.wall_time_seconds)],
     ["Peak memory", fmtBytes(run.summary.peak_memory_bytes)],
-    ["Evidence", `${run.events.length} events / ${run.edges.length} edges`],
+    ["Critical path", critical ? fmtDuration(critical.duration_seconds) : "unavailable"],
   ];
   document.querySelector("#summary").innerHTML = values.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
 }
@@ -50,6 +51,7 @@ function renderTimeline() {
   const totalNs = Math.max(1, Math.round((run.summary.wall_time_seconds || 0) * 1e9));
   const entities = new Map(run.entities.map(entity => [entity.id, entity]));
   const visible = run.events.filter(event => (!state.entity || event.entity_id === state.entity) && (!state.kind || event.kind === state.kind));
+  const criticalIds = new Set(run.analysis.critical_path ? run.analysis.critical_path.event_ids : []);
   const grouped = new Map();
   visible.forEach(event => {
     const key = event.entity_id || "unowned";
@@ -62,7 +64,8 @@ function renderTimeline() {
     const bars = events.map(event => {
       const left = Math.max(0, (event.start_offset_ns || 0) / totalNs * 100);
       const barWidth = Math.max(.15, (event.duration_ns || 0) / totalNs * 100);
-      return `<button class="event" data-id="${escapeHtml(event.id)}" data-kind="${escapeHtml(event.kind)}" style="left:${left}%;width:${barWidth}%" title="${escapeHtml(event.name)}">${escapeHtml(event.name)}</button>`;
+      const criticalClass = criticalIds.has(event.id) ? " critical" : "";
+      return `<button class="event${criticalClass}" data-id="${escapeHtml(event.id)}" data-kind="${escapeHtml(event.kind)}" style="left:${left}%;width:${barWidth}%" title="${escapeHtml(event.name)}">${escapeHtml(event.name)}</button>`;
     }).join("");
     return `<div class="lane"><div class="lane-label">${escapeHtml(entity.name)}<small>${escapeHtml(entity.kind)} · ${events.length} events</small></div><div class="track">${bars}</div></div>`;
   }).join("");

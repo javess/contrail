@@ -25,6 +25,7 @@ class LifecyclePhase:
 class CriticalPath:
     duration_seconds: float
     parallel_slack_seconds: float
+    event_ids: tuple[str, ...]
     event_names: tuple[str, ...]
     certainty: Literal["observed", "inferred"]
     cycle_detected: bool
@@ -33,6 +34,7 @@ class CriticalPath:
         return {
             "duration_seconds": self.duration_seconds,
             "parallel_slack_seconds": self.parallel_slack_seconds,
+            "event_ids": list(self.event_ids),
             "event_names": list(self.event_names),
             "certainty": self.certainty,
             "cycle_detected": self.cycle_detected,
@@ -185,6 +187,7 @@ def _critical_path(
     return CriticalPath(
         duration_seconds,
         max(0.0, round((total or duration_seconds) - duration_seconds, 12)),
+        best_path.event_ids,
         tuple(timed[event_id].name for event_id in best_path.event_ids),
         "observed" if used_edge_count else "inferred",
         cycle_detected,
