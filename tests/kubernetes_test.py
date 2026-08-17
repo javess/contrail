@@ -130,7 +130,7 @@ def test_kubernetes_snapshot_enriches_and_correlates_otel_runpack(tmp_path: Path
 
     assert result.entity_count == 4
     assert result.event_count == 5
-    assert result.edge_count == 4
+    assert result.edge_count == 5
     assert result.correlation_count == 1
     summary = inspect_runpack(enriched)
     analysis = analyze_runpack(enriched)
@@ -164,6 +164,12 @@ def test_kubernetes_snapshot_enriches_and_correlates_otel_runpack(tmp_path: Path
         for event in events
     )
     assert any(edge.kind == "correlates" for edge in edges)
+    assert any(
+        edge.kind == "hosts"
+        and edge.source_event_id == "k8s:node-uid:lifecycle"
+        and edge.target_event_id == "k8s:pod-uid:lifecycle"
+        for edge in edges
+    )
     assert base.is_file()
 
 

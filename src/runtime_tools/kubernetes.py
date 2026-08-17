@@ -191,12 +191,15 @@ def import_kubernetes_snapshot(
     edges: list[CausalEdge] = []
     entity_by_uid: dict[str, str] = {}
     lifecycle_by_uid: dict[str, str] = {}
+    node_uid_by_name: dict[str, str] = {}
 
     for item in items:
         kind = str(item.get("kind", ""))
         if kind in {"Node", "Job", "Pod"}:
             uid = _uid(item)
             entity_by_uid[uid] = f"k8s:{kind.lower()}:{uid}"
+            if kind == "Node":
+                node_uid_by_name[_name(item)] = uid
 
     for item in items:
         kind = str(item.get("kind", ""))
@@ -207,16 +210,16 @@ def import_kubernetes_snapshot(
         parent_uid = _owner_uid(item)
         attributes = _attributes(item)
         status = _object(item.get("status", {}), f"{kind} status")
+        node_name = ""
         if kind == "Pod":
             restart_count = sum(
                 _integer(container_status.get("restartCount", 0), "container restart count")
                 for container_status in _container_statuses(status).values()
             )
+            node_name = str(_object(item.get("spec", {}), "Pod spec").get("nodeName", ""))
             attributes.update(
                 {
-                    "k8s.node.name": str(
-                        _object(item.get("spec", {}), "Pod spec").get("nodeName", "")
-                    ),
+                    "k8s.node.name": node_name,
                     "k8s.pod.phase": str(status.get("phase", "")),
                     "k8s.pod.restart_count": restart_count,
                 }
@@ -251,6 +254,17 @@ def import_kubernetes_snapshot(
                 {"phase": str(status.get("phase", ""))},
             )
         )
+        node_uid = node_uid_by_name.get(node_name)
+        if kind == "Pod" and node_uid is not None:
+            edges.append(
+                CausalEdge(
+                    f"k8s:{node_uid}:lifecycle",
+                    event_id,
+                    "hosts",
+                    1.0,
+                    {"source": "kubernetes"},
+                )
+            )
 
     for item in items:
         if str(item.get("kind", "")) != "Pod":
