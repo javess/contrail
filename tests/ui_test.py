@@ -76,6 +76,7 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
 
     assert 'id="analysis"' in html
     assert "renderAnalysis()" in javascript
+    assert "Path waiting" in javascript
     assert "Remaining after compute" in javascript
     assert "No constraint classified from available evidence" in javascript
 

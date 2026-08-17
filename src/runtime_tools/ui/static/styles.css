@@ -46,7 +46,7 @@ h2 { font: 600 19px/1.2 system-ui, sans-serif; letter-spacing: -.02em; }
 .eyebrow { color: var(--accent); font-size: 10px; letter-spacing: .16em; margin-bottom: 8px; }
 
 main { padding: 26px 34px 60px; }
-.summary { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
 .metric { background: var(--panel); padding: 16px; min-height: 82px; }
 .metric span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
 .metric strong { display: block; margin-top: 10px; font: 500 20px/1 system-ui, sans-serif; }

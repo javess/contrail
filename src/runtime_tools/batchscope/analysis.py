@@ -24,6 +24,8 @@ class LifecyclePhase:
 @dataclass(frozen=True, slots=True)
 class CriticalPath:
     duration_seconds: float
+    active_seconds: float
+    waiting_seconds: float
     parallel_slack_seconds: float
     event_ids: tuple[str, ...]
     event_names: tuple[str, ...]
@@ -33,6 +35,8 @@ class CriticalPath:
     def as_json_value(self) -> dict[str, JsonValue]:
         return {
             "duration_seconds": self.duration_seconds,
+            "active_seconds": self.active_seconds,
+            "waiting_seconds": self.waiting_seconds,
             "parallel_slack_seconds": self.parallel_slack_seconds,
             "event_ids": list(self.event_ids),
             "event_names": list(self.event_names),
@@ -128,8 +132,14 @@ class _Path:
     length: int
 
     @property
-    def duration_ns(self) -> int:
+    def active_ns(self) -> int:
         return sum(end - start for start, end in self.intervals)
+
+    @property
+    def duration_ns(self) -> int:
+        if not self.intervals:
+            return 0
+        return self.intervals[-1][1] - self.intervals[0][0]
 
     def event_ids(self) -> tuple[str, ...]:
         result = []
@@ -224,12 +234,16 @@ def _critical_path(
     event_ids = best_path.event_ids()
     duration_seconds = best_path.duration_ns / 1_000_000_000
     return CriticalPath(
-        duration_seconds,
-        max(0.0, round((total or duration_seconds) - duration_seconds, 12)),
-        event_ids,
-        tuple(timed[event_id].name for event_id in event_ids),
-        "observed" if used_edge_count and not clock_inconsistent else "inferred",
-        cycle_detected,
+        duration_seconds=duration_seconds,
+        active_seconds=best_path.active_ns / 1_000_000_000,
+        waiting_seconds=(best_path.duration_ns - best_path.active_ns) / 1_000_000_000,
+        parallel_slack_seconds=max(
+            0.0, round((total or duration_seconds) - duration_seconds, 12)
+        ),
+        event_ids=event_ids,
+        event_names=tuple(timed[event_id].name for event_id in event_ids),
+        certainty="observed" if used_edge_count and not clock_inconsistent else "inferred",
+        cycle_detected=cycle_detected,
     )
 
 

@@ -25,6 +25,8 @@ def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
     else:
         path = analysis.critical_path
         lines.append(f"  {path.certainty}: {_duration(path.duration_seconds)}")
+        lines.append(f"  active execution: {_duration(path.active_seconds)}")
+        lines.append(f"  causal waiting: {_duration(path.waiting_seconds)}")
         lines.append(f"  parallel slack: {_duration(path.parallel_slack_seconds)}")
         lines.append(f"  {' → '.join(path.event_names)}")
     lines.extend(("", "Throughput"))

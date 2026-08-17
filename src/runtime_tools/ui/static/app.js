@@ -24,6 +24,8 @@ function renderSummary() {
     ["Wall time", fmtDuration(run.summary.wall_time_seconds)],
     ["Peak memory", fmtBytes(run.summary.peak_memory_bytes)],
     ["Critical path", critical ? fmtDuration(critical.duration_seconds) : "unavailable"],
+    ["Path active", critical ? fmtDuration(critical.active_seconds) : "unavailable"],
+    ["Path waiting", critical ? fmtDuration(critical.waiting_seconds) : "unavailable"],
   ];
   document.querySelector("#summary").innerHTML = values.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
 }

@@ -10,6 +10,7 @@ import pytest
 
 from runtime_tools import record_process
 from runtime_tools.batchscope import analyze_runpack
+from runtime_tools.batchscope.report import render_analysis
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue
 from runtime_tools.storage import RunpackWriter
 
@@ -151,6 +152,29 @@ def test_critical_path_does_not_subtract_sequential_sibling_intervals(tmp_path: 
     assert analysis.critical_path is not None
     assert analysis.critical_path.duration_seconds == 0.1
     assert analysis.critical_path.parallel_slack_seconds == 0.0
+
+
+def test_critical_path_separates_active_time_waiting_and_parallel_slack(tmp_path: Path) -> None:
+    runpack = tmp_path / "waiting.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("waiting", "waiting", 0, 50_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("produce", "operation", "produce", 0, 10_000_000))
+        writer.add_event(_event("consume", "operation", "consume", 30_000_000, 40_000_000))
+        writer.add_causal_edge(CausalEdge("produce", "consume", "follows", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.duration_seconds == 0.04
+    assert analysis.critical_path.active_seconds == 0.02
+    assert analysis.critical_path.waiting_seconds == 0.02
+    assert analysis.critical_path.parallel_slack_seconds == pytest.approx(0.01)
+    report = render_analysis(analysis, "text")
+    assert "active execution: 20.0ms" in report
+    assert "causal waiting: 20.0ms" in report
 
 
 def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> None:
