@@ -207,18 +207,14 @@ def test_batchscope_does_not_sum_parallel_side_branch_clients_as_a_bottleneck(
         writer.add_causal_edge(CausalEdge("root", "compute", "parent", 1.0, {}))
         for index in range(60):
             event_id = f"client-{index:02}"
-            writer.add_event(
-                _event(event_id, "client.request", "parallel-client", 0, 1_000_000)
-            )
+            writer.add_event(_event(event_id, "client.request", "parallel-client", 0, 1_000_000))
             writer.add_causal_edge(CausalEdge("root", event_id, "parent", 1.0, {}))
 
     analysis = analyze_runpack(runpack)
 
     assert analysis.critical_path is not None
     assert analysis.critical_path.duration_seconds == 0.1
-    assert not any(
-        item.classification == "external_dependency" for item in analysis.bottlenecks
-    )
+    assert not any(item.classification == "external_dependency" for item in analysis.bottlenecks)
 
 
 def test_batchscope_calculates_observed_post_compute_drain_rate(tmp_path: Path) -> None:
@@ -305,6 +301,23 @@ def test_causal_cycle_makes_critical_path_inferred(tmp_path: Path) -> None:
     assert analysis.critical_path.certainty == "inferred"
 
 
+def test_low_confidence_causal_edge_makes_critical_path_inferred(tmp_path: Path) -> None:
+    runpack = tmp_path / "uncertain.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("uncertain", "uncertain", 0, 20_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("first", "operation", "first", 0, 10_000_000))
+        writer.add_event(_event("second", "operation", "second", 10_000_000, 20_000_000))
+        writer.add_causal_edge(CausalEdge("first", "second", "inferred", 0.4, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.certainty == "inferred"
+
+
 def test_batchscope_handles_causal_chains_beyond_python_recursion_limit(
     tmp_path: Path,
 ) -> None:
@@ -344,10 +357,7 @@ def test_batchscope_handles_causal_chains_beyond_python_recursion_limit(
                 source_event_id, target_event_id, kind, confidence, attributes_json
             ) VALUES (?, ?, 'parent', 1.0, '{}')
             """,
-            (
-                (f"event-{index}", f"event-{index + 1}")
-                for index in range(chain_length - 1)
-            ),
+            ((f"event-{index}", f"event-{index + 1}") for index in range(chain_length - 1)),
         )
 
     analysis = analyze_runpack(runpack)

@@ -158,7 +158,7 @@ def _event_interval(event: Event) -> tuple[int, int]:
 
 def _critical_path(
     events: tuple[Event, ...],
-    edge_pairs: tuple[tuple[str, str], ...],
+    edge_values: tuple[tuple[str, str, float], ...],
     total: float | None,
     *,
     clock_inconsistent: bool,
@@ -167,11 +167,15 @@ def _critical_path(
     if not timed:
         return None
     children: dict[str, list[str]] = {event_id: [] for event_id in timed}
+    confidence_by_pair: dict[tuple[str, str], float] = {}
     incoming: set[str] = set()
     used_edge_count = 0
-    for source, target in edge_pairs:
+    for source, target, confidence in edge_values:
         if source in timed and target in timed:
-            children[source].append(target)
+            pair = (source, target)
+            if pair not in confidence_by_pair:
+                children[source].append(target)
+            confidence_by_pair[pair] = max(confidence_by_pair.get(pair, 0.0), confidence)
             incoming.add(target)
             used_edge_count += 1
     state: dict[str, int] = {}
@@ -232,19 +236,24 @@ def _critical_path(
         key=lambda path: (path.duration_ns, path.length),
     )
     event_ids = best_path.event_ids()
+    selected_confidences = tuple(
+        confidence_by_pair[(source, target)]
+        for source, target in zip(event_ids, event_ids[1:], strict=False)
+    )
+    edges_observed = bool(selected_confidences) and all(
+        confidence == 1.0 for confidence in selected_confidences
+    )
     duration_seconds = best_path.duration_ns / 1_000_000_000
     return CriticalPath(
         duration_seconds=duration_seconds,
         active_seconds=best_path.active_ns / 1_000_000_000,
         waiting_seconds=(best_path.duration_ns - best_path.active_ns) / 1_000_000_000,
-        parallel_slack_seconds=max(
-            0.0, round((total or duration_seconds) - duration_seconds, 12)
-        ),
+        parallel_slack_seconds=max(0.0, round((total or duration_seconds) - duration_seconds, 12)),
         event_ids=event_ids,
         event_names=tuple(timed[event_id].name for event_id in event_ids),
         certainty=(
             "observed"
-            if used_edge_count and not clock_inconsistent and not cycle_detected
+            if used_edge_count and edges_observed and not clock_inconsistent and not cycle_detected
             else "inferred"
         ),
         cycle_detected=cycle_detected,
@@ -388,8 +397,7 @@ def _bottlenecks(
         if event.id in critical_ids and event.kind == "client.request" and _duration_ns(event) > 0
     )
     client_seconds = (
-        sum(finish - start for start, finish in _merge_intervals(client_intervals))
-        / 1_000_000_000
+        sum(finish - start for start, finish in _merge_intervals(client_intervals)) / 1_000_000_000
     )
     if (
         critical is not None
@@ -415,10 +423,12 @@ def analyze_runpack(path: Path) -> BatchAnalysis:
         events = reader.events()
         edges = reader.causal_edges()
         clock_inconsistent = reader.clock_inconsistency_count() > 0
-    edge_pairs = tuple((edge.source_event_id, edge.target_event_id) for edge in edges)
+    edge_values = tuple(
+        (edge.source_event_id, edge.target_event_id, edge.confidence) for edge in edges
+    )
     critical = _critical_path(
         events,
-        edge_pairs,
+        edge_values,
         summary.wall_time_seconds,
         clock_inconsistent=clock_inconsistent,
     )
