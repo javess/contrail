@@ -281,6 +281,25 @@ def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) ->
         assert reader.entities() == ()
 
 
+def test_writer_refuses_to_modify_an_existing_file(tmp_path: Path) -> None:
+    output = tmp_path / "existing.runpack"
+    output.write_bytes(b"preserve this")
+
+    with pytest.raises(RunpackError, match="refusing to overwrite existing runpack"):
+        RunpackWriter(output)
+
+    assert output.read_bytes() == b"preserve this"
+
+
+def test_writer_creates_private_artifacts(tmp_path: Path) -> None:
+    output = tmp_path / "private.runpack"
+
+    with RunpackWriter(output):
+        pass
+
+    assert output.stat().st_mode & 0o777 == 0o600
+
+
 def test_writer_normalizes_invalid_json_values(tmp_path: Path) -> None:
     output = tmp_path / "invalid-json.runpack"
     with RunpackWriter(output) as writer:

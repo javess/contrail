@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -286,6 +287,14 @@ class RunpackWriter:
         self.path = path
         connection: sqlite3.Connection | None = None
         try:
+            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(descriptor)
+        except FileExistsError as exc:
+            raise RunpackError(f"refusing to overwrite existing runpack: {path}") from exc
+        except OSError as exc:
+            path.unlink(missing_ok=True)
+            raise RunpackError(f"could not create runpack {path}: {exc}") from exc
+        try:
             connection = sqlite3.connect(path)
             self._connection = connection
             self._connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
@@ -299,10 +308,12 @@ class RunpackWriter:
         except sqlite3.DatabaseError as exc:
             if connection is not None:
                 connection.close()
+            path.unlink(missing_ok=True)
             raise RunpackError(f"could not create runpack {path}: {exc}") from exc
         except BaseException:
             if connection is not None:
                 connection.close()
+            path.unlink(missing_ok=True)
             raise
 
     @classmethod
