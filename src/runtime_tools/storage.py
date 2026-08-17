@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
 
@@ -94,7 +96,7 @@ CREATE INDEX measurements_entity_idx ON measurements(entity_id);
 
 
 class RunpackError(ValueError):
-    """Raised when a runpack cannot be read safely."""
+    """Raised when a runpack cannot be read or written safely."""
 
 
 class UnsupportedSchemaError(RunpackError):
@@ -128,9 +130,7 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
     missing = sorted(_REQUIRED_TABLES - tables)
     if missing:
         raise RunpackError(f"runpack is missing required tables: {', '.join(missing)}")
-    row = connection.execute(
-        "SELECT value FROM manifest WHERE key = 'schema_version'"
-    ).fetchone()
+    row = connection.execute("SELECT value FROM manifest WHERE key = 'schema_version'").fetchone()
     if row is None:
         raise RunpackError("runpack has no schema version")
     if row[0] != SCHEMA_VERSION:
@@ -144,8 +144,10 @@ class RunpackWriter:
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._connection = sqlite3.connect(path)
+        connection: sqlite3.Connection | None = None
         try:
+            connection = sqlite3.connect(path)
+            self._connection = connection
             self._connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
             self._connection.execute("PRAGMA journal_mode = DELETE")
             self._connection.executescript(_SCHEMA)
@@ -154,8 +156,13 @@ class RunpackWriter:
                 (("schema_version", SCHEMA_VERSION), ("producer_version", __version__)),
             )
             self._connection.commit()
+        except sqlite3.DatabaseError as exc:
+            if connection is not None:
+                connection.close()
+            raise RunpackError(f"could not create runpack {path}: {exc}") from exc
         except BaseException:
-            self._connection.close()
+            if connection is not None:
+                connection.close()
             raise
 
     @classmethod
@@ -179,105 +186,118 @@ class RunpackWriter:
             raise
         return writer
 
+    @contextmanager
+    def _writing(self) -> Iterator[None]:
+        try:
+            yield
+        except (OverflowError, sqlite3.DatabaseError) as exc:
+            raise RunpackError(f"could not write runpack {self.path}: {exc}") from exc
+
     def add_execution(self, execution: Execution) -> None:
-        self._connection.execute(
-            """
-            INSERT INTO executions(
-                id, name, started_at_ns, finished_at_ns, command_json,
-                working_directory, exit_code, revision, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                execution.id,
-                execution.name,
-                execution.started_at_ns,
-                execution.finished_at_ns,
-                _json(execution.command),
-                execution.working_directory,
-                execution.exit_code,
-                execution.revision,
-                _json(execution.metadata),
-            ),
-        )
-        self._connection.commit()
+        with self._writing():
+            self._connection.execute(
+                """
+                INSERT INTO executions(
+                    id, name, started_at_ns, finished_at_ns, command_json,
+                    working_directory, exit_code, revision, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    execution.id,
+                    execution.name,
+                    execution.started_at_ns,
+                    execution.finished_at_ns,
+                    _json(execution.command),
+                    execution.working_directory,
+                    execution.exit_code,
+                    execution.revision,
+                    _json(execution.metadata),
+                ),
+            )
+            self._connection.commit()
 
     def add_entity(self, entity: Entity) -> None:
-        self._connection.execute(
-            """
+        with self._writing():
+            self._connection.execute(
+                """
             INSERT INTO entities(id, kind, name, parent_entity_id, attributes_json)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (
-                entity.id,
-                entity.kind,
-                entity.name,
-                entity.parent_entity_id,
-                _json(entity.attributes),
-            ),
-        )
-        self._connection.commit()
+                (
+                    entity.id,
+                    entity.kind,
+                    entity.name,
+                    entity.parent_entity_id,
+                    _json(entity.attributes),
+                ),
+            )
+            self._connection.commit()
 
     def add_event(self, event: Event) -> None:
-        self._connection.execute(
-            """
+        with self._writing():
+            self._connection.execute(
+                """
             INSERT INTO events(
                 id, kind, name, entity_id, started_at_ns, finished_at_ns,
                 clock_domain, uncertainty_ns, sequence, attributes_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                event.id,
-                event.kind,
-                event.name,
-                event.entity_id,
-                event.started_at_ns,
-                event.finished_at_ns,
-                event.clock_domain,
-                event.uncertainty_ns,
-                event.sequence,
-                _json(event.attributes),
-            ),
-        )
-        self._connection.commit()
+                (
+                    event.id,
+                    event.kind,
+                    event.name,
+                    event.entity_id,
+                    event.started_at_ns,
+                    event.finished_at_ns,
+                    event.clock_domain,
+                    event.uncertainty_ns,
+                    event.sequence,
+                    _json(event.attributes),
+                ),
+            )
+            self._connection.commit()
 
     def add_causal_edge(self, edge: CausalEdge) -> None:
-        self._connection.execute(
-            """
+        with self._writing():
+            self._connection.execute(
+                """
             INSERT INTO causal_edges(
                 source_event_id, target_event_id, kind, confidence, attributes_json
             ) VALUES (?, ?, ?, ?, ?)
             """,
-            (
-                edge.source_event_id,
-                edge.target_event_id,
-                edge.kind,
-                edge.confidence,
-                _json(edge.attributes),
-            ),
-        )
-        self._connection.commit()
+                (
+                    edge.source_event_id,
+                    edge.target_event_id,
+                    edge.kind,
+                    edge.confidence,
+                    _json(edge.attributes),
+                ),
+            )
+            self._connection.commit()
 
     def add_measurement(self, measurement: Measurement) -> None:
-        self._connection.execute(
-            """
+        with self._writing():
+            self._connection.execute(
+                """
             INSERT INTO measurements(
                 name, value, unit, timestamp_ns, entity_id, attributes_json
             ) VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (
-                measurement.name,
-                measurement.value,
-                measurement.unit,
-                measurement.timestamp_ns,
-                measurement.entity_id,
-                _json(measurement.attributes),
-            ),
-        )
-        self._connection.commit()
+                (
+                    measurement.name,
+                    measurement.value,
+                    measurement.unit,
+                    measurement.timestamp_ns,
+                    measurement.entity_id,
+                    _json(measurement.attributes),
+                ),
+            )
+            self._connection.commit()
 
     def expand_execution_bounds(self, started_at_ns: int, finished_at_ns: int | None) -> None:
-        self._connection.execute(
-            """
+        with self._writing():
+            self._connection.execute(
+                """
             UPDATE executions
             SET started_at_ns = min(started_at_ns, ?),
                 finished_at_ns = CASE
@@ -286,9 +306,9 @@ class RunpackWriter:
                     ELSE max(finished_at_ns, ?)
                 END
             """,
-            (started_at_ns, finished_at_ns, finished_at_ns, finished_at_ns),
-        )
-        self._connection.commit()
+                (started_at_ns, finished_at_ns, finished_at_ns, finished_at_ns),
+            )
+            self._connection.commit()
 
     def finish_execution(
         self,
@@ -300,7 +320,7 @@ class RunpackWriter:
         event: Event,
         measurements: tuple[Measurement, ...],
     ) -> None:
-        with self._connection:
+        with self._writing(), self._connection:
             self._connection.execute(
                 """
                 UPDATE executions
@@ -445,9 +465,7 @@ class RunpackReader:
         )
 
     def events(self) -> tuple[Event, ...]:
-        rows = self._execute(
-            "SELECT * FROM events ORDER BY started_at_ns, sequence, id"
-        ).fetchall()
+        rows = self._execute("SELECT * FROM events ORDER BY started_at_ns, sequence, id").fetchall()
         return tuple(
             Event(
                 id=row["id"],

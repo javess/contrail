@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from runtime_tools import CaptureError, inspect_runpack, record_process
-from runtime_tools.storage import RunpackError, RunpackReader, UnsupportedSchemaError
+from runtime_tools.model import Entity
+from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter, UnsupportedSchemaError
 
 
 def test_record_process_captures_outcome_resources_and_output_identity(tmp_path: Path) -> None:
@@ -92,6 +93,14 @@ def test_reader_reports_malformed_embedded_json_as_runpack_error(tmp_path: Path)
 
     with pytest.raises(RunpackError, match="invalid JSON object"):
         inspect_runpack(output)
+
+
+def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) -> None:
+    output = tmp_path / "collision.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_entity(Entity("same", "worker", "first", None, {}))
+        with pytest.raises(RunpackError, match="UNIQUE constraint failed"):
+            writer.add_entity(Entity("same", "worker", "second", None, {}))
 
 
 def test_each_capture_reports_its_own_child_peak_memory(tmp_path: Path) -> None:

@@ -68,7 +68,7 @@ def _record(argv: list[str]) -> int:
             stdout=_binary_stream("stdout"),
             stderr=_binary_stream("stderr"),
         )
-    except CaptureError as exc:
+    except (CaptureError, RunpackError) as exc:
         print(f"rundiff: {exc}", file=sys.stderr)
         return 2
     print(f"recorded {output}", file=sys.stderr)

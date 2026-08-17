@@ -8,8 +8,9 @@ import pytest
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.inspect import inspect_runpack
 from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
+from runtime_tools.model import Execution
 from runtime_tools.otel import import_otlp_json
-from runtime_tools.storage import RunpackReader
+from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
 
 
 def _metadata(name: str, uid: str, **extra: object) -> dict[str, object]:
@@ -216,6 +217,36 @@ def test_kubernetes_snapshot_rejects_timezone_ambiguous_timestamps(tmp_path: Pat
     )
 
     with pytest.raises(KubernetesImportError, match="requires a timezone"):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()
+
+
+def test_kubernetes_enrichment_reports_identity_collisions_without_publishing(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "duplicate.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"kind": "Node", "metadata": _metadata("first", "duplicate"), "status": {}},
+                    {
+                        "kind": "Node",
+                        "metadata": _metadata("second", "duplicate"),
+                        "status": {},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RunpackError, match="UNIQUE constraint failed"):
         import_kubernetes_snapshot(base, snapshot, output)
 
     assert not output.exists()
