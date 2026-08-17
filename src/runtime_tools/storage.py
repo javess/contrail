@@ -201,6 +201,24 @@ class RunpackWriter:
         )
         self._connection.commit()
 
+    def add_measurement(self, measurement: Measurement) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO measurements(
+                name, value, unit, timestamp_ns, entity_id, attributes_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                measurement.name,
+                measurement.value,
+                measurement.unit,
+                measurement.timestamp_ns,
+                measurement.entity_id,
+                _json(measurement.attributes),
+            ),
+        )
+        self._connection.commit()
+
     def finish_execution(
         self,
         execution_id: str,
@@ -409,6 +427,56 @@ class RunpackReader:
             """
         ).fetchone()
         return int(row[0])
+
+    def operation_counts(self) -> dict[tuple[str, str, str, str], int]:
+        rows = self._connection.execute(
+            """
+            SELECT
+                COALESCE(entity.kind, 'unowned') AS entity_kind,
+                COALESCE(entity.name, 'unowned') AS entity_name,
+                event.kind AS event_kind,
+                event.name AS event_name,
+                count(*) AS event_count
+            FROM events AS event
+            LEFT JOIN entities AS entity ON entity.id = event.entity_id
+            GROUP BY entity_kind, entity_name, event_kind, event_name
+            """
+        ).fetchall()
+        return {
+            (row["entity_kind"], row["entity_name"], row["event_kind"], row["event_name"]): int(
+                row["event_count"]
+            )
+            for row in rows
+        }
+
+    def edge_counts(self) -> dict[tuple[str, str, str, str, str], int]:
+        rows = self._connection.execute(
+            """
+            SELECT
+                COALESCE(source_entity.kind, 'unowned') AS source_kind,
+                COALESCE(source_entity.name, 'unowned') AS source_name,
+                COALESCE(target_entity.kind, 'unowned') AS target_kind,
+                COALESCE(target_entity.name, 'unowned') AS target_name,
+                edge.kind AS edge_kind,
+                count(*) AS edge_count
+            FROM causal_edges AS edge
+            JOIN events AS source_event ON source_event.id = edge.source_event_id
+            JOIN events AS target_event ON target_event.id = edge.target_event_id
+            LEFT JOIN entities AS source_entity ON source_entity.id = source_event.entity_id
+            LEFT JOIN entities AS target_entity ON target_entity.id = target_event.entity_id
+            GROUP BY source_kind, source_name, target_kind, target_name, edge_kind
+            """
+        ).fetchall()
+        return {
+            (
+                row["source_kind"],
+                row["source_name"],
+                row["target_kind"],
+                row["target_name"],
+                row["edge_kind"],
+            ): int(row["edge_count"])
+            for row in rows
+        }
 
     def counts(self) -> dict[str, int]:
         return {

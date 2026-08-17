@@ -45,3 +45,12 @@ same artifact and inspected as a causal tree:
 uv run runtime import-otel trace.json --name checkout
 uv run runtime inspect trace.runpack --tree
 ```
+
+Compare any two runpacks with RunDiff. The text report emphasizes changed
+operation counts and runtime dependencies; JSON keeps the same structured facts
+for automation.
+
+```bash
+uv run rundiff compare baseline.runpack candidate.runpack
+uv run rundiff compare baseline.runpack candidate.runpack --format json
+```

@@ -14,6 +14,7 @@ dependencies = []
 
 [project.scripts]
 runtime = "runtime_tools.cli:main"
+rundiff = "runtime_tools.rundiff.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/runtime_tools"]
@@ -40,4 +41,3 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.9",
 ]
-
