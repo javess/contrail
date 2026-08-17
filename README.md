@@ -73,3 +73,10 @@ with runtime.run("inference", total_work=10_000):
         runtime.event("db.write", kind="client.request")
     runtime.progress(completed=10_000, total=10_000)
 ```
+
+BatchScope explains lifecycle, critical path, throughput, and deterministic
+bottleneck evidence for one finite run:
+
+```bash
+uv run batchscope inspect run.runpack
+```

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import BinaryIO, cast
 
 from runtime_tools.annotations import AnnotationError, load_annotations
-from runtime_tools.model import Entity, Event, Execution, JsonValue, Measurement
+from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue, Measurement
 from runtime_tools.storage import RunpackWriter
 
 
@@ -238,6 +238,14 @@ def record_process(
                 ),
                 measurements=measurements,
             )
+            annotation_targets = {edge.target_event_id for edge in annotation_edges}
+            for annotation_event in annotation_events:
+                if annotation_event.id not in annotation_targets:
+                    writer.add_causal_edge(
+                        CausalEdge(
+                            event_id, annotation_event.id, "parent", 1.0, {"source": "capture"}
+                        )
+                    )
         os.replace(temporary, output)
     except BaseException:
         temporary.unlink(missing_ok=True)

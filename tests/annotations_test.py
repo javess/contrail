@@ -46,6 +46,7 @@ with runtime.run("pipeline", total_work=10):
         for events_by_id in edges
     }
     assert (events["pipeline"].id, events["transform"].id, "parent") in relationships
+    assert (events[Path(sys.executable).name].id, events["pipeline"].id, "parent") in relationships
     assert (events["transform"].id, events["db.write"].id, "parent") in relationships
     assert (events["db.write"].id, events["db.flush"].id, "flushes") in relationships
 

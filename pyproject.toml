@@ -15,6 +15,7 @@ dependencies = []
 [project.scripts]
 runtime = "runtime_tools.cli:main"
 rundiff = "runtime_tools.rundiff.cli:main"
+batchscope = "runtime_tools.batchscope.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/runtime_tools"]

@@ -1,0 +1,57 @@
+"""Render BatchScope analysis facts."""
+
+from __future__ import annotations
+
+import json
+
+from runtime_tools.batchscope.analysis import BatchAnalysis
+
+
+def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
+    if output_format == "json":
+        return json.dumps(analysis.as_json_value(), indent=2, sort_keys=True)
+    lines = [
+        "BATCHSCOPE",
+        f"run:   {analysis.name} ({analysis.execution_id[:8]})",
+        f"total: {_duration(analysis.total_seconds)}",
+        "",
+        "Lifecycle",
+    ]
+    for phase in analysis.lifecycle:
+        lines.append(f"  {phase.name:<24} {_duration(phase.duration_seconds):>10}  {phase.source}")
+    lines.extend(("", "Critical path"))
+    if analysis.critical_path is None:
+        lines.append("  unavailable")
+    else:
+        path = analysis.critical_path
+        lines.append(f"  {path.certainty}: {_duration(path.duration_seconds)}")
+        lines.append(f"  parallel slack: {_duration(path.parallel_slack_seconds)}")
+        lines.append(f"  {' → '.join(path.event_names)}")
+    lines.extend(("", "Throughput"))
+    if analysis.throughput is None:
+        lines.append("  no progress evidence")
+    else:
+        throughput = analysis.throughput
+        lines.append(f"  completed: {throughput.completed:g} / {throughput.total:g}")
+        lines.append(f"  rate: {_rate(throughput.rate_per_second)}")
+        lines.append(f"  remaining: {throughput.remaining:g}")
+        lines.append(f"  estimated drain: {_duration(throughput.estimated_drain_seconds)}")
+    lines.extend(("", "Bottlenecks"))
+    if not analysis.bottlenecks:
+        lines.append("  none classified from available evidence")
+    for bottleneck in analysis.bottlenecks:
+        lines.append(f"  {bottleneck.classification} ({bottleneck.confidence:.0%})")
+        lines.append(f"    {bottleneck.evidence}")
+    return "\n".join(lines)
+
+
+def _duration(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    if value < 1:
+        return f"{value * 1000:.1f}ms"
+    return f"{value:.3f}s"
+
+
+def _rate(value: float | None) -> str:
+    return "unknown" if value is None else f"{value:,.2f}/s"
