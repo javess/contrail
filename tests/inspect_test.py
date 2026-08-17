@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from runtime_tools.inspect import render_causal_tree
-from runtime_tools.model import CausalEdge, Entity, Event, Execution
+from runtime_tools.inspect import inspect_runpack, render_causal_tree
+from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import RunpackWriter
 
 
@@ -72,3 +72,26 @@ def test_causal_tree_distinguishes_shared_nodes_from_cycles(tmp_path: Path) -> N
 
     assert "shared [operation] 0.000ms (already shown)" in tree
     assert "cycle-a [operation] 0.000ms (cycle)" in tree
+
+
+def test_inspection_preserves_base_measurements_after_additive_enrichment(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "measurements.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("run", "run", 0, 10, (), str(tmp_path), 0, None, {}))
+        writer.add_measurement(Measurement("process.memory.peak", 100.0, "By", 10, None, {}))
+        writer.add_measurement(
+            Measurement(
+                "process.memory.peak",
+                1.0,
+                "By",
+                10,
+                None,
+                {"source": "prometheus"},
+            )
+        )
+
+    summary = inspect_runpack(runpack)
+
+    assert summary.peak_memory_bytes == 100

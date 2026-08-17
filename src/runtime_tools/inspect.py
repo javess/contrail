@@ -56,7 +56,9 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
     with RunpackReader(path) as reader:
         manifest = reader.manifest()
         execution = reader.execution()
-        measurements = {item.name: item.value for item in reader.measurements()}
+        measurements: dict[str, float] = {}
+        for item in reader.measurements():
+            measurements.setdefault(item.name, item.value)
         peak_memory = measurements.get("process.memory.peak")
         wall_time = measurements.get("process.wall_time")
         if wall_time is None and execution.finished_at_ns is not None:
