@@ -47,8 +47,19 @@ def test_runpack_query_cannot_mutate_the_artifact(tmp_path: Path) -> None:
     runpack = tmp_path / "query.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="query")
 
-    with pytest.raises(QueryError, match="readonly database"):
+    with pytest.raises(QueryError, match="not authorized"):
         query_runpack(runpack, "DELETE FROM events")
 
     with sqlite3.connect(runpack) as connection:
         assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+
+
+def test_runpack_query_cannot_attach_or_create_another_database(tmp_path: Path) -> None:
+    runpack = tmp_path / "query.runpack"
+    attached = tmp_path / "side-effect.sqlite"
+    record_process((sys.executable, "-c", "pass"), runpack, name="query")
+
+    with pytest.raises(QueryError):
+        query_runpack(runpack, f"ATTACH DATABASE '{attached}' AS side_effect")
+
+    assert not attached.exists()

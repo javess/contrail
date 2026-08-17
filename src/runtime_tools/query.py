@@ -15,6 +15,24 @@ class QueryError(ValueError):
     """Raised when a runpack query is invalid or attempts mutation."""
 
 
+_ALLOWED_SQLITE_ACTIONS = {
+    sqlite3.SQLITE_FUNCTION,
+    sqlite3.SQLITE_READ,
+    sqlite3.SQLITE_RECURSIVE,
+    sqlite3.SQLITE_SELECT,
+}
+
+
+def _authorize_read(
+    action: int,
+    _argument_one: str | None,
+    _argument_two: str | None,
+    _database: str | None,
+    _source: str | None,
+) -> int:
+    return sqlite3.SQLITE_OK if action in _ALLOWED_SQLITE_ACTIONS else sqlite3.SQLITE_DENY
+
+
 @dataclass(frozen=True, slots=True)
 class QueryResult:
     columns: tuple[str, ...]
@@ -47,6 +65,7 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
     uri = f"{path.resolve().as_uri()}?mode=ro"
     try:
         with sqlite3.connect(uri, uri=True) as connection:
+            connection.set_authorizer(_authorize_read)
             cursor = connection.execute(sql)
             if cursor.description is None:
                 raise QueryError("query must return rows")
