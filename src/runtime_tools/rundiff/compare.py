@@ -51,6 +51,28 @@ class OperationCountChange:
 
 
 @dataclass(frozen=True, slots=True)
+class OperationDurationChange:
+    entity_kind: str
+    entity_name: str
+    operation_kind: str
+    operation_name: str
+    baseline_seconds: float
+    candidate_seconds: float
+    percent: float | None
+
+    def as_json_value(self) -> dict[str, JsonValue]:
+        return {
+            "entity_kind": self.entity_kind,
+            "entity_name": self.entity_name,
+            "operation_kind": self.operation_kind,
+            "operation_name": self.operation_name,
+            "baseline_seconds": self.baseline_seconds,
+            "candidate_seconds": self.candidate_seconds,
+            "percent": self.percent,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class EdgeCountChange:
     source_kind: str
     source_name: str
@@ -97,6 +119,7 @@ class ExecutionDiff:
     candidate_critical_path_certainty: str | None
     peak_memory: ValueChange
     operation_count_changes: tuple[OperationCountChange, ...]
+    operation_duration_changes: tuple[OperationDurationChange, ...]
     edge_count_changes: tuple[EdgeCountChange, ...]
 
     def as_json_value(self) -> dict[str, JsonValue]:
@@ -114,6 +137,9 @@ class ExecutionDiff:
             "peak_memory": self.peak_memory.as_json_value(),
             "operation_count_changes": [
                 change.as_json_value() for change in self.operation_count_changes
+            ],
+            "operation_duration_changes": [
+                change.as_json_value() for change in self.operation_duration_changes
             ],
             "edge_count_changes": [change.as_json_value() for change in self.edge_count_changes],
         }
@@ -190,6 +216,29 @@ def _edge_changes(
     return tuple(changes)
 
 
+def _duration_changes(
+    baseline: dict[tuple[str, str, str, str], float],
+    candidate: dict[tuple[str, str, str, str], float],
+) -> tuple[OperationDurationChange, ...]:
+    changes = []
+    for key in baseline.keys() | candidate.keys():
+        before = baseline.get(key, 0.0)
+        after = candidate.get(key, 0.0)
+        if before == after:
+            continue
+        changes.append(OperationDurationChange(*key, before, after, _percent(before, after)))
+    changes.sort(
+        key=lambda change: (
+            -abs(change.candidate_seconds - change.baseline_seconds),
+            change.entity_kind,
+            change.entity_name,
+            change.operation_kind,
+            change.operation_name,
+        )
+    )
+    return tuple(changes)
+
+
 def _output_hash(summary: ExecutionSummary) -> str | None:
     return summary.stdout_sha256
 
@@ -214,9 +263,11 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
     candidate_analysis = analyze_runpack(candidate_path)
     with RunpackReader(baseline_path) as baseline_reader:
         baseline_operations = baseline_reader.operation_counts()
+        baseline_durations = baseline_reader.operation_duration_totals()
         baseline_edges = _all_edge_counts(baseline_reader)
     with RunpackReader(candidate_path) as candidate_reader:
         candidate_operations = candidate_reader.operation_counts()
+        candidate_durations = candidate_reader.operation_duration_totals()
         candidate_edges = _all_edge_counts(candidate_reader)
 
     exit_equivalent = _known_equivalence(baseline_summary.exit_code, candidate_summary.exit_code)
@@ -257,5 +308,6 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
             baseline_summary.peak_memory_bytes, candidate_summary.peak_memory_bytes
         ),
         operation_count_changes=_operation_changes(baseline_operations, candidate_operations),
+        operation_duration_changes=_duration_changes(baseline_durations, candidate_durations),
         edge_count_changes=_edge_changes(baseline_edges, candidate_edges),
     )

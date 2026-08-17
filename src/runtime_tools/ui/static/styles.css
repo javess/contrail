@@ -76,7 +76,7 @@ main { padding: 26px 34px 60px; }
 .bottleneck-list p { color: var(--muted); line-height: 1.5; margin-top: 5px; }
 .confidence { position: absolute; left: 0; color: var(--accent); font-size: 9px; border: 1px solid var(--accent-soft); padding: 3px 4px; }
 .empty { color: var(--muted); font-size: 11px; }
-.comparison-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+.comparison-grid { display: grid; grid-template-columns: repeat(4, 1fr); }
 .change-list { padding: 16px 18px; border-right: 1px solid var(--line); min-height: 110px; }
 .change-list:last-child { border-right: 0; }
 .change-list p { font-size: 12px; line-height: 1.7; }

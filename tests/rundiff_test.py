@@ -133,6 +133,19 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
         ("metadata", "metadata.lookup", 0, 1),
     ]
     assert [
+        (
+            change.entity_name,
+            change.operation_name,
+            change.baseline_seconds,
+            change.candidate_seconds,
+        )
+        for change in diff.operation_duration_changes
+    ] == [
+        ("gateway", "GET /items", 0.01, 0.02),
+        ("database", "SELECT items", 0.001, 0.003),
+        ("metadata", "metadata.lookup", 0.0, 0.001),
+    ]
+    assert [
         (change.source_name, change.target_name, change.change_kind)
         for change in diff.edge_count_changes
     ] == [
@@ -167,6 +180,8 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert "10.0ms → 20.0ms (+100.0%)" in text_report
     assert "Critical path (observed → observed)\n  10.0ms → 20.0ms (+100.0%)" in text_report
     assert "database :: SELECT items [client.request]" in text_report
+    assert "Aggregate operation duration changes" in text_report
+    assert "gateway :: GET /items [server.request]" in text_report
     assert "gateway → metadata [parent]: 0 → 1" in text_report
     assert command.returncode == 0
     payload = json.loads(command.stdout)
@@ -174,6 +189,7 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert payload["wall_time"]["percent"] == 100.0
     assert payload["critical_path"]["percent"] == 100.0
     assert payload["operation_count_changes"][0]["candidate"] == 3
+    assert payload["operation_duration_changes"][0]["candidate_seconds"] == 0.02
 
 
 def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path: Path) -> None:
@@ -216,4 +232,4 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
     assert (tmp_path / "custom-baseline.runpack").is_file()
     assert compared.returncode == 0
     assert "Outcome\n  equivalent" in compared.stdout
-    assert "No structural or operation-count changes." in compared.stdout
+    assert "No structural, duration, or operation-count changes." in compared.stdout

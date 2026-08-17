@@ -523,6 +523,30 @@ class RunpackReader:
             for row in rows
         }
 
+    def operation_duration_totals(self) -> dict[tuple[str, str, str, str], float]:
+        rows = self._execute(
+            """
+            SELECT
+                COALESCE(entity.kind, 'unowned') AS entity_kind,
+                COALESCE(entity.name, 'unowned') AS entity_name,
+                event.kind AS event_kind,
+                event.name AS event_name,
+                total(CAST(event.finished_at_ns - event.started_at_ns AS REAL))
+                    / 1000000000.0 AS duration_seconds
+            FROM events AS event
+            LEFT JOIN entities AS entity ON entity.id = event.entity_id
+            WHERE event.started_at_ns IS NOT NULL
+              AND event.finished_at_ns IS NOT NULL
+            GROUP BY entity_kind, entity_name, event_kind, event_name
+            """
+        ).fetchall()
+        return {
+            (row["entity_kind"], row["entity_name"], row["event_kind"], row["event_name"]): float(
+                row["duration_seconds"]
+            )
+            for row in rows
+        }
+
     def edge_counts(self) -> dict[tuple[str, str, str, str, str], int]:
         rows = self._execute(
             """

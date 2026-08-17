@@ -44,6 +44,22 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 f"[{change.operation_kind}]"
             )
             lines.append(f"     {change.baseline:,} → {change.candidate:,} {percent}")
+    if diff.operation_duration_changes:
+        lines.extend(("", "Aggregate operation duration changes"))
+        for index, duration_change in enumerate(diff.operation_duration_changes, 1):
+            percent = _percent(
+                duration_change.percent,
+                duration_change.baseline_seconds,
+                duration_change.candidate_seconds,
+            )
+            lines.append(
+                f"  {index}. {duration_change.entity_name} :: "
+                f"{duration_change.operation_name} [{duration_change.operation_kind}]"
+            )
+            lines.append(
+                f"     {_duration(duration_change.baseline_seconds)} → "
+                f"{_duration(duration_change.candidate_seconds)} {percent}"
+            )
     new_edges = tuple(change for change in diff.edge_count_changes if change.change_kind == "new")
     removed_edges = tuple(
         change for change in diff.edge_count_changes if change.change_kind == "removed"
@@ -54,8 +70,12 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
     _append_edges(lines, "New runtime dependencies", new_edges)
     _append_edges(lines, "Removed runtime dependencies", removed_edges)
     _append_edges(lines, "Changed runtime dependencies", changed_edges)
-    if not diff.operation_count_changes and not diff.edge_count_changes:
-        lines.extend(("", "No structural or operation-count changes."))
+    if (
+        not diff.operation_count_changes
+        and not diff.operation_duration_changes
+        and not diff.edge_count_changes
+    ):
+        lines.extend(("", "No structural, duration, or operation-count changes."))
     return "\n".join(lines)
 
 
