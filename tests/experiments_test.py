@@ -89,3 +89,4 @@ def test_proofline_rejects_workload_symlinks_outside_the_isolated_ref(tmp_path: 
         )
 
     assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
+    assert not (tmp_path / "results").exists()

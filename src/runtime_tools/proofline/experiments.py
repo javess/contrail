@@ -78,6 +78,15 @@ def _workload_path(worktree: Path, workload: Path) -> Path:
     return resolved
 
 
+def _create_output_directory(output_dir: Path) -> None:
+    try:
+        output_dir.mkdir()
+    except FileExistsError as exc:
+        raise ExperimentError(f"refusing to reuse output directory: {output_dir}") from exc
+    except OSError as exc:
+        raise ExperimentError(f"could not create output directory: {output_dir}") from exc
+
+
 def run_experiment(
     contract: Path,
     *,
@@ -99,7 +108,6 @@ def run_experiment(
     _git(repo, "rev-parse", "--verify", f"{baseline_ref}^{{commit}}")
     _git(repo, "rev-parse", "--verify", f"{candidate_ref}^{{commit}}")
 
-    output_dir.mkdir()
     baseline_runpack = output_dir / "baseline.runpack"
     candidate_runpack = output_dir / "candidate.runpack"
     temporary_root = Path(tempfile.mkdtemp(prefix="proofline-worktrees-"))
@@ -113,6 +121,7 @@ def run_experiment(
         added.append(candidate_tree)
         baseline_workload = _workload_path(baseline_tree, workload)
         candidate_workload = _workload_path(candidate_tree, workload)
+        _create_output_directory(output_dir)
         try:
             baseline_exit = record_process(
                 (sys.executable, str(baseline_workload), *workload_args),
