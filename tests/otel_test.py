@@ -202,3 +202,62 @@ def test_otlp_json_bulk_import_handles_ten_thousand_spans(tmp_path: Path) -> Non
     assert result.event_count == span_count
     with RunpackReader(output) as reader:
         assert reader.counts()["events"] == span_count
+
+
+def test_otlp_json_import_normalizes_asynchronous_span_links(tmp_path: Path) -> None:
+    source = tmp_path / "links.json"
+    output = tmp_path / "links.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "producer-trace",
+                                        "spanId": "publish",
+                                        "name": "publish",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                    },
+                                    {
+                                        "traceId": "consumer-trace",
+                                        "spanId": "consume",
+                                        "name": "consume",
+                                        "startTimeUnixNano": "3",
+                                        "endTimeUnixNano": "4",
+                                        "links": [
+                                            {
+                                                "traceId": "producer-trace",
+                                                "spanId": "publish",
+                                                "attributes": [
+                                                    {
+                                                        "key": "messaging.message.id",
+                                                        "value": {"stringValue": "message-1"},
+                                                    }
+                                                ],
+                                            }
+                                        ],
+                                    },
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_json(source, output, name="async")
+
+    assert result.edge_count == 1
+    assert result.missing_link_count == 0
+    with RunpackReader(output) as reader:
+        edge = reader.causal_edges()[0]
+    assert edge.kind == "link"
+    assert edge.source_event_id == "otel:producer-trace:publish"
+    assert edge.target_event_id == "otel:consumer-trace:consume"
+    assert edge.attributes["otel.link.attributes"] == {"messaging.message.id": "message-1"}

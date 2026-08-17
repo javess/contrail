@@ -26,6 +26,7 @@ class OtelImportResult:
     event_count: int
     edge_count: int
     missing_parent_count: int
+    missing_link_count: int
 
 
 def _typed_value(value: object) -> JsonValue:
@@ -156,6 +157,7 @@ def import_otlp_json(
     entities: list[Entity] = []
     events: list[Event] = []
     parent_references: list[tuple[str, str, str]] = []
+    link_references: list[tuple[str, str, str, dict[str, JsonValue]]] = []
     known_events: set[str] = set()
     trace_ids: set[str] = set()
 
@@ -200,6 +202,21 @@ def import_otlp_json(
                 if parent_span_id:
                     attributes["otel.parent_span_id"] = parent_span_id
                     parent_references.append((trace_id, parent_span_id, event_id))
+                raw_links = _as_list(span.get("links", []), "span links")
+                for raw_link in raw_links:
+                    link = _as_object(raw_link, "span link")
+                    linked_trace_id = str(link.get("traceId", ""))
+                    linked_span_id = str(link.get("spanId", ""))
+                    if not linked_trace_id or not linked_span_id:
+                        raise OtelImportError("every span link requires traceId and spanId")
+                    link_references.append(
+                        (
+                            linked_trace_id,
+                            linked_span_id,
+                            event_id,
+                            _attributes(link.get("attributes", [])),
+                        )
+                    )
                 status = span.get("status")
                 if isinstance(status, dict) and "code" in status:
                     attributes["otel.status.code"] = str(status["code"])
@@ -242,6 +259,26 @@ def import_otlp_json(
             missing_parent_count += 1
             continue
         edges.append(CausalEdge(parent_id, child_id, "parent", 1.0, {"source": "otel"}))
+    missing_link_count = 0
+    known_links: set[tuple[str, str]] = set()
+    for trace_id, span_id, target_id, attributes in link_references:
+        source_id = _event_id(trace_id, span_id)
+        if source_id not in known_events:
+            missing_link_count += 1
+            continue
+        identity = (source_id, target_id)
+        if identity in known_links:
+            raise OtelImportError(f"duplicate span link: {trace_id}/{span_id} -> {target_id}")
+        known_links.add(identity)
+        edges.append(
+            CausalEdge(
+                source_id,
+                target_id,
+                "link",
+                1.0,
+                {"source": "otel", "otel.link.attributes": attributes},
+            )
+        )
 
     try:
         with RunpackWriter(temporary) as writer:
@@ -260,6 +297,7 @@ def import_otlp_json(
                         "otel": {
                             "trace_count": len(trace_ids),
                             "missing_parent_count": missing_parent_count,
+                            "missing_link_count": missing_link_count,
                         },
                     },
                 )
@@ -274,4 +312,10 @@ def import_otlp_json(
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
-    return OtelImportResult(len(entities), len(events), len(edges), missing_parent_count)
+    return OtelImportResult(
+        len(entities),
+        len(events),
+        len(edges),
+        missing_parent_count,
+        missing_link_count,
+    )
