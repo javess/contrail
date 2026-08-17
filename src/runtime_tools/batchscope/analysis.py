@@ -225,6 +225,43 @@ def _lifecycle(events: tuple[Event, ...], total: float | None) -> tuple[Lifecycl
     )
     if explicit:
         return explicit
+    jobs = tuple(event for event in events if event.kind == "workload.job")
+    pods = tuple(event for event in events if event.kind == "workload.pod")
+    containers = tuple(event for event in events if event.kind == "workload.container")
+    if jobs and pods:
+        job_start = min(
+            (event.started_at_ns for event in jobs if event.started_at_ns is not None),
+            default=None,
+        )
+        job_finish = max(
+            (event.finished_at_ns for event in jobs if event.finished_at_ns is not None),
+            default=None,
+        )
+        pod_start = min(
+            (event.started_at_ns for event in pods if event.started_at_ns is not None),
+            default=None,
+        )
+        container_start = min(
+            (event.started_at_ns for event in containers if event.started_at_ns is not None),
+            default=None,
+        )
+        container_finish = max(
+            (event.finished_at_ns for event in containers if event.finished_at_ns is not None),
+            default=None,
+        )
+        boundaries = (
+            ("provisioning", job_start, pod_start),
+            ("starting", pod_start, container_start),
+            ("executing", container_start, container_finish),
+            ("cleanup", container_finish, job_finish),
+        )
+        phases = tuple(
+            LifecyclePhase(name, (finish - start) / 1_000_000_000, "derived")
+            for name, start, finish in boundaries
+            if start is not None and finish is not None and finish > start
+        )
+        if phases:
+            return phases
     return (LifecyclePhase("executing", total, "derived"),) if total is not None else ()
 
 

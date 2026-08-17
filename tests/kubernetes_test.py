@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from runtime_tools.batchscope import analyze_runpack
+from runtime_tools.inspect import inspect_runpack
 from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
 from runtime_tools.otel import import_otlp_json
 from runtime_tools.storage import RunpackReader
@@ -129,6 +131,16 @@ def test_kubernetes_snapshot_enriches_and_correlates_otel_runpack(tmp_path: Path
     assert result.event_count == 5
     assert result.edge_count == 4
     assert result.correlation_count == 1
+    summary = inspect_runpack(enriched)
+    analysis = analyze_runpack(enriched)
+    assert summary.started_at_ns == 1_000_000_000
+    assert summary.finished_at_ns == 9_000_000_000
+    assert [(phase.name, phase.duration_seconds, phase.source) for phase in analysis.lifecycle] == [
+        ("provisioning", 1.0, "derived"),
+        ("starting", 2.0, "derived"),
+        ("executing", 4.0, "derived"),
+        ("cleanup", 1.0, "derived"),
+    ]
     with RunpackReader(enriched) as reader:
         entities = {entity.name: entity for entity in reader.entities()}
         container = next(entity for entity in reader.entities() if entity.kind == "container")

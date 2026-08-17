@@ -244,6 +244,21 @@ class RunpackWriter:
         )
         self._connection.commit()
 
+    def expand_execution_bounds(self, started_at_ns: int, finished_at_ns: int | None) -> None:
+        self._connection.execute(
+            """
+            UPDATE executions
+            SET started_at_ns = min(started_at_ns, ?),
+                finished_at_ns = CASE
+                    WHEN ? IS NULL THEN finished_at_ns
+                    WHEN finished_at_ns IS NULL THEN ?
+                    ELSE max(finished_at_ns, ?)
+                END
+            """,
+            (started_at_ns, finished_at_ns, finished_at_ns, finished_at_ns),
+        )
+        self._connection.commit()
+
     def finish_execution(
         self,
         execution_id: str,

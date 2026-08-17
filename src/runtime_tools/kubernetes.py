@@ -361,6 +361,10 @@ def import_kubernetes_snapshot(
     entities.sort(key=lambda entity: (entity_order.get(entity.kind, 3), entity.id))
 
     def append(writer: RunpackWriter) -> KubernetesImportResult:
+        starts = [event.started_at_ns for event in events if event.started_at_ns is not None]
+        finishes = [event.finished_at_ns for event in events if event.finished_at_ns is not None]
+        if starts:
+            writer.expand_execution_bounds(min(starts), max(finishes) if finishes else None)
         for entity in entities:
             writer.add_entity(entity)
         for event in events:
