@@ -159,3 +159,30 @@ def test_runtime_cli_reports_corrupt_runpack_without_traceback(tmp_path: Path) -
     assert inspected.stdout == ""
     assert inspected.stderr == f"runtime: invalid runpack: {runpack}\n"
     assert "Traceback" not in inspected.stderr
+
+
+def test_all_cli_entrypoints_report_the_package_version() -> None:
+    modules = (
+        "runtime_tools.cli",
+        "runtime_tools.rundiff.cli",
+        "runtime_tools.batchscope.cli",
+        "runtime_tools.proofline.cli",
+    )
+
+    results = [
+        subprocess.run(
+            (sys.executable, "-m", module, "--version"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        for module in modules
+    ]
+
+    assert [result.returncode for result in results] == [0, 0, 0, 0]
+    assert [result.stdout for result in results] == [
+        "runtime 0.1.0\n",
+        "rundiff 0.1.0\n",
+        "batchscope 0.1.0\n",
+        "proofline 0.1.0\n",
+    ]

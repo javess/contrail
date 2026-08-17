@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+from runtime_tools import __version__
 from runtime_tools.proofline import (
     ContractError,
     ExperimentError,
@@ -21,6 +22,7 @@ from runtime_tools.storage import RunpackError
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="proofline")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
     verify = subparsers.add_parser("verify", help="evaluate contracts over two runpacks")
     verify.add_argument("contract", type=Path)

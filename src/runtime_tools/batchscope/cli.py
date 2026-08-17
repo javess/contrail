@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from runtime_tools import __version__
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.batchscope.report import render_analysis
 from runtime_tools.storage import RunpackError
@@ -13,6 +14,7 @@ from runtime_tools.storage import RunpackError
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="batchscope")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
     inspect = subparsers.add_parser("inspect", help="explain a finite execution")
     inspect.add_argument("runpack", type=Path)

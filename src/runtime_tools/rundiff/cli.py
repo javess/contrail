@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO
 
+from runtime_tools import __version__
 from runtime_tools.capture import CaptureError, record_process
 from runtime_tools.rundiff.compare import compare_runpacks
 from runtime_tools.rundiff.report import render_diff
@@ -16,6 +17,7 @@ from runtime_tools.storage import RunpackError
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rundiff")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     record = subparsers.add_parser("record", help="capture a named local execution")
