@@ -53,6 +53,7 @@ class OutputDigest:
     sha256: str
     captured: bytes | None
     truncated: bool
+    relay_error: str | None
 
 
 def _git_revision(cwd: Path) -> str | None:
@@ -79,6 +80,7 @@ def _pump(
     digest = hashlib.sha256()
     byte_count = 0
     captured = bytearray() if capture_limit is not None else None
+    relay_error: str | None = None
     while chunk := source.read(64 * 1024):
         digest.update(chunk)
         byte_count += len(chunk)
@@ -87,14 +89,29 @@ def _pump(
             if len(captured) < capture_limit:
                 captured.extend(chunk[: capture_limit - len(captured)])
         if sink is not None:
-            sink.write(chunk)
-            sink.flush()
+            try:
+                sink.write(chunk)
+                sink.flush()
+            except Exception as exc:
+                relay_error = f"{type(exc).__name__}: {exc}"
+                sink = None
     return OutputDigest(
         byte_count=byte_count,
         sha256=digest.hexdigest(),
         captured=bytes(captured) if captured is not None else None,
         truncated=captured is not None and byte_count > len(captured),
+        relay_error=relay_error,
     )
+
+
+def _output_metadata(digest: OutputDigest) -> dict[str, JsonValue]:
+    metadata: dict[str, JsonValue] = {
+        "bytes": digest.byte_count,
+        "sha256": digest.sha256,
+    }
+    if digest.relay_error is not None:
+        metadata["relay_error"] = digest.relay_error
+    return metadata
 
 
 def _peak_memory_bytes(value: float) -> float:
@@ -224,14 +241,8 @@ def record_process(
             metadata = {
                 **metadata,
                 "output": {
-                    "stdout": {
-                        "bytes": stdout_digest.byte_count,
-                        "sha256": stdout_digest.sha256,
-                    },
-                    "stderr": {
-                        "bytes": stderr_digest.byte_count,
-                        "sha256": stderr_digest.sha256,
-                    },
+                    "stdout": _output_metadata(stdout_digest),
+                    "stderr": _output_metadata(stderr_digest),
                 },
             }
             try:

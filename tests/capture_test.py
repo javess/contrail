@@ -5,6 +5,7 @@ import io
 import json
 import sqlite3
 import sys
+from collections.abc import Buffer
 from pathlib import Path
 from typing import Any, cast
 
@@ -112,6 +113,33 @@ def test_record_process_hashes_selected_environment_values(
     assert isinstance(identities, dict)
     assert identities["PYTHONHASHSEED"] == hashlib.sha256(b"environment-value").hexdigest()
     assert "environment-value" not in json.dumps(metadata)
+
+
+def test_record_process_drains_output_after_relay_failure(tmp_path: Path) -> None:
+    class BrokenSink(io.BytesIO):
+        def write(self, data: Buffer, /) -> int:
+            raise BrokenPipeError("consumer closed")
+
+    output = tmp_path / "broken-relay.runpack"
+    content_size = 2 * 1024 * 1024
+
+    exit_code = record_process(
+        (sys.executable, "-c", f"import sys; sys.stdout.write('x' * {content_size})"),
+        output,
+        name="broken-relay",
+        stdout=BrokenSink(),
+    )
+
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+    output_metadata = execution.metadata["output"]
+    assert isinstance(output_metadata, dict)
+    stdout_metadata = output_metadata["stdout"]
+    assert isinstance(stdout_metadata, dict)
+    assert exit_code == 0
+    assert stdout_metadata["bytes"] == content_size
+    assert stdout_metadata["sha256"] == hashlib.sha256(b"x" * content_size).hexdigest()
+    assert stdout_metadata["relay_error"] == "BrokenPipeError: consumer closed"
 
 
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:
