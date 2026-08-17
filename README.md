@@ -70,6 +70,25 @@ uv run runtime enrich-kubernetes run.runpack snapshot.json --output run-k8s.runp
 uv run runtime enrich-prometheus run-k8s.runpack metrics.json --output run-full.runpack
 ```
 
+Proofline evaluates explicit behavioral contracts without an LLM:
+
+```bash
+uv run proofline verify contracts.yaml \
+  --baseline baseline.runpack \
+  --candidate candidate.runpack
+```
+
+The dogfood example includes a contract that intentionally catches its
+regression:
+
+```bash
+uv run proofline verify examples/local/contracts.yaml \
+  --baseline baseline.runpack --candidate candidate.runpack
+```
+
+See [Proofline contracts](docs/contracts.md) for the supported assertion types
+and exit-code behavior.
+
 Domain work that cannot be inferred from process or OTel evidence can use the
 small annotation API. Outside `runtime record` these calls are harmless no-ops.
 

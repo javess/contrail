@@ -10,12 +10,15 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Contrail contributors" }]
-dependencies = []
+dependencies = [
+    "pyyaml>=6.0.2",
+]
 
 [project.scripts]
 runtime = "runtime_tools.cli:main"
 rundiff = "runtime_tools.rundiff.cli:main"
 batchscope = "runtime_tools.batchscope.cli:main"
+proofline = "runtime_tools.proofline.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/runtime_tools"]
@@ -41,4 +44,5 @@ dev = [
     "mypy>=1.14",
     "pytest>=8.3",
     "ruff>=0.9",
+    "types-pyyaml>=6.0.12.20250516",
 ]

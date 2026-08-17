@@ -1,0 +1,13 @@
+name: local-pipeline-regression
+description: Preserve results without amplifying persistence or adding metadata access.
+assertions:
+  - type: output_equivalent
+  - type: max_runtime_regression
+    percent: 25
+  - type: forbid_new_dependency
+    from: python
+    to: metadata-db
+  - type: max_operation_count
+    operation: db.write
+    relative_to: baseline
+    factor: 1.2

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from runtime_tools import record_process
 from runtime_tools.batchscope import analyze_runpack
+from runtime_tools.proofline import verify_contracts
 from runtime_tools.rundiff import compare_runpacks
 
 
@@ -19,6 +20,8 @@ def test_local_pipeline_demonstrates_equivalent_output_and_runtime_regression(
 
     diff = compare_runpacks(baseline, candidate)
     analysis = analyze_runpack(candidate)
+    contract = example.with_name("contracts.yaml")
+    verification = verify_contracts(contract, baseline, candidate)
 
     assert diff.outcome == "equivalent"
     writes = next(
@@ -37,3 +40,7 @@ def test_local_pipeline_demonstrates_equivalent_output_and_runtime_regression(
     )
     assert [phase.name for phase in analysis.lifecycle] == ["read", "transform", "persist"]
     assert any(item.classification == "serialized_stage" for item in analysis.bottlenecks)
+    statuses = {result.type: result.status for result in verification.results}
+    assert statuses["output_equivalent"] == "pass"
+    assert statuses["forbid_new_dependency"] == "fail"
+    assert statuses["max_operation_count"] == "fail"
