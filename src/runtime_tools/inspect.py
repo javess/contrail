@@ -109,11 +109,20 @@ def render_causal_tree(path: Path) -> str:
     visited: set[str] = set()
 
     def append_tree(event_id: str) -> None:
-        stack = [(event_id, 0)]
+        active: set[str] = set()
+        stack = [(event_id, 0, False)]
         while stack:
-            current_id, depth = stack.pop()
+            current_id, depth, exiting = stack.pop()
+            if exiting:
+                active.remove(current_id)
+                continue
             event = by_id[current_id]
-            marker = " (cycle)" if current_id in visited else ""
+            if current_id in active:
+                marker = " (cycle)"
+            elif current_id in visited:
+                marker = " (already shown)"
+            else:
+                marker = ""
             service = entity_names.get(event.entity_id or "", "unowned")
             label = f"{service} :: {event.name} [{event.kind}] {_event_duration(event)}{marker}"
             visible_depth = min(depth, _MAX_TREE_INDENT_DEPTH)
@@ -122,7 +131,11 @@ def render_causal_tree(path: Path) -> str:
             if marker:
                 continue
             visited.add(current_id)
-            stack.extend((child_id, depth + 1) for child_id in reversed(children[current_id]))
+            active.add(current_id)
+            stack.append((current_id, depth, True))
+            stack.extend(
+                (child_id, depth + 1, False) for child_id in reversed(children[current_id])
+            )
 
     for root in roots:
         append_tree(root)
