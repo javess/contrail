@@ -286,6 +286,25 @@ def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> Non
     assert analysis.critical_path.certainty == "inferred"
 
 
+def test_causal_cycle_makes_critical_path_inferred(tmp_path: Path) -> None:
+    runpack = tmp_path / "cycle.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("cycle", "cycle", 0, 20_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("first", "operation", "first", 0, 10_000_000))
+        writer.add_event(_event("second", "operation", "second", 10_000_000, 20_000_000))
+        writer.add_causal_edge(CausalEdge("first", "second", "follows", 1.0, {}))
+        writer.add_causal_edge(CausalEdge("second", "first", "follows", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.cycle_detected is True
+    assert analysis.critical_path.certainty == "inferred"
+
+
 def test_batchscope_handles_causal_chains_beyond_python_recursion_limit(
     tmp_path: Path,
 ) -> None:

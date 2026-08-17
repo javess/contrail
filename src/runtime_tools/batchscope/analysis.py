@@ -242,7 +242,11 @@ def _critical_path(
         ),
         event_ids=event_ids,
         event_names=tuple(timed[event_id].name for event_id in event_ids),
-        certainty="observed" if used_edge_count and not clock_inconsistent else "inferred",
+        certainty=(
+            "observed"
+            if used_edge_count and not clock_inconsistent and not cycle_detected
+            else "inferred"
+        ),
         cycle_detected=cycle_detected,
     )
 
