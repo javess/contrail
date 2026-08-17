@@ -177,6 +177,8 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
             "runtime_tools.rundiff.cli",
             "record",
             "baseline",
+            "--output",
+            "custom-baseline.runpack",
             "--",
             sys.executable,
             "-c",
@@ -193,8 +195,8 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
             "-m",
             "runtime_tools.rundiff.cli",
             "compare",
-            "baseline",
-            "baseline",
+            "custom-baseline.runpack",
+            "custom-baseline.runpack",
         ),
         cwd=tmp_path,
         check=False,
@@ -204,7 +206,7 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
 
     assert recorded.returncode == 0
     assert recorded.stdout == "result\n"
-    assert (tmp_path / "baseline.runpack").is_file()
+    assert (tmp_path / "custom-baseline.runpack").is_file()
     assert compared.returncode == 0
     assert "Outcome\n  equivalent" in compared.stdout
     assert "No structural or operation-count changes." in compared.stdout

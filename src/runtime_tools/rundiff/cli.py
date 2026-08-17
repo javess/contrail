@@ -21,7 +21,6 @@ def _parser() -> argparse.ArgumentParser:
     record = subparsers.add_parser("record", help="capture a named local execution")
     record.add_argument("name")
     record.add_argument("--output", type=Path)
-    record.add_argument("command", nargs=argparse.REMAINDER, help="command after --")
 
     compare = subparsers.add_parser("compare", help="compare two .runpack artifacts")
     compare.add_argument("baseline", type=Path)
@@ -46,25 +45,42 @@ def _resolve_runpack(path: Path) -> Path:
     return path.with_name(f"{path.name}.runpack")
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+def _record(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="rundiff record")
+    parser.add_argument("name")
+    parser.add_argument("--output", type=Path)
+    if "--" not in argv:
+        parser.parse_args(argv)
+        print("rundiff: a command is required after --", file=sys.stderr)
+        return 2
+    separator = argv.index("--")
+    args = parser.parse_args(argv[:separator])
+    command = tuple(argv[separator + 1 :])
+    if not command:
+        print("rundiff: a command is required after --", file=sys.stderr)
+        return 2
+    output = args.output or Path(f"{_safe_name(args.name)}.runpack")
     try:
-        if args.subcommand == "record":
-            command = tuple(args.command)
-            if command and command[0] == "--":
-                command = command[1:]
-            if not command:
-                raise CaptureError("a command is required after --")
-            output = args.output or Path(f"{_safe_name(args.name)}.runpack")
-            exit_code = record_process(
-                command,
-                output,
-                name=args.name,
-                stdout=_binary_stream("stdout"),
-                stderr=_binary_stream("stderr"),
-            )
-            print(f"recorded {output}", file=sys.stderr)
-            return exit_code
+        exit_code = record_process(
+            command,
+            output,
+            name=args.name,
+            stdout=_binary_stream("stdout"),
+            stderr=_binary_stream("stderr"),
+        )
+    except CaptureError as exc:
+        print(f"rundiff: {exc}", file=sys.stderr)
+        return 2
+    print(f"recorded {output}", file=sys.stderr)
+    return exit_code
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "record":
+        return _record(arguments[1:])
+    args = _parser().parse_args(arguments)
+    try:
         diff = compare_runpacks(_resolve_runpack(args.baseline), _resolve_runpack(args.candidate))
     except (CaptureError, RunpackError) as exc:
         print(f"rundiff: {exc}", file=sys.stderr)
