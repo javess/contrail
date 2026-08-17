@@ -25,6 +25,9 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         "Runtime",
         f"  {_format_change(diff.wall_time, _duration)}",
         "",
+        "Critical path",
+        f"  {_format_change(diff.critical_path, _duration)}",
+        "",
         "Peak memory",
         f"  {_format_change(diff.peak_memory, _bytes)}",
     ]

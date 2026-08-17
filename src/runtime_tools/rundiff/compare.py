@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.inspect import ExecutionSummary, inspect_runpack
 from runtime_tools.model import JsonValue
 from runtime_tools.storage import RunpackReader
@@ -91,6 +92,7 @@ class ExecutionDiff:
     exit_code_equivalent: bool | None
     output_equivalent: bool | None
     wall_time: ValueChange
+    critical_path: ValueChange
     peak_memory: ValueChange
     operation_count_changes: tuple[OperationCountChange, ...]
     edge_count_changes: tuple[EdgeCountChange, ...]
@@ -104,6 +106,7 @@ class ExecutionDiff:
             "exit_code_equivalent": self.exit_code_equivalent,
             "output_equivalent": self.output_equivalent,
             "wall_time": self.wall_time.as_json_value(),
+            "critical_path": self.critical_path.as_json_value(),
             "peak_memory": self.peak_memory.as_json_value(),
             "operation_count_changes": [
                 change.as_json_value() for change in self.operation_count_changes
@@ -203,6 +206,8 @@ def _all_edge_counts(reader: RunpackReader) -> dict[tuple[str, str, str, str, st
 def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff:
     baseline_summary = inspect_runpack(baseline_path)
     candidate_summary = inspect_runpack(candidate_path)
+    baseline_analysis = analyze_runpack(baseline_path)
+    candidate_analysis = analyze_runpack(candidate_path)
     with RunpackReader(baseline_path) as baseline_reader:
         baseline_operations = baseline_reader.operation_counts()
         baseline_edges = _all_edge_counts(baseline_reader)
@@ -225,6 +230,18 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         output_equivalent=output_equivalent,
         wall_time=_value_change(
             baseline_summary.wall_time_seconds, candidate_summary.wall_time_seconds
+        ),
+        critical_path=_value_change(
+            (
+                baseline_analysis.critical_path.duration_seconds
+                if baseline_analysis.critical_path
+                else None
+            ),
+            (
+                candidate_analysis.critical_path.duration_seconds
+                if candidate_analysis.critical_path
+                else None
+            ),
         ),
         peak_memory=_value_change(
             baseline_summary.peak_memory_bytes, candidate_summary.peak_memory_bytes

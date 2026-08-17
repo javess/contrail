@@ -119,6 +119,9 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
     assert diff.wall_time.baseline == 0.01
     assert diff.wall_time.candidate == 0.02
     assert diff.wall_time.percent == 100.0
+    assert diff.critical_path.baseline == 0.01
+    assert diff.critical_path.candidate == 0.02
+    assert diff.critical_path.percent == 100.0
     assert diff.peak_memory.percent == 50.0
     assert [
         (change.entity_name, change.operation_name, change.baseline, change.candidate)
@@ -160,12 +163,14 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     )
 
     assert "10.0ms → 20.0ms (+100.0%)" in text_report
+    assert "Critical path\n  10.0ms → 20.0ms (+100.0%)" in text_report
     assert "database :: SELECT items [client.request]" in text_report
     assert "gateway → metadata [parent]: 0 → 1" in text_report
     assert command.returncode == 0
     payload = json.loads(command.stdout)
     assert payload["outcome"] == "equivalent"
     assert payload["wall_time"]["percent"] == 100.0
+    assert payload["critical_path"]["percent"] == 100.0
     assert payload["operation_count_changes"][0]["candidate"] == 3
 
 
