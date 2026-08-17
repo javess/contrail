@@ -57,19 +57,27 @@ def _entity_for(labels: dict[str, str], entities: tuple[Entity, ...]) -> str | N
     pod_name = labels.get("pod")
     namespace = labels.get("namespace")
     service = labels.get("service") or labels.get("service_name")
-    for entity in entities:
-        if entity.kind == "pod":
-            entity_namespace = entity.attributes.get("k8s.namespace")
-            if pod_uid and entity.attributes.get("k8s.uid") == pod_uid:
-                return entity.id
-            if (
-                pod_name
-                and entity.name == pod_name
-                and (namespace is None or entity_namespace == namespace)
-            ):
-                return entity.id
-        if entity.kind == "service" and service and entity.name == service:
-            return entity.id
+    if pod_uid:
+        matches = tuple(
+            entity.id
+            for entity in entities
+            if entity.kind == "pod" and entity.attributes.get("k8s.uid") == pod_uid
+        )
+        return matches[0] if len(matches) == 1 else None
+    if pod_name:
+        matches = tuple(
+            entity.id
+            for entity in entities
+            if entity.kind == "pod"
+            and entity.name == pod_name
+            and (namespace is None or entity.attributes.get("k8s.namespace") == namespace)
+        )
+        return matches[0] if len(matches) == 1 else None
+    if service:
+        matches = tuple(
+            entity.id for entity in entities if entity.kind == "service" and entity.name == service
+        )
+        return matches[0] if len(matches) == 1 else None
     return None
 
 
