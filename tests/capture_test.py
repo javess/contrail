@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from runtime_tools import CaptureError, inspect_runpack, record_process
-from runtime_tools.model import Entity
+from runtime_tools.model import Entity, Measurement
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter, UnsupportedSchemaError
 
 
@@ -212,6 +212,31 @@ def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) ->
 
     with RunpackReader(output) as reader:
         assert reader.entities() == ()
+
+
+def test_writer_normalizes_invalid_json_values(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-json.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="invalid JSON value for runpack"):
+            writer.add_entity(Entity("entity", "service", "service", None, {"bad": float("nan")}))
+
+    with RunpackReader(output) as reader:
+        assert reader.entities() == ()
+
+
+def test_bulk_measurement_write_rolls_back_non_finite_values(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-measurement.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="measurement value must be finite"):
+            writer.add_measurements(
+                (
+                    Measurement("valid", 1.0, "1", 0, None, {}),
+                    Measurement("invalid", float("inf"), "1", 1, None, {}),
+                )
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.measurements() == ()
 
 
 def test_each_capture_reports_its_own_child_peak_memory(tmp_path: Path) -> None:

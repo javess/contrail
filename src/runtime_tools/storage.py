@@ -124,7 +124,10 @@ class UnsupportedSchemaError(RunpackError):
 
 
 def _json(value: JsonValue | tuple[str, ...]) -> str:
-    return json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
+    try:
+        return json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
+    except (OverflowError, TypeError, ValueError, RecursionError) as exc:
+        raise RunpackError("invalid JSON value for runpack") from exc
 
 
 def _object(value: str) -> dict[str, JsonValue]:
@@ -157,6 +160,12 @@ def _blob(value: object) -> bytes:
     if isinstance(value, memoryview):
         return value.tobytes()
     raise RunpackError("invalid binary attachment content in runpack")
+
+
+def _measurement_value(value: object) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+        raise RunpackError("measurement value must be finite")
+    return float(value)
 
 
 def _validate_connection(connection: sqlite3.Connection) -> None:
@@ -396,7 +405,7 @@ class RunpackWriter:
             """,
                 (
                     measurement.name,
-                    measurement.value,
+                    _measurement_value(measurement.value),
                     measurement.unit,
                     measurement.timestamp_ns,
                     measurement.entity_id,
@@ -416,7 +425,7 @@ class RunpackWriter:
                 (
                     (
                         measurement.name,
-                        measurement.value,
+                        _measurement_value(measurement.value),
                         measurement.unit,
                         measurement.timestamp_ns,
                         measurement.entity_id,
