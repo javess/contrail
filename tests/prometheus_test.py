@@ -146,3 +146,49 @@ def test_prometheus_response_does_not_guess_between_ambiguous_pod_names(
     with RunpackReader(output) as reader:
         measurement = next(item for item in reader.measurements() if item.name == "queue_depth")
     assert measurement.entity_id is None
+
+
+def test_prometheus_response_requires_a_closed_execution_window(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 0, None, (), str(tmp_path), None, None, {}))
+    response.write_text(
+        '{"status":"success","data":{"result":[]}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match="requires a finished execution window"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()
+
+
+def test_prometheus_response_rejects_non_string_label_values(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 0, 2, (), str(tmp_path), 0, None, {}))
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "result": [
+                        {
+                            "metric": {"__name__": "queue_depth", "pod": ["worker"]},
+                            "value": [1, "3"],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match="labels must be strings"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()

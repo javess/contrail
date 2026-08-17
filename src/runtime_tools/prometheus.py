@@ -49,7 +49,9 @@ def _sample_value(value: object) -> float:
 
 def _labels(value: object) -> dict[str, str]:
     raw = _object(value, "Prometheus metric labels")
-    return {str(key): str(item) for key, item in raw.items()}
+    if not all(isinstance(key, str) and isinstance(item, str) for key, item in raw.items()):
+        raise PrometheusImportError("Prometheus metric labels must be strings")
+    return {key: item for key, item in raw.items() if isinstance(item, str)}
 
 
 def _entity_for(labels: dict[str, str], entities: tuple[Entity, ...]) -> str | None:
@@ -120,6 +122,8 @@ def import_prometheus_response(
     with RunpackReader(runpack) as reader:
         execution = reader.execution()
         entities = reader.entities()
+    if execution.finished_at_ns is None:
+        raise PrometheusImportError("Prometheus import requires a finished execution window")
     measurements: list[Measurement] = []
     dropped = 0
     matched_entities: set[str] = set()
@@ -128,9 +132,7 @@ def import_prometheus_response(
         if not name:
             raise PrometheusImportError("Prometheus series requires a __name__ label")
         timestamp_ns = _timestamp_ns(raw_timestamp)
-        if timestamp_ns < execution.started_at_ns or (
-            execution.finished_at_ns is not None and timestamp_ns > execution.finished_at_ns
-        ):
+        if timestamp_ns < execution.started_at_ns or timestamp_ns > execution.finished_at_ns:
             dropped += 1
             continue
         entity_id = _entity_for(labels, entities)
