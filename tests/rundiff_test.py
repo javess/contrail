@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from runtime_tools import record_process
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.rundiff.report import render_diff
@@ -116,6 +117,7 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
     assert diff.outcome == "equivalent"
     assert diff.exit_code_equivalent is True
     assert diff.output_equivalent is True
+    assert diff.stderr_equivalent is True
     assert diff.wall_time.baseline == 0.01
     assert diff.wall_time.candidate == 0.02
     assert diff.wall_time.percent == 100.0
@@ -214,6 +216,7 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert command.returncode == 0
     payload = json.loads(command.stdout)
     assert payload["outcome"] == "equivalent"
+    assert payload["stderr_equivalent"] is True
     assert payload["wall_time"]["percent"] == 100.0
     assert payload["critical_path"]["percent"] == 100.0
     assert payload["operation_count_changes"][0]["candidate"] == 3
@@ -261,3 +264,26 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
     assert compared.returncode == 0
     assert "Outcome\n  equivalent" in compared.stdout
     assert "No structural, duration, or operation-count changes." in compared.stdout
+
+
+def test_compare_runpacks_treats_changed_stderr_as_different_behavior(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    record_process(
+        (sys.executable, "-c", "import sys; print('same'); print('before', file=sys.stderr)"),
+        baseline,
+        name="baseline",
+    )
+    record_process(
+        (sys.executable, "-c", "import sys; print('same'); print('after', file=sys.stderr)"),
+        candidate,
+        name="candidate",
+    )
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.exit_code_equivalent is True
+    assert diff.output_equivalent is True
+    assert diff.stderr_equivalent is False
+    assert diff.outcome == "different"
+    assert "stderr:      different" in render_diff(diff, "text")

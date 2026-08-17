@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from runtime_tools.batchscope import analyze_runpack
-from runtime_tools.inspect import ExecutionSummary, inspect_runpack
+from runtime_tools.inspect import inspect_runpack
 from runtime_tools.model import JsonValue
 from runtime_tools.storage import RunpackReader
 
@@ -113,6 +113,7 @@ class ExecutionDiff:
     outcome: Outcome
     exit_code_equivalent: bool | None
     output_equivalent: bool | None
+    stderr_equivalent: bool | None
     wall_time: ValueChange
     critical_path: ValueChange
     baseline_critical_path_certainty: str | None
@@ -130,6 +131,7 @@ class ExecutionDiff:
             "outcome": self.outcome,
             "exit_code_equivalent": self.exit_code_equivalent,
             "output_equivalent": self.output_equivalent,
+            "stderr_equivalent": self.stderr_equivalent,
             "wall_time": self.wall_time.as_json_value(),
             "critical_path": self.critical_path.as_json_value(),
             "baseline_critical_path_certainty": self.baseline_critical_path_certainty,
@@ -165,8 +167,8 @@ def _known_equivalence(baseline: object | None, candidate: object | None) -> boo
     return baseline == candidate
 
 
-def _outcome(exit_equivalent: bool | None, output_equivalent: bool | None) -> Outcome:
-    known = tuple(value for value in (exit_equivalent, output_equivalent) if value is not None)
+def _outcome(*equivalences: bool | None) -> Outcome:
+    known = tuple(value for value in equivalences if value is not None)
     if not known:
         return "unknown"
     return "equivalent" if all(known) else "different"
@@ -239,10 +241,6 @@ def _duration_changes(
     return tuple(changes)
 
 
-def _output_hash(summary: ExecutionSummary) -> str | None:
-    return summary.stdout_sha256
-
-
 def _all_edge_counts(reader: RunpackReader) -> dict[tuple[str, str, str, str, str], int]:
     counts = {key: count for key, count in reader.edge_counts().items() if key[:2] != key[2:4]}
     for key, count in reader.peer_service_edge_counts().items():
@@ -266,7 +264,10 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
 
     exit_equivalent = _known_equivalence(baseline_summary.exit_code, candidate_summary.exit_code)
     output_equivalent = _known_equivalence(
-        _output_hash(baseline_summary), _output_hash(candidate_summary)
+        baseline_summary.stdout_sha256, candidate_summary.stdout_sha256
+    )
+    stderr_equivalent = _known_equivalence(
+        baseline_summary.stderr_sha256, candidate_summary.stderr_sha256
     )
     return ExecutionDiff(
         baseline_id=baseline_summary.id,
@@ -274,9 +275,10 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         candidate_id=candidate_summary.id,
         candidate_name=candidate_summary.name,
         match_level="aggregate",
-        outcome=_outcome(exit_equivalent, output_equivalent),
+        outcome=_outcome(exit_equivalent, output_equivalent, stderr_equivalent),
         exit_code_equivalent=exit_equivalent,
         output_equivalent=output_equivalent,
+        stderr_equivalent=stderr_equivalent,
         wall_time=_value_change(
             baseline_summary.wall_time_seconds, candidate_summary.wall_time_seconds
         ),
