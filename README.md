@@ -27,7 +27,9 @@ uv run runtime inspect demo.runpack
 
 Capture relays stdout and stderr to the terminal but stores only their byte
 counts and SHA-256 identities. Environment values and output content are not
-included in the artifact by default.
+included in the artifact by default. A small documented allowlist of
+behavior-relevant environment variables is represented only by value hashes so
+environment drift can be detected without storing the values.
 
 Output content can be included explicitly as bounded binary attachments. This
 may capture secrets, so it is opt-in; each stream stores at most the configured

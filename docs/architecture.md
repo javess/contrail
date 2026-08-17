@@ -94,3 +94,8 @@ not stored by default because they commonly contain secrets. Version 1 records
 only selected non-sensitive environment metadata plus output byte counts and
 hashes. Bounded output content and raw OTLP input require explicit CLI flags;
 normal inspect and UI paths do not render their content.
+
+Local capture identifies only these selected environment variables by SHA-256,
+never plaintext: `CI`, `CUDA_VISIBLE_DEVICES`, locale/timezone settings,
+thread-pool sizing variables, and `PYTHONHASHSEED`. Python implementation and
+version are stored as non-secret runtime metadata.

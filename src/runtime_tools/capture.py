@@ -34,6 +34,17 @@ class CaptureError(ValueError):
 
 
 MAX_CAPTURE_OUTPUT_BYTES = 64 * 1024 * 1024
+_IDENTIFIED_ENVIRONMENT_VARIABLES = (
+    "CI",
+    "CUDA_VISIBLE_DEVICES",
+    "LANG",
+    "LC_ALL",
+    "MKL_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "PYTHONHASHSEED",
+    "TZ",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,12 +117,22 @@ def _wait_with_usage(
 
 
 def _initial_metadata() -> dict[str, JsonValue]:
+    environment_identities: dict[str, JsonValue] = {
+        name: hashlib.sha256(os.environ[name].encode()).hexdigest()
+        for name in _IDENTIFIED_ENVIRONMENT_VARIABLES
+        if name in os.environ
+    }
     return {
         "platform": {
             "system": platform.system(),
             "release": platform.release(),
             "machine": platform.machine(),
         },
+        "runtime": {
+            "python_implementation": platform.python_implementation(),
+            "python_version": platform.python_version(),
+        },
+        "environment": {"selected_value_sha256": environment_identities},
         "capture": {"adapter": "local-process"},
     }
 

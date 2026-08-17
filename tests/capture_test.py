@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -92,6 +93,24 @@ def test_record_process_rejects_unbounded_output_capture(tmp_path: Path) -> None
             name="too-large",
             capture_output_limit=64 * 1024 * 1024 + 1,
         )
+
+
+def test_record_process_hashes_selected_environment_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "environment.runpack"
+    monkeypatch.setenv("PYTHONHASHSEED", "environment-value")
+
+    record_process((sys.executable, "-c", "pass"), output, name="environment")
+
+    with RunpackReader(output) as reader:
+        metadata = reader.execution().metadata
+    environment = metadata["environment"]
+    assert isinstance(environment, dict)
+    identities = environment["selected_value_sha256"]
+    assert isinstance(identities, dict)
+    assert identities["PYTHONHASHSEED"] == hashlib.sha256(b"environment-value").hexdigest()
+    assert "environment-value" not in json.dumps(metadata)
 
 
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:
