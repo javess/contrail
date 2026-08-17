@@ -123,6 +123,31 @@ class RunpackWriter:
             self._connection.close()
             raise
 
+    @classmethod
+    def open_existing(cls, path: Path) -> RunpackWriter:
+        """Open a validated runpack for adapter enrichment."""
+        if not path.is_file():
+            raise RunpackError(f"runpack does not exist: {path}")
+        writer = cls.__new__(cls)
+        writer.path = path
+        try:
+            writer._connection = sqlite3.connect(path)
+            writer._connection.execute("PRAGMA foreign_keys = ON")
+            row = writer._connection.execute(
+                "SELECT value FROM manifest WHERE key = 'schema_version'"
+            ).fetchone()
+            if row is None:
+                raise RunpackError("runpack has no schema version")
+            if row[0] != SCHEMA_VERSION:
+                raise UnsupportedSchemaError(
+                    f"unsupported runpack schema {row[0]!r}; supported: {SCHEMA_VERSION}"
+                )
+        except (sqlite3.DatabaseError, RunpackError):
+            if hasattr(writer, "_connection"):
+                writer._connection.close()
+            raise
+        return writer
+
     def add_execution(self, execution: Execution) -> None:
         self._connection.execute(
             """

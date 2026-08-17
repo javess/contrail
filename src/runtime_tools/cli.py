@@ -10,7 +10,9 @@ from typing import BinaryIO
 
 from runtime_tools.capture import CaptureError, record_process
 from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
+from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
 from runtime_tools.otel import OtelImportError, import_otlp_json
+from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
 from runtime_tools.storage import RunpackError
 from runtime_tools.ui import TimelineError, serve_runpacks
 
@@ -40,6 +42,20 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--no-open", action="store_true", help="do not open a browser")
+
+    kubernetes = subparsers.add_parser(
+        "enrich-kubernetes", help="add a bounded Kubernetes API snapshot"
+    )
+    kubernetes.add_argument("runpack", type=Path)
+    kubernetes.add_argument("snapshot", type=Path)
+    kubernetes.add_argument("--output", type=Path, required=True)
+
+    prometheus = subparsers.add_parser(
+        "enrich-prometheus", help="add a bounded Prometheus HTTP API response"
+    )
+    prometheus.add_argument("runpack", type=Path)
+    prometheus.add_argument("response", type=Path)
+    prometheus.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -77,10 +93,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.subcommand == "import-otel":
             name = args.name or args.source.stem
             output = args.output or args.source.with_suffix(".runpack")
-            result = import_otlp_json(args.source, output, name=name)
+            otel_result = import_otlp_json(args.source, output, name=name)
             print(
-                f"imported {result.event_count} spans and {result.edge_count} causal edges "
-                f"into {output}",
+                f"imported {otel_result.event_count} spans and "
+                f"{otel_result.edge_count} causal edges into {output}",
                 file=sys.stderr,
             )
             return 0
@@ -93,6 +109,24 @@ def main(argv: list[str] | None = None) -> int:
                 open_browser=not args.no_open,
             )
             return 0
+        if args.subcommand == "enrich-kubernetes":
+            kubernetes_result = import_kubernetes_snapshot(args.runpack, args.snapshot, args.output)
+            print(
+                f"added {kubernetes_result.entity_count} Kubernetes entities, "
+                f"{kubernetes_result.event_count} events, and "
+                f"{kubernetes_result.correlation_count} telemetry correlations to {args.output}",
+                file=sys.stderr,
+            )
+            return 0
+        if args.subcommand == "enrich-prometheus":
+            prometheus_result = import_prometheus_response(args.runpack, args.response, args.output)
+            print(
+                f"added {prometheus_result.sample_count} Prometheus samples "
+                f"({prometheus_result.dropped_outside_window} outside the run window) "
+                f"to {args.output}",
+                file=sys.stderr,
+            )
+            return 0
         if args.tree and args.format != "text":
             raise RunpackError("--tree is only available with text output")
         summary = inspect_runpack(args.runpack)
@@ -101,7 +135,14 @@ def main(argv: list[str] | None = None) -> int:
             print()
             print(render_causal_tree(args.runpack))
         return 0
-    except (CaptureError, OtelImportError, RunpackError, TimelineError) as exc:
+    except (
+        CaptureError,
+        KubernetesImportError,
+        OtelImportError,
+        PrometheusImportError,
+        RunpackError,
+        TimelineError,
+    ) as exc:
         print(f"runtime: {exc}", file=sys.stderr)
         return 2
 

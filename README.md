@@ -62,6 +62,14 @@ facts above it:
 uv run runtime serve baseline.runpack --compare candidate.runpack
 ```
 
+Bounded infrastructure evidence can enrich a captured execution without
+modifying the original artifact:
+
+```bash
+uv run runtime enrich-kubernetes run.runpack snapshot.json --output run-k8s.runpack
+uv run runtime enrich-prometheus run-k8s.runpack metrics.json --output run-full.runpack
+```
+
 Domain work that cannot be inferred from process or OTel evidence can use the
 small annotation API. Outside `runtime record` these calls are harmless no-ops.
 
