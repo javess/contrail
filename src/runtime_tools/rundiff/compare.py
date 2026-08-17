@@ -187,15 +187,28 @@ def _output_hash(summary: ExecutionSummary) -> str | None:
     return summary.stdout_sha256
 
 
+def _all_edge_counts(reader: RunpackReader) -> dict[tuple[str, str, str, str, str], int]:
+    counts = {key: count for key, count in reader.edge_counts().items() if key[:2] != key[2:4]}
+    entities = {entity.id: entity for entity in reader.entities()}
+    for event in reader.events():
+        peer = event.attributes.get("peer.service")
+        entity = entities.get(event.entity_id or "")
+        if event.kind != "client.request" or not isinstance(peer, str) or entity is None:
+            continue
+        key = (entity.kind, entity.name, "service", peer, "calls")
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff:
     baseline_summary = inspect_runpack(baseline_path)
     candidate_summary = inspect_runpack(candidate_path)
     with RunpackReader(baseline_path) as baseline_reader:
         baseline_operations = baseline_reader.operation_counts()
-        baseline_edges = baseline_reader.edge_counts()
+        baseline_edges = _all_edge_counts(baseline_reader)
     with RunpackReader(candidate_path) as candidate_reader:
         candidate_operations = candidate_reader.operation_counts()
-        candidate_edges = candidate_reader.edge_counts()
+        candidate_edges = _all_edge_counts(candidate_reader)
 
     exit_equivalent = _known_equivalence(baseline_summary.exit_code, candidate_summary.exit_code)
     output_equivalent = _known_equivalence(

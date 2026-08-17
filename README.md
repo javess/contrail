@@ -80,3 +80,15 @@ bottleneck evidence for one finite run:
 ```bash
 uv run batchscope inspect run.runpack
 ```
+
+## End-to-end demonstration
+
+The local pipeline example deliberately adds write amplification and a metadata
+dependency while preserving its result:
+
+```bash
+uv run rundiff record baseline -- python examples/local/pipeline.py
+uv run rundiff record candidate -- python examples/local/pipeline.py --regression
+uv run rundiff compare baseline candidate
+uv run runtime serve baseline.runpack --compare candidate.runpack
+```
