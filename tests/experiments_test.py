@@ -90,3 +90,32 @@ def test_proofline_rejects_workload_symlinks_outside_the_isolated_ref(tmp_path: 
 
     assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
     assert not (tmp_path / "results").exists()
+
+
+def test_proofline_rejects_option_like_git_refs_before_creating_outputs(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Proofline Test")
+    _git(repo, "config", "user.email", "proofline@example.invalid")
+    workload = repo / "workload.py"
+    workload.write_text("print('workload')\n", encoding="utf-8")
+    _git(repo, "add", "workload.py")
+    _git(repo, "commit", "-m", "workload")
+
+    output = tmp_path / "results"
+    with pytest.raises(ExperimentError, match="cannot start with"):
+        run_experiment(
+            repo / "contract.yaml",
+            baseline_ref="--help",
+            candidate_ref="main",
+            workload=Path("workload.py"),
+            workload_args=(),
+            output_dir=output,
+            cwd=repo,
+        )
+
+    assert not output.exists()
+    assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1

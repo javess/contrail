@@ -63,6 +63,12 @@ def _repo_root(cwd: Path) -> Path:
     return root
 
 
+def _resolve_commit(repo: Path, ref: str) -> str:
+    if not ref or ref.startswith("-"):
+        raise ExperimentError("Git refs must be non-empty and cannot start with '-'")
+    return _git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}", capture=True)
+
+
 def _workload_path(worktree: Path, workload: Path) -> Path:
     candidate = worktree / workload
     try:
@@ -105,8 +111,8 @@ def run_experiment(
         raise ExperimentError(f"refusing to reuse output directory: {output_dir}")
     if not output_dir.parent.is_dir():
         raise ExperimentError(f"output parent directory does not exist: {output_dir.parent}")
-    _git(repo, "rev-parse", "--verify", f"{baseline_ref}^{{commit}}")
-    _git(repo, "rev-parse", "--verify", f"{candidate_ref}^{{commit}}")
+    baseline_commit = _resolve_commit(repo, baseline_ref)
+    candidate_commit = _resolve_commit(repo, candidate_ref)
 
     baseline_runpack = output_dir / "baseline.runpack"
     candidate_runpack = output_dir / "candidate.runpack"
@@ -115,9 +121,9 @@ def run_experiment(
     candidate_tree = temporary_root / "candidate"
     added: list[Path] = []
     try:
-        _git(repo, "worktree", "add", "--detach", str(baseline_tree), baseline_ref)
+        _git(repo, "worktree", "add", "--detach", str(baseline_tree), baseline_commit)
         added.append(baseline_tree)
-        _git(repo, "worktree", "add", "--detach", str(candidate_tree), candidate_ref)
+        _git(repo, "worktree", "add", "--detach", str(candidate_tree), candidate_commit)
         added.append(candidate_tree)
         baseline_workload = _workload_path(baseline_tree, workload)
         candidate_workload = _workload_path(candidate_tree, workload)
