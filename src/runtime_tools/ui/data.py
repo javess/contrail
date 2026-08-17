@@ -11,6 +11,8 @@ from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.storage import RunpackReader
 
 MAX_TIMELINE_EVENTS = 50_000
+MAX_TIMELINE_ENTITIES = 50_000
+MAX_TIMELINE_EDGES = 200_000
 
 
 class TimelineError(ValueError):
@@ -37,13 +39,26 @@ def _event_value(event: Event, execution_start_ns: int) -> dict[str, JsonValue]:
     }
 
 
-def _run_value(path: Path, event_limit: int) -> dict[str, JsonValue]:
+def _run_value(
+    path: Path, event_limit: int, entity_limit: int, edge_limit: int
+) -> dict[str, JsonValue]:
     summary = inspect_runpack(path)
     with RunpackReader(path) as reader:
-        event_count = reader.counts()["events"]
+        counts = reader.counts()
+        event_count = counts["events"]
         if event_count > event_limit:
             raise TimelineError(
                 f"timeline has {event_count:,} events; local UI limit is {event_limit:,}"
+            )
+        entity_count = counts["entities"]
+        if entity_count > entity_limit:
+            raise TimelineError(
+                f"timeline has {entity_count:,} entities; local UI limit is {entity_limit:,}"
+            )
+        edge_count = counts["causal_edges"]
+        if edge_count > edge_limit:
+            raise TimelineError(
+                f"timeline has {edge_count:,} edges; local UI limit is {edge_limit:,}"
             )
         entities = reader.entities()
         events = reader.events()
@@ -82,12 +97,14 @@ def build_timeline_payload(
     candidate: Path | None = None,
     *,
     event_limit: int = MAX_TIMELINE_EVENTS,
+    entity_limit: int = MAX_TIMELINE_ENTITIES,
+    edge_limit: int = MAX_TIMELINE_EDGES,
 ) -> dict[str, JsonValue]:
-    if event_limit <= 0:
-        raise TimelineError("event limit must be positive")
-    runs: list[JsonValue] = [_run_value(baseline, event_limit)]
+    if event_limit <= 0 or entity_limit <= 0 or edge_limit <= 0:
+        raise TimelineError("timeline limits must be positive")
+    runs: list[JsonValue] = [_run_value(baseline, event_limit, entity_limit, edge_limit)]
     comparison: JsonValue = None
     if candidate is not None:
-        runs.append(_run_value(candidate, event_limit))
+        runs.append(_run_value(candidate, event_limit, entity_limit, edge_limit))
         comparison = compare_runpacks(baseline, candidate).as_json_value()
     return {"runs": runs, "comparison": comparison}

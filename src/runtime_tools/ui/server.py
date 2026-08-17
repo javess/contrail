@@ -30,7 +30,10 @@ def create_server(
     port: int,
 ) -> ThreadingHTTPServer:
     payload = json.dumps(
-        build_timeline_payload(baseline, candidate), separators=(",", ":"), sort_keys=True
+        build_timeline_payload(baseline, candidate),
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
     ).encode()
     assets = {
         route: (_asset(name), content_type) for route, (name, content_type) in _ASSETS.items()
@@ -55,7 +58,7 @@ def create_server(
             self.send_header("Cache-Control", "no-store")
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; style-src 'self' 'unsafe-inline'",
+                "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
             )
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()

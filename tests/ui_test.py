@@ -56,7 +56,8 @@ def test_local_ui_serves_packaged_assets_and_read_only_data(tmp_path: Path) -> N
             html = response.read().decode()
             assert (
                 response.headers["Content-Security-Policy"]
-                == "default-src 'self'; style-src 'self' 'unsafe-inline'"
+                == "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+                "frame-ancestors 'none'"
             )
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/data", timeout=2) as response:
             payload = json.load(response)
@@ -99,6 +100,22 @@ def test_timeline_rejects_oversized_artifact_before_analysis(tmp_path: Path) -> 
 
     with pytest.raises(TimelineError, match="timeline has 2 events; local UI limit is 1"):
         build_timeline_payload(runpack, event_limit=1)
+
+
+def test_timeline_rejects_oversized_edge_sets_before_analysis(tmp_path: Path) -> None:
+    runpack = tmp_path / "run.runpack"
+    record_process(
+        (
+            sys.executable,
+            "-c",
+            "from runtime_tools import runtime; runtime.event('one'); runtime.event('two')",
+        ),
+        runpack,
+        name="served",
+    )
+
+    with pytest.raises(TimelineError, match="timeline has 2 edges; local UI limit is 1"):
+        build_timeline_payload(runpack, edge_limit=1)
 
 
 def test_local_ui_reports_invalid_bind_without_low_level_error(tmp_path: Path) -> None:
