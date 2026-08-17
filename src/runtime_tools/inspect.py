@@ -10,6 +10,8 @@ from pathlib import Path
 from runtime_tools.model import Event, JsonValue
 from runtime_tools.storage import RunpackReader
 
+_MAX_TREE_INDENT_DEPTH = 40
+
 
 @dataclass(frozen=True, slots=True)
 class ExecutionSummary:
@@ -106,23 +108,27 @@ def render_causal_tree(path: Path) -> str:
     lines = ["CAUSAL STRUCTURE"]
     visited: set[str] = set()
 
-    def append_event(event_id: str, depth: int) -> None:
-        event = by_id[event_id]
-        marker = " (cycle)" if event_id in visited else ""
-        service = entity_names.get(event.entity_id or "", "unowned")
-        label = f"{service} :: {event.name} [{event.kind}] {_event_duration(event)}{marker}"
-        lines.append(f"{'  ' * depth}{label}")
-        if marker:
-            return
-        visited.add(event_id)
-        for child_id in children[event_id]:
-            append_event(child_id, depth + 1)
+    def append_tree(event_id: str) -> None:
+        stack = [(event_id, 0)]
+        while stack:
+            current_id, depth = stack.pop()
+            event = by_id[current_id]
+            marker = " (cycle)" if current_id in visited else ""
+            service = entity_names.get(event.entity_id or "", "unowned")
+            label = f"{service} :: {event.name} [{event.kind}] {_event_duration(event)}{marker}"
+            visible_depth = min(depth, _MAX_TREE_INDENT_DEPTH)
+            depth_marker = f"… depth {depth} … " if depth > _MAX_TREE_INDENT_DEPTH else ""
+            lines.append(f"{'  ' * visible_depth}{depth_marker}{label}")
+            if marker:
+                continue
+            visited.add(current_id)
+            stack.extend((child_id, depth + 1) for child_id in reversed(children[current_id]))
 
     for root in roots:
-        append_event(root, 0)
+        append_tree(root)
     for event in events:
         if event.id not in visited:
-            append_event(event.id, 0)
+            append_tree(event.id)
     lines.append(f"clock inconsistencies: {inconsistency_count}")
     return "\n".join(lines)
 
