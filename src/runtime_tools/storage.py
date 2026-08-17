@@ -14,6 +14,7 @@ from runtime_tools import __version__
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue, Measurement
 
 SCHEMA_VERSION = "1"
+SCHEMA_MAJOR_VERSION = "1"
 APPLICATION_ID = 0x4354524C  # CTRL
 _REQUIRED_TABLES = {
     "manifest",
@@ -148,9 +149,13 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
     row = connection.execute("SELECT value FROM manifest WHERE key = 'schema_version'").fetchone()
     if row is None:
         raise RunpackError("runpack has no schema version")
-    if row[0] != SCHEMA_VERSION:
+    version = str(row[0])
+    version_parts = version.split(".")
+    if not version_parts or any(not part.isdigit() for part in version_parts):
+        raise RunpackError(f"runpack schema version is invalid: {version!r}")
+    if version_parts[0] != SCHEMA_MAJOR_VERSION:
         raise UnsupportedSchemaError(
-            f"unsupported runpack schema {row[0]!r}; supported: {SCHEMA_VERSION}"
+            f"unsupported runpack schema {version!r}; supported major: {SCHEMA_MAJOR_VERSION}"
         )
 
 

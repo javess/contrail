@@ -75,6 +75,15 @@ def test_reader_rejects_unknown_schema_major(tmp_path: Path) -> None:
         RunpackReader(output)
 
 
+def test_reader_accepts_additive_schema_minor_versions(tmp_path: Path) -> None:
+    output = tmp_path / "future-minor.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="future-minor")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE manifest SET value = '1.7' WHERE key = 'schema_version'")
+
+    assert inspect_runpack(output).name == "future-minor"
+
+
 def test_reader_rejects_sqlite_files_without_runpack_identity(tmp_path: Path) -> None:
     output = tmp_path / "not-a-runpack.runpack"
     with sqlite3.connect(output) as connection:
