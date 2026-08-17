@@ -25,7 +25,11 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         "Runtime",
         f"  {_format_change(diff.wall_time, _duration)}",
         "",
-        "Critical path",
+        (
+            "Critical path "
+            f"({_certainty(diff.baseline_critical_path_certainty)} → "
+            f"{_certainty(diff.candidate_critical_path_certainty)})"
+        ),
         f"  {_format_change(diff.critical_path, _duration)}",
         "",
         "Peak memory",
@@ -70,6 +74,10 @@ def _equivalence(value: bool | None) -> str:
     if value is None:
         return "unknown"
     return "equivalent" if value else "different"
+
+
+def _certainty(value: str | None) -> str:
+    return value or "unavailable"
 
 
 def _format_change(change: ValueChange, formatter: Callable[[float], str]) -> str:

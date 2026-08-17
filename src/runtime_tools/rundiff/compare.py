@@ -93,6 +93,8 @@ class ExecutionDiff:
     output_equivalent: bool | None
     wall_time: ValueChange
     critical_path: ValueChange
+    baseline_critical_path_certainty: str | None
+    candidate_critical_path_certainty: str | None
     peak_memory: ValueChange
     operation_count_changes: tuple[OperationCountChange, ...]
     edge_count_changes: tuple[EdgeCountChange, ...]
@@ -107,6 +109,8 @@ class ExecutionDiff:
             "output_equivalent": self.output_equivalent,
             "wall_time": self.wall_time.as_json_value(),
             "critical_path": self.critical_path.as_json_value(),
+            "baseline_critical_path_certainty": self.baseline_critical_path_certainty,
+            "candidate_critical_path_certainty": self.candidate_critical_path_certainty,
             "peak_memory": self.peak_memory.as_json_value(),
             "operation_count_changes": [
                 change.as_json_value() for change in self.operation_count_changes
@@ -242,6 +246,12 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
                 if candidate_analysis.critical_path
                 else None
             ),
+        ),
+        baseline_critical_path_certainty=(
+            baseline_analysis.critical_path.certainty if baseline_analysis.critical_path else None
+        ),
+        candidate_critical_path_certainty=(
+            candidate_analysis.critical_path.certainty if candidate_analysis.critical_path else None
         ),
         peak_memory=_value_change(
             baseline_summary.peak_memory_bytes, candidate_summary.peak_memory_bytes
