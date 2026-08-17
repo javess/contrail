@@ -211,3 +211,21 @@ def test_batchscope_calculates_observed_post_compute_drain_rate(tmp_path: Path) 
     assert analysis.throughput.remaining_at_compute_completion == 60.0
     assert analysis.throughput.post_compute_seconds == 0.05
     assert analysis.throughput.post_compute_rate_per_second == 1500.0
+
+
+def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> None:
+    runpack = tmp_path / "clock-skew.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("skew", "skew", 0, 120_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("parent", "run", "parent", 10_000_000, 100_000_000))
+        writer.add_event(_event("child", "operation", "child", 0, 120_000_000))
+        writer.add_causal_edge(CausalEdge("parent", "child", "parent", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.duration_seconds == 0.12
+    assert analysis.critical_path.certainty == "inferred"

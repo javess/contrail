@@ -137,7 +137,11 @@ def _event_interval(event: Event) -> tuple[int, int]:
 
 
 def _critical_path(
-    events: tuple[Event, ...], edge_pairs: tuple[tuple[str, str], ...], total: float | None
+    events: tuple[Event, ...],
+    edge_pairs: tuple[tuple[str, str], ...],
+    total: float | None,
+    *,
+    clock_inconsistent: bool,
 ) -> CriticalPath | None:
     timed = {event.id: event for event in events if _duration_ns(event) > 0}
     if not timed:
@@ -197,7 +201,7 @@ def _critical_path(
         max(0.0, round((total or duration_seconds) - duration_seconds, 12)),
         best_path.event_ids,
         tuple(timed[event_id].name for event_id in best_path.event_ids),
-        "observed" if used_edge_count else "inferred",
+        "observed" if used_edge_count and not clock_inconsistent else "inferred",
         cycle_detected,
     )
 
@@ -359,8 +363,14 @@ def analyze_runpack(path: Path) -> BatchAnalysis:
     with RunpackReader(path) as reader:
         events = reader.events()
         edges = reader.causal_edges()
+        clock_inconsistent = reader.clock_inconsistency_count() > 0
     edge_pairs = tuple((edge.source_event_id, edge.target_event_id) for edge in edges)
-    critical = _critical_path(events, edge_pairs, summary.wall_time_seconds)
+    critical = _critical_path(
+        events,
+        edge_pairs,
+        summary.wall_time_seconds,
+        clock_inconsistent=clock_inconsistent,
+    )
     return BatchAnalysis(
         summary.id,
         summary.name,
