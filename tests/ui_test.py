@@ -98,3 +98,11 @@ def test_timeline_rejects_oversized_artifact_before_analysis(tmp_path: Path) -> 
 
     with pytest.raises(TimelineError, match="timeline has 2 events; local UI limit is 1"):
         build_timeline_payload(runpack, event_limit=1)
+
+
+def test_local_ui_reports_invalid_bind_without_low_level_error(tmp_path: Path) -> None:
+    runpack = tmp_path / "run.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="served")
+
+    with pytest.raises(TimelineError, match="could not bind local UI to 127.0.0.1:70000"):
+        create_server(runpack, None, host="127.0.0.1", port=70_000)

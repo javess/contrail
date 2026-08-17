@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 
-from runtime_tools.ui.data import build_timeline_payload
+from runtime_tools.ui.data import TimelineError, build_timeline_payload
 
 _ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -64,7 +64,10 @@ def create_server(
         def log_message(self, message_format: str, *args: object) -> None:
             print(f"runtime-ui: {message_format % args}", file=sys.stderr)
 
-    return ThreadingHTTPServer((host, port), Handler)
+    try:
+        return ThreadingHTTPServer((host, port), Handler)
+    except (OSError, OverflowError) as exc:
+        raise TimelineError(f"could not bind local UI to {host}:{port}: {exc}") from exc
 
 
 def serve_runpacks(
