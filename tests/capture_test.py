@@ -6,11 +6,12 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from runtime_tools import CaptureError, inspect_runpack, record_process
-from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
+from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter, UnsupportedSchemaError
 
 
@@ -325,6 +326,28 @@ def test_writer_rejects_boolean_measurement_timestamps(tmp_path: Path) -> None:
     with RunpackWriter(output) as writer:
         with pytest.raises(RunpackError, match="measurement timestamp must be an integer"):
             writer.add_measurement(Measurement("value", 1.0, "1", True, None, {}))
+
+
+def test_bulk_attachment_write_rolls_back_non_binary_content(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-attachment-write.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="invalid binary attachment content"):
+            writer.add_attachments(
+                (
+                    Attachment("valid", "raw", "valid", "text/plain", b"valid", {}),
+                    Attachment(
+                        "invalid",
+                        "raw",
+                        "invalid",
+                        "text/plain",
+                        cast(Any, "not bytes"),
+                        {},
+                    ),
+                )
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.attachments() == ()
 
 
 def test_each_capture_reports_its_own_child_peak_memory(tmp_path: Path) -> None:

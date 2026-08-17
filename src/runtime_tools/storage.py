@@ -242,6 +242,17 @@ def _measurement_values(measurement: Measurement) -> tuple[object, ...]:
     )
 
 
+def _attachment_values(attachment: Attachment) -> tuple[object, ...]:
+    return (
+        attachment.id,
+        attachment.kind,
+        attachment.name,
+        attachment.media_type,
+        _blob(attachment.content),
+        _json(attachment.attributes),
+    )
+
+
 def _validate_connection(connection: sqlite3.Connection) -> None:
     application_id = connection.execute("PRAGMA application_id").fetchone()
     if application_id is None or application_id[0] != APPLICATION_ID:
@@ -462,17 +473,7 @@ class RunpackWriter:
                 INSERT INTO attachments(id, kind, name, media_type, content, attributes_json)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    (
-                        attachment.id,
-                        attachment.kind,
-                        attachment.name,
-                        attachment.media_type,
-                        attachment.content,
-                        _json(attachment.attributes),
-                    )
-                    for attachment in attachments
-                ),
+                (_attachment_values(attachment) for attachment in attachments),
             )
 
     def expand_execution_bounds(self, started_at_ns: int, finished_at_ns: int | None) -> None:
