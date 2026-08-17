@@ -31,7 +31,12 @@ def _write(record: dict[str, JsonValue]) -> None:
     payload = (json.dumps(record, allow_nan=False, separators=(",", ":")) + "\n").encode()
     descriptor = os.open(Path(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
     try:
-        os.write(descriptor, payload)
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError("could not append annotation record")
+            remaining = remaining[written:]
     finally:
         os.close(descriptor)
 
@@ -66,16 +71,19 @@ class _Scope:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        _write(
-            {
-                "record": "event_end",
-                "id": self.ref.id,
-                "timestamp_ns": time.time_ns(),
-                "error": exc_type is not None,
-            }
-        )
-        if self._token is not None:
-            _current_event_id.reset(self._token)
+        try:
+            _write(
+                {
+                    "record": "event_end",
+                    "id": self.ref.id,
+                    "timestamp_ns": time.time_ns(),
+                    "error": exc_type is not None,
+                }
+            )
+        finally:
+            if self._token is not None:
+                _current_event_id.reset(self._token)
+                self._token = None
 
 
 def run(name: str, **attributes: JsonValue) -> _Scope:

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
-from runtime_tools import record_process
+import pytest
+
+from runtime_tools import record_process, runtime
 from runtime_tools.storage import RunpackReader
 
 
@@ -73,3 +77,48 @@ with runtime.stage("before-crash"):
     assert event.started_at_ns is not None
     assert event.finished_at_ns is None
     assert not tuple(tmp_path.glob("*.annotations-*"))
+
+
+def test_annotation_writer_completes_short_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", str(annotations))
+    write = os.write
+
+    def short_write(descriptor: int, data: bytes | bytearray | memoryview) -> int:
+        return write(descriptor, data[:7])
+
+    monkeypatch.setattr(os, "write", short_write)
+
+    runtime.event("short-write", detail="complete")
+
+    record = json.loads(annotations.read_text(encoding="utf-8"))
+    assert record["name"] == "short-write"
+    assert record["attributes"] == {"detail": "complete"}
+
+
+def test_scope_restores_parent_context_when_end_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records: list[dict[str, object]] = []
+    failed = False
+
+    def fail_first_end(record: dict[str, object]) -> None:
+        nonlocal failed
+        records.append(record)
+        if record["record"] == "event_end" and not failed:
+            failed = True
+            raise OSError("annotation sink failed")
+
+    monkeypatch.setattr(runtime, "_write", fail_first_end)
+
+    with runtime.run("outer") as outer:
+        with pytest.raises(OSError, match="annotation sink failed"):
+            with runtime.stage("inner"):
+                pass
+        after_failure = runtime.event("after-failure")
+
+    event_record = next(record for record in records if record.get("id") == after_failure.id)
+    assert event_record["parent_id"] == outer.id
+    assert runtime._current_event_id.get() is None
