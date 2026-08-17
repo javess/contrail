@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from runtime_tools import CaptureError, inspect_runpack, record_process
-from runtime_tools.model import Entity, Measurement
+from runtime_tools.model import Entity, Event, Execution, Measurement
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter, UnsupportedSchemaError
 
 
@@ -237,6 +237,47 @@ def test_bulk_measurement_write_rolls_back_non_finite_values(tmp_path: Path) -> 
 
     with RunpackReader(output) as reader:
         assert reader.measurements() == ()
+
+
+def test_writer_rejects_reversed_execution_intervals(tmp_path: Path) -> None:
+    output = tmp_path / "reversed-execution.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="execution cannot finish before it starts"):
+            writer.add_execution(Execution("run", "run", 10, 9, (), str(tmp_path), 0, None, {}))
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
+            reader.execution()
+
+
+def test_writer_rejects_reversed_interval_when_finishing_execution(tmp_path: Path) -> None:
+    output = tmp_path / "reversed-finish.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 10, None, (), str(tmp_path), None, None, {}))
+        with pytest.raises(RunpackError, match="execution cannot finish before it starts"):
+            writer.finish_execution(
+                "run",
+                finished_at_ns=9,
+                exit_code=0,
+                metadata={},
+                event=Event(
+                    "process",
+                    "process.run",
+                    "process",
+                    None,
+                    10,
+                    9,
+                    "host.wall",
+                    None,
+                    None,
+                    {},
+                ),
+                measurements=(),
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.execution().finished_at_ns is None
+        assert reader.events() == ()
 
 
 def test_each_capture_reports_its_own_child_peak_memory(tmp_path: Path) -> None:

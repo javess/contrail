@@ -168,6 +168,18 @@ def _measurement_value(value: object) -> float:
     return float(value)
 
 
+def _execution_interval(started_at_ns: object, finished_at_ns: object) -> tuple[int, int | None]:
+    if not isinstance(started_at_ns, int) or isinstance(started_at_ns, bool):
+        raise RunpackError("execution start timestamp must be an integer")
+    if finished_at_ns is not None and (
+        not isinstance(finished_at_ns, int) or isinstance(finished_at_ns, bool)
+    ):
+        raise RunpackError("execution finish timestamp must be an integer or null")
+    if finished_at_ns is not None and finished_at_ns < started_at_ns:
+        raise RunpackError("execution cannot finish before it starts")
+    return started_at_ns, finished_at_ns
+
+
 def _validate_connection(connection: sqlite3.Connection) -> None:
     application_id = connection.execute("PRAGMA application_id").fetchone()
     if application_id is None or application_id[0] != APPLICATION_ID:
@@ -249,6 +261,9 @@ class RunpackWriter:
             raise RunpackError(f"could not write runpack {self.path}: {exc}") from exc
 
     def add_execution(self, execution: Execution) -> None:
+        started_at_ns, finished_at_ns = _execution_interval(
+            execution.started_at_ns, execution.finished_at_ns
+        )
         with self._writing():
             self._connection.execute(
                 """
@@ -260,8 +275,8 @@ class RunpackWriter:
                 (
                     execution.id,
                     execution.name,
-                    execution.started_at_ns,
-                    execution.finished_at_ns,
+                    started_at_ns,
+                    finished_at_ns,
                     _json(execution.command),
                     execution.working_directory,
                     execution.exit_code,
@@ -481,6 +496,12 @@ class RunpackWriter:
         event: Event,
         measurements: tuple[Measurement, ...],
     ) -> None:
+        row = self._connection.execute(
+            "SELECT started_at_ns FROM executions WHERE id = ?", (execution_id,)
+        ).fetchone()
+        if row is None:
+            raise RunpackError(f"execution does not exist: {execution_id}")
+        _execution_interval(row[0], finished_at_ns)
         with self._writing(), self._connection:
             self._connection.execute(
                 """
