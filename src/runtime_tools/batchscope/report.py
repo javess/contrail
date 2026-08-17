@@ -36,6 +36,13 @@ def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
         lines.append(f"  rate: {_rate(throughput.rate_per_second)}")
         lines.append(f"  remaining: {throughput.remaining:g}")
         lines.append(f"  estimated drain: {_duration(throughput.estimated_drain_seconds)}")
+        if throughput.compute_finished_at_ns is not None:
+            lines.append(
+                "  remaining at compute completion: "
+                f"{_number(throughput.remaining_at_compute_completion)}"
+            )
+            lines.append(f"  post-compute wall time: {_duration(throughput.post_compute_seconds)}")
+            lines.append(f"  post-compute rate: {_rate(throughput.post_compute_rate_per_second)}")
     lines.extend(("", "Bottlenecks"))
     if not analysis.bottlenecks:
         lines.append("  none classified from available evidence")
@@ -55,3 +62,7 @@ def _duration(value: float | None) -> str:
 
 def _rate(value: float | None) -> str:
     return "unknown" if value is None else f"{value:,.2f}/s"
+
+
+def _number(value: float | None) -> str:
+    return "unknown" if value is None else f"{value:g}"

@@ -48,6 +48,10 @@ class Throughput:
     rate_per_second: float | None
     remaining: float
     estimated_drain_seconds: float | None
+    compute_finished_at_ns: int | None
+    remaining_at_compute_completion: float | None
+    post_compute_seconds: float | None
+    post_compute_rate_per_second: float | None
 
     def as_json_value(self) -> dict[str, JsonValue]:
         return {
@@ -56,6 +60,10 @@ class Throughput:
             "rate_per_second": self.rate_per_second,
             "remaining": self.remaining,
             "estimated_drain_seconds": self.estimated_drain_seconds,
+            "compute_finished_at_ns": self.compute_finished_at_ns,
+            "remaining_at_compute_completion": self.remaining_at_compute_completion,
+            "post_compute_seconds": self.post_compute_seconds,
+            "post_compute_rate_per_second": self.post_compute_rate_per_second,
         }
 
 
@@ -194,7 +202,9 @@ def _critical_path(
     )
 
 
-def _throughput(events: tuple[Event, ...]) -> Throughput | None:
+def _throughput(
+    events: tuple[Event, ...], execution_finished_at_ns: int | None
+) -> Throughput | None:
     samples: list[tuple[int, float, float]] = []
     for event in events:
         if event.kind != "progress" or event.started_at_ns is None:
@@ -214,7 +224,47 @@ def _throughput(events: tuple[Event, ...]) -> Throughput | None:
         if elapsed > 0 and delta > 0:
             rate = delta / elapsed
     remaining = max(0.0, latest[2] - latest[1])
-    return Throughput(latest[1], latest[2], rate, remaining, remaining / rate if rate else None)
+    compute_finishes = [
+        event.finished_at_ns
+        for event in events
+        if event.kind == "stage"
+        and event.finished_at_ns is not None
+        and (
+            "compute" in event.name.lower()
+            or event.attributes.get("phase") == "compute"
+            or event.attributes.get("phase") == "executing"
+        )
+    ]
+    compute_finished_at_ns = max(compute_finishes) if compute_finishes else None
+    remaining_at_compute: float | None = None
+    post_compute_seconds: float | None = None
+    post_compute_rate: float | None = None
+    if compute_finished_at_ns is not None:
+        before_compute = [sample for sample in samples if sample[0] <= compute_finished_at_ns]
+        if before_compute:
+            sample = before_compute[-1]
+            remaining_at_compute = max(0.0, sample[2] - sample[1])
+        if execution_finished_at_ns is not None:
+            post_compute_seconds = max(
+                0.0, (execution_finished_at_ns - compute_finished_at_ns) / 1_000_000_000
+            )
+        after_compute = [sample for sample in samples if sample[0] >= compute_finished_at_ns]
+        if len(after_compute) >= 2:
+            elapsed = (after_compute[-1][0] - after_compute[0][0]) / 1_000_000_000
+            delta = after_compute[-1][1] - after_compute[0][1]
+            if elapsed > 0 and delta > 0:
+                post_compute_rate = delta / elapsed
+    return Throughput(
+        latest[1],
+        latest[2],
+        rate,
+        remaining,
+        remaining / rate if rate else None,
+        compute_finished_at_ns,
+        remaining_at_compute,
+        post_compute_seconds,
+        post_compute_rate,
+    )
 
 
 def _lifecycle(events: tuple[Event, ...], total: float | None) -> tuple[LifecyclePhase, ...]:
@@ -317,6 +367,6 @@ def analyze_runpack(path: Path) -> BatchAnalysis:
         summary.wall_time_seconds,
         _lifecycle(events, summary.wall_time_seconds),
         critical,
-        _throughput(events),
+        _throughput(events, summary.finished_at_ns),
         _bottlenecks(events, critical, summary.wall_time_seconds),
     )

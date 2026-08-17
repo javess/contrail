@@ -86,6 +86,10 @@ def test_batchscope_derives_overlap_aware_critical_path_and_throughput(tmp_path:
     assert analysis.throughput.rate_per_second == 1000.0
     assert analysis.throughput.remaining == 40.0
     assert analysis.throughput.estimated_drain_seconds == 0.04
+    assert analysis.throughput.compute_finished_at_ns == 50_000_000
+    assert analysis.throughput.remaining_at_compute_completion == 80.0
+    assert analysis.throughput.post_compute_seconds == 0.05
+    assert analysis.throughput.post_compute_rate_per_second is None
     assert {item.classification for item in analysis.bottlenecks} == {"serialized_stage"}
 
 
@@ -160,3 +164,50 @@ def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> N
     analysis = analyze_runpack(runpack)
 
     assert {item.classification for item in analysis.bottlenecks} == {"external_dependency"}
+
+
+def test_batchscope_calculates_observed_post_compute_drain_rate(tmp_path: Path) -> None:
+    runpack = tmp_path / "drain.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("drain", "drain", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("compute", "stage", "compute", 0, 50_000_000))
+        writer.add_event(
+            _event(
+                "progress-1",
+                "progress",
+                "progress",
+                50_000_000,
+                50_000_000,
+                {"completed": 40, "total": 100},
+            )
+        )
+        writer.add_event(
+            _event(
+                "progress-2",
+                "progress",
+                "progress",
+                70_000_000,
+                70_000_000,
+                {"completed": 70, "total": 100},
+            )
+        )
+        writer.add_event(
+            _event(
+                "progress-3",
+                "progress",
+                "progress",
+                90_000_000,
+                90_000_000,
+                {"completed": 100, "total": 100},
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.throughput is not None
+    assert analysis.throughput.remaining_at_compute_completion == 60.0
+    assert analysis.throughput.post_compute_seconds == 0.05
+    assert analysis.throughput.post_compute_rate_per_second == 1500.0
