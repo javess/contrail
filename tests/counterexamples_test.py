@@ -3,7 +3,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from runtime_tools.proofline import search_counterexample
+import pytest
+
+from runtime_tools.proofline import ContractError, search_counterexample
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -68,3 +70,33 @@ print(a.value + 1 if a.value >= 2 else a.value)
     assert result.experiment.baseline_runpack.is_file()
     assert result.experiment.candidate_runpack.is_file()
     assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
+
+
+def test_counterexample_search_rejects_duplicate_parameter_flags(tmp_path: Path) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(
+        """
+parameters:
+  first:
+    type: integer
+    min: 0
+    max: 1
+    flag: --value
+  second:
+    type: integer
+    min: 0
+    max: 1
+    flag: --value
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="parameter flags must be unique: --value"):
+        search_counterexample(
+            tmp_path / "contract.yaml",
+            parameters,
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("workload.py"),
+            output_dir=tmp_path / "output",
+        )

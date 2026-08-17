@@ -53,6 +53,7 @@ def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
     if not raw_parameters:
         raise ContractError("parameters cannot be empty")
     result = []
+    flags: set[str] = set()
     for name, raw_spec in raw_parameters.items():
         if not isinstance(name, str) or not name:
             raise ContractError("parameter names must be non-empty strings")
@@ -66,6 +67,9 @@ def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
         flag = spec.get("flag", f"--{name.replace('_', '-')}")
         if not isinstance(flag, str) or not flag.startswith("-"):
             raise ContractError(f"parameter {name} flag must start with '-'")
+        if flag in flags:
+            raise ContractError(f"parameter flags must be unique: {flag}")
+        flags.add(flag)
         result.append(IntegerParameter(name, flag, minimum, maximum))
     return tuple(result)
 
