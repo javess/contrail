@@ -316,3 +316,35 @@ def test_compare_runpacks_keeps_outcome_unknown_when_stderr_evidence_is_missing(
     assert diff.output_equivalent is True
     assert diff.stderr_equivalent is None
     assert diff.outcome == "unknown"
+
+
+def test_compare_runpacks_does_not_treat_untimed_operations_as_zero_duration(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, finish in ((baseline, 10), (candidate, None)):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(path.stem, path.stem, 0, 10, (), str(tmp_path), 0, None, {})
+            )
+            writer.add_entity(Entity("worker", "service", "worker", None, {}))
+            writer.add_event(
+                Event(
+                    "operation",
+                    "stage",
+                    "transform",
+                    "worker",
+                    0 if finish is not None else None,
+                    finish,
+                    "test",
+                    None,
+                    None,
+                    {},
+                )
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.operation_count_changes == ()
+    assert diff.operation_duration_changes == ()

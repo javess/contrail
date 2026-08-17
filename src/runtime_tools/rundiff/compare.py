@@ -222,9 +222,15 @@ def _edge_changes(
 def _duration_changes(
     baseline: dict[tuple[str, str, str, str], float],
     candidate: dict[tuple[str, str, str, str], float],
+    baseline_counts: dict[tuple[str, str, str, str], int],
+    candidate_counts: dict[tuple[str, str, str, str], int],
 ) -> tuple[OperationDurationChange, ...]:
     changes = []
     for key in baseline.keys() | candidate.keys():
+        if (key not in baseline and baseline_counts.get(key, 0) > 0) or (
+            key not in candidate and candidate_counts.get(key, 0) > 0
+        ):
+            continue
         before = baseline.get(key, 0.0)
         after = candidate.get(key, 0.0)
         if before == after:
@@ -305,6 +311,11 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
             baseline_summary.peak_memory_bytes, candidate_summary.peak_memory_bytes
         ),
         operation_count_changes=_operation_changes(baseline_operations, candidate_operations),
-        operation_duration_changes=_duration_changes(baseline_durations, candidate_durations),
+        operation_duration_changes=_duration_changes(
+            baseline_durations,
+            candidate_durations,
+            baseline_operations,
+            candidate_operations,
+        ),
         edge_count_changes=_edge_changes(baseline_edges, candidate_edges),
     )

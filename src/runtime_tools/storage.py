@@ -709,9 +709,9 @@ class RunpackReader:
                     / 1000000000.0 AS duration_seconds
             FROM events AS event
             LEFT JOIN entities AS entity ON entity.id = event.entity_id
-            WHERE event.started_at_ns IS NOT NULL
-              AND event.finished_at_ns IS NOT NULL
             GROUP BY entity_kind, entity_name, event_kind, event_name
+            HAVING count(*) = count(event.started_at_ns)
+               AND count(*) = count(event.finished_at_ns)
             """
         ).fetchall()
         return {
