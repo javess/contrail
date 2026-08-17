@@ -56,3 +56,75 @@ def test_runtime_cli_records_then_inspects_json(tmp_path: Path) -> None:
         "events": 1,
         "measurements": 6,
     }
+
+
+def test_runtime_cli_imports_otlp_json_and_prints_causal_tree(tmp_path: Path) -> None:
+    source = tmp_path / "trace.json"
+    output = tmp_path / "trace.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {"stringValue": "checkout"},
+                                }
+                            ]
+                        },
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "name": "charge",
+                                        "startTimeUnixNano": "1000",
+                                        "endTimeUnixNano": "3000",
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    imported = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "import-otel",
+            str(source),
+            "--output",
+            str(output),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    inspected = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "inspect",
+            str(output),
+            "--tree",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert imported.returncode == 0
+    assert "imported 1 spans and 0 causal edges" in imported.stderr
+    assert inspected.returncode == 0
+    assert "outcome:  unknown (no exit status)" in inspected.stdout
+    assert "runtime:  0.000s" in inspected.stdout
+    assert "checkout :: charge [operation] 0.002ms" in inspected.stdout

@@ -7,7 +7,7 @@ import shlex
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from runtime_tools.model import JsonValue
+from runtime_tools.model import Event, JsonValue
 from runtime_tools.storage import RunpackReader
 
 
@@ -53,6 +53,9 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
         execution = reader.execution()
         measurements = {item.name: item.value for item in reader.measurements()}
         peak_memory = measurements.get("process.memory.peak")
+        wall_time = measurements.get("process.wall_time")
+        if wall_time is None and execution.finished_at_ns is not None:
+            wall_time = (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
         return ExecutionSummary(
             id=execution.id,
             name=execution.name,
@@ -62,7 +65,7 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             started_at_ns=execution.started_at_ns,
             finished_at_ns=execution.finished_at_ns,
             exit_code=execution.exit_code,
-            wall_time_seconds=measurements.get("process.wall_time"),
+            wall_time_seconds=wall_time,
             cpu_user_seconds=measurements.get("process.cpu.user"),
             cpu_system_seconds=measurements.get("process.cpu.system"),
             peak_memory_bytes=int(peak_memory) if peak_memory is not None else None,
@@ -72,6 +75,57 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             stderr_sha256=_as_str(_nested_output(execution.metadata, "stderr", "sha256")),
             record_counts=reader.counts(),
         )
+
+
+def render_causal_tree(path: Path) -> str:
+    with RunpackReader(path) as reader:
+        events = reader.events()
+        edges = tuple(edge for edge in reader.causal_edges() if edge.kind == "parent")
+        entity_names = {entity.id: entity.name for entity in reader.entities()}
+        inconsistency_count = reader.clock_inconsistency_count()
+    by_id = {event.id: event for event in events}
+    children: dict[str, list[str]] = {event.id: [] for event in events}
+    incoming: set[str] = set()
+    for edge in edges:
+        if edge.source_event_id in children and edge.target_event_id in by_id:
+            children[edge.source_event_id].append(edge.target_event_id)
+            incoming.add(edge.target_event_id)
+    roots = [event.id for event in events if event.id not in incoming]
+
+    def sort_key(event_id: str) -> tuple[int, str]:
+        return (by_id[event_id].started_at_ns or -1, by_id[event_id].name)
+
+    for child_ids in children.values():
+        child_ids.sort(key=sort_key)
+    roots.sort(key=sort_key)
+    lines = ["CAUSAL STRUCTURE"]
+    visited: set[str] = set()
+
+    def append_event(event_id: str, depth: int) -> None:
+        event = by_id[event_id]
+        marker = " (cycle)" if event_id in visited else ""
+        service = entity_names.get(event.entity_id or "", "unowned")
+        label = f"{service} :: {event.name} [{event.kind}] {_event_duration(event)}{marker}"
+        lines.append(f"{'  ' * depth}{label}")
+        if marker:
+            return
+        visited.add(event_id)
+        for child_id in children[event_id]:
+            append_event(child_id, depth + 1)
+
+    for root in roots:
+        append_event(root, 0)
+    for event in events:
+        if event.id not in visited:
+            append_event(event.id, 0)
+    lines.append(f"clock inconsistencies: {inconsistency_count}")
+    return "\n".join(lines)
+
+
+def _event_duration(event: Event) -> str:
+    if event.started_at_ns is None or event.finished_at_ns is None:
+        return "duration unknown"
+    return f"{(event.finished_at_ns - event.started_at_ns) / 1_000_000:.3f}ms"
 
 
 def _as_int(value: str | int | None) -> int | None:
@@ -92,12 +146,13 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
         "unknown" if summary.peak_memory_bytes is None else _format_bytes(summary.peak_memory_bytes)
     )
     revision = summary.revision or "unknown"
+    command = shlex.join(summary.command) if summary.command else "(telemetry import)"
     lines = [
         f"RUN {summary.name}",
         f"id:       {summary.id}",
-        f"command:  {shlex.join(summary.command)}",
+        f"command:  {command}",
         f"revision: {revision}",
-        f"outcome:  {_format_outcome(summary.exit_code)}",
+        f"outcome:  {_format_outcome(summary)}",
         f"runtime:  {duration}",
         f"cpu:      {_format_cpu(summary)}",
         f"memory:   {peak} peak",
@@ -114,10 +169,10 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
     return "\n".join(lines)
 
 
-def _format_outcome(exit_code: int | None) -> str:
-    if exit_code is None:
-        return "in progress"
-    return "success (exit 0)" if exit_code == 0 else f"failed (exit {exit_code})"
+def _format_outcome(summary: ExecutionSummary) -> str:
+    if summary.exit_code is None:
+        return "in progress" if summary.finished_at_ns is None else "unknown (no exit status)"
+    return "success (exit 0)" if summary.exit_code == 0 else f"failed (exit {summary.exit_code})"
 
 
 def _format_cpu(summary: ExecutionSummary) -> str:

@@ -37,3 +37,11 @@ sqlite3 demo.runpack '.tables'
 ```
 
 Use `runtime inspect demo.runpack --format json` for machine-readable output.
+
+Bounded OpenTelemetry trace exports in OTLP/JSON can be normalized into the
+same artifact and inspected as a causal tree:
+
+```bash
+uv run runtime import-otel trace.json --name checkout
+uv run runtime inspect trace.runpack --tree
+```

@@ -8,7 +8,7 @@ from pathlib import Path
 from types import TracebackType
 
 from runtime_tools import __version__
-from runtime_tools.model import Entity, Event, Execution, JsonValue, Measurement
+from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue, Measurement
 
 SCHEMA_VERSION = "1"
 APPLICATION_ID = 0x4354524C  # CTRL
@@ -184,6 +184,23 @@ class RunpackWriter:
         )
         self._connection.commit()
 
+    def add_causal_edge(self, edge: CausalEdge) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO causal_edges(
+                source_event_id, target_event_id, kind, confidence, attributes_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                edge.source_event_id,
+                edge.target_event_id,
+                edge.kind,
+                edge.confidence,
+                _json(edge.attributes),
+            ),
+        )
+        self._connection.commit()
+
     def finish_execution(
         self,
         execution_id: str,
@@ -321,6 +338,77 @@ class RunpackReader:
             )
             for row in rows
         )
+
+    def entities(self) -> tuple[Entity, ...]:
+        rows = self._connection.execute("SELECT * FROM entities ORDER BY id").fetchall()
+        return tuple(
+            Entity(
+                id=row["id"],
+                kind=row["kind"],
+                name=row["name"],
+                parent_entity_id=row["parent_entity_id"],
+                attributes=_object(row["attributes_json"]),
+            )
+            for row in rows
+        )
+
+    def events(self) -> tuple[Event, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM events ORDER BY started_at_ns, sequence, id"
+        ).fetchall()
+        return tuple(
+            Event(
+                id=row["id"],
+                kind=row["kind"],
+                name=row["name"],
+                entity_id=row["entity_id"],
+                started_at_ns=row["started_at_ns"],
+                finished_at_ns=row["finished_at_ns"],
+                clock_domain=row["clock_domain"],
+                uncertainty_ns=row["uncertainty_ns"],
+                sequence=row["sequence"],
+                attributes=_object(row["attributes_json"]),
+            )
+            for row in rows
+        )
+
+    def causal_edges(self) -> tuple[CausalEdge, ...]:
+        rows = self._connection.execute(
+            """
+            SELECT source_event_id, target_event_id, kind, confidence, attributes_json
+            FROM causal_edges
+            ORDER BY source_event_id, target_event_id, kind
+            """
+        ).fetchall()
+        return tuple(
+            CausalEdge(
+                source_event_id=row["source_event_id"],
+                target_event_id=row["target_event_id"],
+                kind=row["kind"],
+                confidence=row["confidence"],
+                attributes=_object(row["attributes_json"]),
+            )
+            for row in rows
+        )
+
+    def clock_inconsistency_count(self) -> int:
+        row = self._connection.execute(
+            """
+            SELECT count(*)
+            FROM causal_edges AS edge
+            JOIN events AS parent ON parent.id = edge.source_event_id
+            JOIN events AS child ON child.id = edge.target_event_id
+            WHERE edge.kind = 'parent'
+              AND (
+                (parent.started_at_ns IS NOT NULL AND child.started_at_ns IS NOT NULL
+                 AND child.started_at_ns < parent.started_at_ns)
+                OR
+                (parent.finished_at_ns IS NOT NULL AND child.finished_at_ns IS NOT NULL
+                 AND child.finished_at_ns > parent.finished_at_ns)
+              )
+            """
+        ).fetchone()
+        return int(row[0])
 
     def counts(self) -> dict[str, int]:
         return {
