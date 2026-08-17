@@ -432,8 +432,25 @@ def _bottlenecks(
     findings: list[Bottleneck] = []
     for event in events:
         duration = _duration_ns(event) / 1_000_000_000
+        enclosing_run_durations = tuple(
+            _duration_ns(scope) / 1_000_000_000
+            for scope in events
+            if scope.kind == "run"
+            and scope.started_at_ns is not None
+            and scope.finished_at_ns is not None
+            and event.started_at_ns is not None
+            and event.finished_at_ns is not None
+            and scope.started_at_ns <= event.started_at_ns
+            and scope.finished_at_ns >= event.finished_at_ns
+        )
+        comparison_window = min(enclosing_run_durations, default=total)
         concurrency = event.attributes.get("concurrency")
-        if event.kind == "stage" and concurrency == 1 and duration / total >= 0.25:
+        if (
+            event.kind == "stage"
+            and concurrency == 1
+            and comparison_window > 0
+            and duration / comparison_window >= 0.25
+        ):
             findings.append(
                 Bottleneck(
                     "serialized_stage",

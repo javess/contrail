@@ -193,6 +193,33 @@ def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> N
     assert {item.classification for item in analysis.bottlenecks} == {"external_dependency"}
 
 
+def test_serialized_stage_uses_enclosing_logical_run_instead_of_process_startup(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "logical-window.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("logical", "logical", 0, 1_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("process", "process.run", "python", 0, 1_000_000_000))
+        writer.add_event(_event("run", "run", "workload", 800_000_000, 900_000_000))
+        writer.add_event(
+            _event(
+                "persist",
+                "stage",
+                "persist",
+                850_000_000,
+                890_000_000,
+                {"concurrency": 1},
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert {item.classification for item in analysis.bottlenecks} == {"serialized_stage"}
+
+
 def test_batchscope_does_not_sum_parallel_side_branch_clients_as_a_bottleneck(
     tmp_path: Path,
 ) -> None:
