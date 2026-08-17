@@ -156,6 +156,14 @@ def _event_interval(event: Event) -> tuple[int, int]:
     return event.started_at_ns, event.finished_at_ns
 
 
+def _has_complete_interval(event: Event) -> bool:
+    return event.started_at_ns is not None and event.finished_at_ns is not None
+
+
+def _path_key(path: _Path) -> tuple[bool, int, int]:
+    return bool(path.intervals), path.duration_ns, path.length
+
+
 def _critical_path(
     events: tuple[Event, ...],
     edge_values: tuple[tuple[str, str, float], ...],
@@ -163,19 +171,15 @@ def _critical_path(
     *,
     clock_inconsistent: bool,
 ) -> CriticalPath | None:
-    timed = {
-        event.id: event
-        for event in events
-        if event.started_at_ns is not None and event.finished_at_ns is not None
-    }
-    if not timed:
+    nodes = {event.id: event for event in events}
+    if not any(_has_complete_interval(event) for event in events):
         return None
-    children: dict[str, list[str]] = {event_id: [] for event_id in timed}
+    children: dict[str, list[str]] = {event_id: [] for event_id in nodes}
     confidence_by_pair: dict[tuple[str, str], float] = {}
     incoming: set[str] = set()
     used_edge_count = 0
     for source, target, confidence in edge_values:
-        if source in timed and target in timed:
+        if source in nodes and target in nodes:
             pair = (source, target)
             if pair not in confidence_by_pair:
                 children[source].append(target)
@@ -210,10 +214,15 @@ def _critical_path(
                         stack.append((child_id, False))
                 continue
 
-            event_interval = _event_interval(timed[current_id])
+            event = nodes[current_id]
+            event_interval = _event_interval(event) if _has_complete_interval(event) else None
             candidates = [
                 _Path(
-                    _merge_intervals((event_interval, *memo[child_id].intervals)),
+                    (
+                        _merge_intervals((event_interval, *memo[child_id].intervals))
+                        if event_interval is not None
+                        else memo[child_id].intervals
+                    ),
                     current_id,
                     memo[child_id],
                     memo[child_id].length + 1,
@@ -223,21 +232,26 @@ def _critical_path(
             ]
             result = max(
                 candidates,
-                key=lambda path: (path.duration_ns, path.length),
-                default=_Path((event_interval,), current_id, None, 1),
+                key=_path_key,
+                default=_Path(
+                    (event_interval,) if event_interval is not None else (),
+                    current_id,
+                    None,
+                    1,
+                ),
             )
             state[current_id] = 2
             memo[current_id] = result
         return memo[event_id]
 
-    roots = [event_id for event_id in timed if event_id not in incoming]
+    roots = [event_id for event_id in nodes if event_id not in incoming]
     candidates = [visit(root) for root in roots]
-    for event_id in timed:
+    for event_id in nodes:
         if event_id not in memo:
             candidates.append(visit(event_id))
     best_path = max(
         candidates,
-        key=lambda path: (path.duration_ns, path.length),
+        key=_path_key,
     )
     event_ids = best_path.event_ids()
     selected_confidences = tuple(
@@ -247,6 +261,7 @@ def _critical_path(
     edges_observed = bool(selected_confidences) and all(
         confidence == 1.0 for confidence in selected_confidences
     )
+    timing_complete = all(_has_complete_interval(nodes[event_id]) for event_id in event_ids)
     duration_seconds = best_path.duration_ns / 1_000_000_000
     return CriticalPath(
         duration_seconds=duration_seconds,
@@ -254,10 +269,14 @@ def _critical_path(
         waiting_seconds=(best_path.duration_ns - best_path.active_ns) / 1_000_000_000,
         parallel_slack_seconds=max(0.0, round((total or duration_seconds) - duration_seconds, 12)),
         event_ids=event_ids,
-        event_names=tuple(timed[event_id].name for event_id in event_ids),
+        event_names=tuple(nodes[event_id].name for event_id in event_ids),
         certainty=(
             "observed"
-            if used_edge_count and edges_observed and not clock_inconsistent and not cycle_detected
+            if used_edge_count
+            and edges_observed
+            and timing_complete
+            and not clock_inconsistent
+            and not cycle_detected
             else "inferred"
         ),
         cycle_detected=cycle_detected,
