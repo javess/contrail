@@ -51,6 +51,8 @@ def test_runtime_cli_records_then_inspects_json(tmp_path: Path) -> None:
     assert inspected.returncode == 0
     payload = json.loads(inspected.stdout)
     assert payload["name"] == "cli-demo"
+    assert payload["schema_version"] == "1.1"
+    assert payload["producer_version"] == "0.1.0"
     assert payload["exit_code"] == 0
     assert payload["stdout_bytes"] == 9
     assert payload["record_counts"] == {

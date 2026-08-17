@@ -13,6 +13,8 @@ from runtime_tools.storage import RunpackReader
 
 @dataclass(frozen=True, slots=True)
 class ExecutionSummary:
+    schema_version: str
+    producer_version: str
     id: str
     name: str
     command: tuple[str, ...]
@@ -50,6 +52,7 @@ def _nested_output(metadata: dict[str, JsonValue], stream: str, field: str) -> s
 
 def inspect_runpack(path: Path) -> ExecutionSummary:
     with RunpackReader(path) as reader:
+        manifest = reader.manifest()
         execution = reader.execution()
         measurements = {item.name: item.value for item in reader.measurements()}
         peak_memory = measurements.get("process.memory.peak")
@@ -57,6 +60,8 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
         if wall_time is None and execution.finished_at_ns is not None:
             wall_time = (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
         return ExecutionSummary(
+            schema_version=manifest["schema_version"],
+            producer_version=manifest.get("producer_version", "unknown"),
             id=execution.id,
             name=execution.name,
             command=execution.command,
@@ -150,6 +155,7 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
     lines = [
         f"RUN {summary.name}",
         f"id:       {summary.id}",
+        f"schema:   {summary.schema_version} (producer {summary.producer_version})",
         f"command:  {command}",
         f"revision: {revision}",
         f"outcome:  {_format_outcome(summary)}",

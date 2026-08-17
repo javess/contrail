@@ -31,6 +31,8 @@ def test_record_process_captures_outcome_resources_and_output_identity(tmp_path:
     assert stdout.getvalue() == b"hello\n"
     assert stderr.getvalue() == b"warning\n"
     assert summary.exit_code == 0
+    assert summary.schema_version == "1.1"
+    assert summary.producer_version == "0.1.0"
     assert summary.wall_time_seconds is not None and summary.wall_time_seconds >= 0
     assert summary.cpu_user_seconds is not None and summary.cpu_user_seconds >= 0
     assert summary.peak_memory_bytes is not None and summary.peak_memory_bytes > 0

@@ -578,6 +578,10 @@ class RunpackReader:
             metadata=_object(row["metadata_json"]),
         )
 
+    def manifest(self) -> dict[str, str]:
+        rows = self._execute("SELECT key, value FROM manifest ORDER BY key").fetchall()
+        return {str(row["key"]): str(row["value"]) for row in rows}
+
     def measurements(self) -> tuple[Measurement, ...]:
         rows = self._execute(
             "SELECT name, value, unit, timestamp_ns, entity_id, attributes_json "
