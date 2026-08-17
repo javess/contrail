@@ -5,6 +5,7 @@ const fmtBytes = bytes => bytes == null ? "unknown" : bytes < 1048576 ? `${(byte
 const fmtNumber = value => value == null ? "unknown" : new Intl.NumberFormat().format(value);
 const fmtRate = value => value == null ? "unknown" : `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)}/s`;
 const fmtEquivalence = value => value == null ? "unknown" : value ? "equivalent" : "different";
+const nsToSeconds = value => value == null ? null : value / 1e9;
 const escapeHtml = value => String(value).replace(/[&<>'"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[char]);
 
 function currentRun() { return state.data.runs[state.runIndex]; }
@@ -97,13 +98,14 @@ function renderTimeline() {
     return `<div class="lane"><div class="lane-label">${escapeHtml(entity.name)}<small>${escapeHtml(entity.kind)} · ${events.length} events</small></div><div class="track">${bars}</div></div>`;
   }).join("");
   document.querySelector("#timeline").innerHTML = `<div class="timeline-inner" style="width:${width}%">${lanes || '<div class="lane-label">No matching events</div>'}</div>`;
-  document.querySelector("#axis").innerHTML = `<span>0</span><span>${fmtDuration(run.summary.wall_time_seconds / 2)}</span><span>${fmtDuration(run.summary.wall_time_seconds)}</span>`;
+  const midpoint = run.summary.wall_time_seconds == null ? null : run.summary.wall_time_seconds / 2;
+  document.querySelector("#axis").innerHTML = `<span>0</span><span>${fmtDuration(midpoint)}</span><span>${fmtDuration(run.summary.wall_time_seconds)}</span>`;
   document.querySelectorAll(".event").forEach(button => button.addEventListener("click", () => showDetail(visible.find(event => event.id === button.dataset.id), entities)));
 }
 
 function showDetail(event, entities) {
   const entity = entities.get(event.entity_id);
-  document.querySelector("#detail").innerHTML = `<p class="eyebrow">SELECTED EVIDENCE</p><h2>${escapeHtml(event.name)}</h2><dl><dt>Entity</dt><dd>${escapeHtml(entity ? `${entity.name} / ${entity.kind}` : "unowned")}</dd><dt>Kind</dt><dd>${escapeHtml(event.kind)}</dd><dt>Start offset</dt><dd>${fmtDuration(event.start_offset_ns / 1e9)}</dd><dt>Duration</dt><dd>${fmtDuration(event.duration_ns / 1e9)}</dd><dt>Normalized attributes</dt><dd class="attributes">${escapeHtml(JSON.stringify(event.attributes, null, 2))}</dd></dl>`;
+  document.querySelector("#detail").innerHTML = `<p class="eyebrow">SELECTED EVIDENCE</p><h2>${escapeHtml(event.name)}</h2><dl><dt>Entity</dt><dd>${escapeHtml(entity ? `${entity.name} / ${entity.kind}` : "unowned")}</dd><dt>Kind</dt><dd>${escapeHtml(event.kind)}</dd><dt>Start offset</dt><dd>${fmtDuration(nsToSeconds(event.start_offset_ns))}</dd><dt>Duration</dt><dd>${fmtDuration(nsToSeconds(event.duration_ns))}</dd><dt>Normalized attributes</dt><dd class="attributes">${escapeHtml(JSON.stringify(event.attributes, null, 2))}</dd></dl>`;
 }
 
 function renderAll() { renderSwitcher(); renderSummary(); renderAnalysis(); renderComparison(); renderFilters(); renderTimeline(); }
