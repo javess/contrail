@@ -680,6 +680,27 @@ class RunpackReader:
             for row in rows
         }
 
+    def peer_service_edge_counts(self) -> dict[tuple[str, str, str, str, str], int]:
+        rows = self._execute(
+            """
+            SELECT
+                COALESCE(entity.kind, 'unowned') AS source_kind,
+                COALESCE(entity.name, 'unowned') AS source_name,
+                event.attributes_json
+            FROM events AS event
+            LEFT JOIN entities AS entity ON entity.id = event.entity_id
+            WHERE event.kind = 'client.request'
+            """
+        ).fetchall()
+        counts: dict[tuple[str, str, str, str, str], int] = {}
+        for row in rows:
+            peer = _object(row["attributes_json"]).get("peer.service")
+            if not isinstance(peer, str):
+                continue
+            key = (row["source_kind"], row["source_name"], "service", peer, "calls")
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
     def counts(self) -> dict[str, int]:
         return {
             table: self._execute(f"SELECT count(*) FROM {table}").fetchone()[0]

@@ -245,14 +245,8 @@ def _output_hash(summary: ExecutionSummary) -> str | None:
 
 def _all_edge_counts(reader: RunpackReader) -> dict[tuple[str, str, str, str, str], int]:
     counts = {key: count for key, count in reader.edge_counts().items() if key[:2] != key[2:4]}
-    entities = {entity.id: entity for entity in reader.entities()}
-    for event in reader.events():
-        peer = event.attributes.get("peer.service")
-        entity = entities.get(event.entity_id or "")
-        if event.kind != "client.request" or not isinstance(peer, str) or entity is None:
-            continue
-        key = (entity.kind, entity.name, "service", peer, "calls")
-        counts[key] = counts.get(key, 0) + 1
+    for key, count in reader.peer_service_edge_counts().items():
+        counts[key] = counts.get(key, 0) + count
     return counts
 
 

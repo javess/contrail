@@ -8,7 +8,7 @@ from pathlib import Path
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.rundiff.report import render_diff
-from runtime_tools.storage import RunpackWriter
+from runtime_tools.storage import RunpackReader, RunpackWriter
 
 
 def _write_runpack(path: Path, *, candidate: bool) -> None:
@@ -152,6 +152,34 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
         ("gateway", "metadata", "new"),
         ("gateway", "database", "changed"),
     ]
+
+
+def test_reader_aggregates_peer_dependencies_from_client_rows(tmp_path: Path) -> None:
+    runpack = tmp_path / "peer-counts.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("peer-counts", "peer-counts", 0, 1, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "service", "worker", None, {}))
+        writer.add_events(
+            Event(
+                f"call-{index}",
+                "client.request",
+                "call",
+                "worker",
+                0,
+                1,
+                "test",
+                None,
+                index,
+                {"peer.service": "database"},
+            )
+            for index in range(3)
+        )
+    with RunpackReader(runpack) as reader:
+        assert reader.peer_service_edge_counts() == {
+            ("service", "worker", "service", "database", "calls"): 3
+        }
 
 
 def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> None:
