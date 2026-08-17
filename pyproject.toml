@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Contrail contributors" }]
 dependencies = [
+    "hypothesis>=6.140",
     "pyyaml>=6.0.2",
 ]
 

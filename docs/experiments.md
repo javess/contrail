@@ -36,3 +36,33 @@ proofline run contracts.yaml \
   --workload-arg=--jobs \
   --workload-arg=100
 ```
+
+## Counterexample search
+
+`proofline search` uses bounded Hypothesis strategies and shrinking. The first
+slice supports integer parameters with explicit bounds:
+
+```yaml
+parameters:
+  retries:
+    type: integer
+    min: 0
+    max: 10
+  jobs:
+    type: integer
+    min: 1
+    max: 100
+```
+
+Each generated value becomes `--parameter=value`. Non-violating case artifacts
+are temporary; only the minimized violating case is preserved. Search is
+deterministic, has no Hypothesis example database, and is bounded by
+`--max-examples`.
+
+```bash
+proofline search contracts.yaml \
+  --parameters parameters.yaml \
+  --baseline-ref main \
+  --candidate-ref HEAD \
+  --workload benchmarks/retry.py
+```
