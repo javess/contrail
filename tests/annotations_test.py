@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from runtime_tools import record_process, runtime
+from runtime_tools.annotations import AnnotationError, load_annotations
 from runtime_tools.storage import RunpackReader
 
 
@@ -122,3 +123,41 @@ def test_scope_restores_parent_context_when_end_write_fails(
     event_record = next(record for record in records if record.get("id") == after_failure.id)
     assert event_record["parent_id"] == outer.id
     assert runtime._current_event_id.get() is None
+
+
+@pytest.mark.parametrize(
+    ("records", "message"),
+    (
+        (
+            (
+                {"record": "event_instant", "id": "same"},
+                {"record": "event_instant", "id": "same"},
+            ),
+            "duplicate annotation event id on line 2",
+        ),
+        (
+            (
+                {"record": "event_start", "id": "scope"},
+                {"record": "event_end", "id": "scope"},
+                {"record": "event_end", "id": "scope"},
+            ),
+            "duplicate annotation event end on line 3",
+        ),
+        (
+            ({"record": "event_end", "id": "missing"},),
+            "orphan annotation event end on line 1",
+        ),
+    ),
+)
+def test_annotation_loader_rejects_conflicting_lifecycle_records(
+    tmp_path: Path,
+    records: tuple[dict[str, object], ...],
+    message: str,
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    annotations.write_text(
+        "".join(f"{json.dumps(record)}\n" for record in records), encoding="utf-8"
+    )
+
+    with pytest.raises(AnnotationError, match=message):
+        load_annotations(annotations, entity_id="process")

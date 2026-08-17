@@ -41,6 +41,8 @@ def load_annotations(
     ends: dict[str, dict[str, JsonValue]] = {}
     instants: list[dict[str, JsonValue]] = []
     links: list[dict[str, JsonValue]] = []
+    event_ids: set[str] = set()
+    end_lines: dict[str, int] = {}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -52,15 +54,32 @@ def load_annotations(
             raise AnnotationError(f"invalid annotation JSON on line {line_number}") from exc
         record_kind = record.get("record")
         if record_kind == "event_start":
-            starts[_string(record, "id")] = record
+            event_id = _string(record, "id")
+            if event_id in event_ids:
+                raise AnnotationError(f"duplicate annotation event id on line {line_number}")
+            event_ids.add(event_id)
+            starts[event_id] = record
         elif record_kind == "event_end":
-            ends[_string(record, "id")] = record
+            event_id = _string(record, "id")
+            if event_id in ends:
+                raise AnnotationError(f"duplicate annotation event end on line {line_number}")
+            ends[event_id] = record
+            end_lines[event_id] = line_number
         elif record_kind == "event_instant":
+            event_id = _string(record, "id")
+            if event_id in event_ids:
+                raise AnnotationError(f"duplicate annotation event id on line {line_number}")
+            event_ids.add(event_id)
             instants.append(record)
         elif record_kind == "link":
             links.append(record)
         else:
             raise AnnotationError(f"unknown annotation record on line {line_number}")
+
+    orphaned_ends = ends.keys() - starts.keys()
+    if orphaned_ends:
+        event_id = min(orphaned_ends, key=end_lines.__getitem__)
+        raise AnnotationError(f"orphan annotation event end on line {end_lines[event_id]}")
 
     events: list[Event] = []
     edges: list[CausalEdge] = []
