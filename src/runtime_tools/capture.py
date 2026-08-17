@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
 
+from runtime_tools.annotations import AnnotationError, load_annotations
 from runtime_tools.model import Entity, Event, Execution, JsonValue, Measurement
 from runtime_tools.storage import RunpackWriter
 
@@ -97,6 +98,7 @@ def record_process(
     entity_id = uuid.uuid4().hex
     event_id = uuid.uuid4().hex
     temporary = output.with_name(f".{output.name}.tmp-{uuid.uuid4().hex}")
+    annotation_path = output.with_name(f".{output.name}.annotations-{uuid.uuid4().hex}")
     started_at_ns = time.time_ns()
     started_monotonic_ns = time.perf_counter_ns()
     usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -130,6 +132,7 @@ def record_process(
                 process = subprocess.Popen(
                     command,
                     cwd=working_directory,
+                    env={**os.environ, "CONTRAIL_ANNOTATIONS_FILE": str(annotation_path.resolve())},
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                 )
@@ -163,6 +166,16 @@ def record_process(
                     },
                 },
             }
+            try:
+                annotation_events, annotation_edges = load_annotations(
+                    annotation_path, entity_id=entity_id
+                )
+            except AnnotationError as exc:
+                raise CaptureError(str(exc)) from exc
+            for annotation_event in annotation_events:
+                writer.add_event(annotation_event)
+            for annotation_edge in annotation_edges:
+                writer.add_causal_edge(annotation_edge)
             measurements = (
                 Measurement("process.wall_time", wall_seconds, "s", finished_at_ns, entity_id, {}),
                 Measurement(
@@ -229,4 +242,6 @@ def record_process(
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+    finally:
+        annotation_path.unlink(missing_ok=True)
     return exit_code

@@ -61,3 +61,15 @@ facts above it:
 ```bash
 uv run runtime serve baseline.runpack --compare candidate.runpack
 ```
+
+Domain work that cannot be inferred from process or OTel evidence can use the
+small annotation API. Outside `runtime record` these calls are harmless no-ops.
+
+```python
+from runtime_tools import runtime
+
+with runtime.run("inference", total_work=10_000):
+    with runtime.stage("transform"):
+        runtime.event("db.write", kind="client.request")
+    runtime.progress(completed=10_000, total=10_000)
+```
