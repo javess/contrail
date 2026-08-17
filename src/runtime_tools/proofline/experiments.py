@@ -160,7 +160,10 @@ def run_experiment(
                 cleanup_error = exc
         shutil.rmtree(temporary_root, ignore_errors=True)
         if cleanup_error is not None:
-            raise cleanup_error
+            active_error = sys.exception()
+            if active_error is None:
+                raise cleanup_error
+            active_error.add_note(f"Proofline worktree cleanup also failed: {cleanup_error}")
 
 
 def default_output_directory() -> Path:

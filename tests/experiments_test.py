@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools.proofline import ExperimentError, run_experiment
+from runtime_tools.proofline import ExperimentError, experiments, run_experiment
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -60,7 +60,9 @@ def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Pat
     assert _git(repo, "status", "--short") == "?? contract.yaml"
 
 
-def test_proofline_rejects_workload_symlinks_outside_the_isolated_ref(tmp_path: Path) -> None:
+def test_proofline_preserves_primary_error_when_worktree_cleanup_also_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     outside = tmp_path / "outside.py"
     outside.write_text("print('outside')\n", encoding="utf-8")
     repo = tmp_path / "repo"
@@ -76,8 +78,21 @@ def test_proofline_rejects_workload_symlinks_outside_the_isolated_ref(tmp_path: 
         "name: output\nassertions:\n  - type: output_equivalent\n",
         encoding="utf-8",
     )
+    git = experiments._git
 
-    with pytest.raises(ExperimentError, match="must resolve inside the isolated worktree"):
+    def fail_after_worktree_removal(
+        git_repo: Path, *args: str, capture: bool = False
+    ) -> str:
+        result = git(git_repo, *args, capture=capture)
+        if args[:2] == ("worktree", "remove"):
+            raise ExperimentError("simulated cleanup failure")
+        return result
+
+    monkeypatch.setattr(experiments, "_git", fail_after_worktree_removal)
+
+    with pytest.raises(
+        ExperimentError, match="must resolve inside the isolated worktree"
+    ) as error:
         run_experiment(
             contract,
             baseline_ref="main",
@@ -88,6 +103,9 @@ def test_proofline_rejects_workload_symlinks_outside_the_isolated_ref(tmp_path: 
             cwd=repo,
         )
 
+    assert error.value.__notes__ == [
+        "Proofline worktree cleanup also failed: simulated cleanup failure"
+    ]
     assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
     assert not (tmp_path / "results").exists()
 
