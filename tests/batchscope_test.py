@@ -290,6 +290,34 @@ def test_completed_progress_needs_no_rate_to_estimate_zero_drain(tmp_path: Path)
     assert analysis.throughput.estimated_drain_seconds == 0.0
 
 
+def test_throughput_rejects_invalid_progress_and_does_not_infer_across_resets(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "ambiguous-progress.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 30, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("boolean", "progress", "progress", 0, 0, {"completed": True, "total": 10}),
+                _event("first", "progress", "progress", 10, 10, {"completed": 8, "total": 10}),
+                _event("reset", "progress", "progress", 20, 20, {"completed": 2, "total": 10}),
+                _event("invalid", "progress", "progress", 30, 30, {"completed": 11, "total": 10}),
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.throughput is not None
+    assert analysis.throughput.completed == 2
+    assert analysis.throughput.total == 10
+    assert analysis.throughput.remaining == 8
+    assert analysis.throughput.rate_per_second is None
+    assert analysis.throughput.estimated_drain_seconds is None
+
+
 def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> None:
     runpack = tmp_path / "clock-skew.runpack"
     with RunpackWriter(runpack) as writer:

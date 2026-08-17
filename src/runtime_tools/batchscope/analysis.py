@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -292,18 +293,14 @@ def _throughput(
             continue
         completed = event.attributes.get("completed")
         total = event.attributes.get("total")
-        if isinstance(completed, (int, float)) and isinstance(total, (int, float)):
-            samples.append((event.started_at_ns, float(completed), float(total)))
+        values = _progress_values(completed, total)
+        if values is not None:
+            samples.append((event.started_at_ns, *values))
     if not samples:
         return None
     samples.sort()
     latest = samples[-1]
-    rate: float | None = None
-    if len(samples) >= 2:
-        elapsed = (latest[0] - samples[0][0]) / 1_000_000_000
-        delta = latest[1] - samples[0][1]
-        if elapsed > 0 and delta > 0:
-            rate = delta / elapsed
+    rate = _sample_rate(samples)
     remaining = max(0.0, latest[2] - latest[1])
     compute_finishes = [
         event.finished_at_ns
@@ -330,11 +327,7 @@ def _throughput(
                 0.0, (execution_finished_at_ns - compute_finished_at_ns) / 1_000_000_000
             )
         after_compute = [sample for sample in samples if sample[0] >= compute_finished_at_ns]
-        if len(after_compute) >= 2:
-            elapsed = (after_compute[-1][0] - after_compute[0][0]) / 1_000_000_000
-            delta = after_compute[-1][1] - after_compute[0][1]
-            if elapsed > 0 and delta > 0:
-                post_compute_rate = delta / elapsed
+        post_compute_rate = _sample_rate(after_compute)
     estimated_drain = 0.0 if remaining == 0 else (remaining / rate if rate else None)
     return Throughput(
         latest[1],
@@ -347,6 +340,40 @@ def _throughput(
         post_compute_seconds,
         post_compute_rate,
     )
+
+
+def _progress_values(completed: object, total: object) -> tuple[float, float] | None:
+    if (
+        not isinstance(completed, (int, float))
+        or isinstance(completed, bool)
+        or not isinstance(total, (int, float))
+        or isinstance(total, bool)
+    ):
+        return None
+    completed_value = float(completed)
+    total_value = float(total)
+    if not (
+        math.isfinite(completed_value)
+        and math.isfinite(total_value)
+        and 0 <= completed_value <= total_value
+    ):
+        return None
+    return completed_value, total_value
+
+
+def _sample_rate(samples: list[tuple[int, float, float]]) -> float | None:
+    if len(samples) < 2:
+        return None
+    first_total = samples[0][2]
+    if any(sample[2] != first_total for sample in samples[1:]):
+        return None
+    if any(
+        current[1] < previous[1] for previous, current in zip(samples, samples[1:], strict=False)
+    ):
+        return None
+    elapsed = (samples[-1][0] - samples[0][0]) / 1_000_000_000
+    delta = samples[-1][1] - samples[0][1]
+    return delta / elapsed if elapsed > 0 and delta > 0 else None
 
 
 def _lifecycle(events: tuple[Event, ...], total: float | None) -> tuple[LifecyclePhase, ...]:
