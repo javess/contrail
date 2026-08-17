@@ -24,6 +24,8 @@ from runtime_tools.model import (
 SCHEMA_VERSION = "1.1"
 SCHEMA_MAJOR_VERSION = "1"
 APPLICATION_ID = 0x4354524C  # CTRL
+_MIN_INTEGER = -(1 << 63)
+_MAX_INTEGER = (1 << 63) - 1
 _REQUIRED_TABLES = {
     "manifest",
     "executions",
@@ -168,16 +170,76 @@ def _measurement_value(value: object) -> float:
     return float(value)
 
 
+def _integer_value(value: object, label: str, *, optional: bool = False) -> int | None:
+    if value is None and optional:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        suffix = " or null" if optional else ""
+        raise RunpackError(f"{label} must be an integer{suffix}")
+    if not _MIN_INTEGER <= value <= _MAX_INTEGER:
+        raise RunpackError(f"{label} exceeds the runpack integer range")
+    return value
+
+
 def _execution_interval(started_at_ns: object, finished_at_ns: object) -> tuple[int, int | None]:
-    if not isinstance(started_at_ns, int) or isinstance(started_at_ns, bool):
-        raise RunpackError("execution start timestamp must be an integer")
-    if finished_at_ns is not None and (
-        not isinstance(finished_at_ns, int) or isinstance(finished_at_ns, bool)
-    ):
-        raise RunpackError("execution finish timestamp must be an integer or null")
-    if finished_at_ns is not None and finished_at_ns < started_at_ns:
+    started = _integer_value(started_at_ns, "execution start timestamp")
+    finished = _integer_value(finished_at_ns, "execution finish timestamp", optional=True)
+    assert started is not None
+    if finished is not None and finished < started:
         raise RunpackError("execution cannot finish before it starts")
-    return started_at_ns, finished_at_ns
+    return started, finished
+
+
+def _event_values(event: Event) -> tuple[object, ...]:
+    started = _integer_value(event.started_at_ns, "event start timestamp", optional=True)
+    finished = _integer_value(event.finished_at_ns, "event finish timestamp", optional=True)
+    if started is not None and finished is not None and finished < started:
+        raise RunpackError("event cannot finish before it starts")
+    uncertainty = _integer_value(event.uncertainty_ns, "event uncertainty", optional=True)
+    if uncertainty is not None and uncertainty < 0:
+        raise RunpackError("event uncertainty cannot be negative")
+    sequence = _integer_value(event.sequence, "event sequence", optional=True)
+    return (
+        event.id,
+        event.kind,
+        event.name,
+        event.entity_id,
+        started,
+        finished,
+        event.clock_domain,
+        uncertainty,
+        sequence,
+        _json(event.attributes),
+    )
+
+
+def _edge_values(edge: CausalEdge) -> tuple[object, ...]:
+    confidence = edge.confidence
+    if (
+        not isinstance(confidence, (int, float))
+        or isinstance(confidence, bool)
+        or not math.isfinite(confidence)
+        or not 0 <= confidence <= 1
+    ):
+        raise RunpackError("causal edge confidence must be between 0 and 1")
+    return (
+        edge.source_event_id,
+        edge.target_event_id,
+        edge.kind,
+        float(confidence),
+        _json(edge.attributes),
+    )
+
+
+def _measurement_values(measurement: Measurement) -> tuple[object, ...]:
+    return (
+        measurement.name,
+        _measurement_value(measurement.value),
+        measurement.unit,
+        _integer_value(measurement.timestamp_ns, "measurement timestamp", optional=True),
+        measurement.entity_id,
+        _json(measurement.attributes),
+    )
 
 
 def _validate_connection(connection: sqlite3.Connection) -> None:
@@ -331,18 +393,7 @@ class RunpackWriter:
                 clock_domain, uncertainty_ns, sequence, attributes_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (
-                    event.id,
-                    event.kind,
-                    event.name,
-                    event.entity_id,
-                    event.started_at_ns,
-                    event.finished_at_ns,
-                    event.clock_domain,
-                    event.uncertainty_ns,
-                    event.sequence,
-                    _json(event.attributes),
-                ),
+                _event_values(event),
             )
             self._connection.commit()
 
@@ -355,21 +406,7 @@ class RunpackWriter:
                     clock_domain, uncertainty_ns, sequence, attributes_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    (
-                        event.id,
-                        event.kind,
-                        event.name,
-                        event.entity_id,
-                        event.started_at_ns,
-                        event.finished_at_ns,
-                        event.clock_domain,
-                        event.uncertainty_ns,
-                        event.sequence,
-                        _json(event.attributes),
-                    )
-                    for event in events
-                ),
+                (_event_values(event) for event in events),
             )
 
     def add_causal_edge(self, edge: CausalEdge) -> None:
@@ -380,13 +417,7 @@ class RunpackWriter:
                 source_event_id, target_event_id, kind, confidence, attributes_json
             ) VALUES (?, ?, ?, ?, ?)
             """,
-                (
-                    edge.source_event_id,
-                    edge.target_event_id,
-                    edge.kind,
-                    edge.confidence,
-                    _json(edge.attributes),
-                ),
+                _edge_values(edge),
             )
             self._connection.commit()
 
@@ -398,16 +429,7 @@ class RunpackWriter:
                     source_event_id, target_event_id, kind, confidence, attributes_json
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
-                (
-                    (
-                        edge.source_event_id,
-                        edge.target_event_id,
-                        edge.kind,
-                        edge.confidence,
-                        _json(edge.attributes),
-                    )
-                    for edge in edges
-                ),
+                (_edge_values(edge) for edge in edges),
             )
 
     def add_measurement(self, measurement: Measurement) -> None:
@@ -418,14 +440,7 @@ class RunpackWriter:
                 name, value, unit, timestamp_ns, entity_id, attributes_json
             ) VALUES (?, ?, ?, ?, ?, ?)
             """,
-                (
-                    measurement.name,
-                    _measurement_value(measurement.value),
-                    measurement.unit,
-                    measurement.timestamp_ns,
-                    measurement.entity_id,
-                    _json(measurement.attributes),
-                ),
+                _measurement_values(measurement),
             )
             self._connection.commit()
 
@@ -437,17 +452,7 @@ class RunpackWriter:
                     name, value, unit, timestamp_ns, entity_id, attributes_json
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    (
-                        measurement.name,
-                        _measurement_value(measurement.value),
-                        measurement.unit,
-                        measurement.timestamp_ns,
-                        measurement.entity_id,
-                        _json(measurement.attributes),
-                    )
-                    for measurement in measurements
-                ),
+                (_measurement_values(measurement) for measurement in measurements),
             )
 
     def add_attachments(self, attachments: Iterable[Attachment]) -> None:
@@ -501,7 +506,7 @@ class RunpackWriter:
         ).fetchone()
         if row is None:
             raise RunpackError(f"execution does not exist: {execution_id}")
-        _execution_interval(row[0], finished_at_ns)
+        _, normalized_finish = _execution_interval(row[0], finished_at_ns)
         with self._writing(), self._connection:
             self._connection.execute(
                 """
@@ -509,7 +514,7 @@ class RunpackWriter:
                 SET finished_at_ns = ?, exit_code = ?, metadata_json = ?
                 WHERE id = ?
                 """,
-                (finished_at_ns, exit_code, _json(metadata), execution_id),
+                (normalized_finish, exit_code, _json(metadata), execution_id),
             )
             self._connection.execute(
                 """
@@ -518,18 +523,7 @@ class RunpackWriter:
                     clock_domain, uncertainty_ns, sequence, attributes_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    event.id,
-                    event.kind,
-                    event.name,
-                    event.entity_id,
-                    event.started_at_ns,
-                    event.finished_at_ns,
-                    event.clock_domain,
-                    event.uncertainty_ns,
-                    event.sequence,
-                    _json(event.attributes),
-                ),
+                _event_values(event),
             )
             self._connection.executemany(
                 """
@@ -537,17 +531,7 @@ class RunpackWriter:
                     name, value, unit, timestamp_ns, entity_id, attributes_json
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    (
-                        item.name,
-                        item.value,
-                        item.unit,
-                        item.timestamp_ns,
-                        item.entity_id,
-                        _json(item.attributes),
-                    )
-                    for item in measurements
-                ),
+                (_measurement_values(item) for item in measurements),
             )
 
     def close(self) -> None:

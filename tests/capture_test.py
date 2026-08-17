@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from runtime_tools import CaptureError, inspect_runpack, record_process
-from runtime_tools.model import Entity, Event, Execution, Measurement
+from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter, UnsupportedSchemaError
 
 
@@ -278,6 +278,32 @@ def test_writer_rejects_reversed_interval_when_finishing_execution(tmp_path: Pat
     with RunpackReader(output) as reader:
         assert reader.execution().finished_at_ns is None
         assert reader.events() == ()
+
+
+def test_bulk_event_write_rejects_boolean_timestamps_and_rolls_back(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-event.runpack"
+    valid = Event("valid", "event", "valid", None, 0, 1, "test", None, None, {})
+    invalid = Event("invalid", "event", "invalid", None, True, 1, "test", None, None, {})
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="event start timestamp must be an integer"):
+            writer.add_events((valid, invalid))
+
+    with RunpackReader(output) as reader:
+        assert reader.events() == ()
+
+
+def test_writer_rejects_boolean_causal_confidence(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-edge.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="causal edge confidence must be between 0 and 1"):
+            writer.add_causal_edge(CausalEdge("source", "target", "causes", True, {}))
+
+
+def test_writer_rejects_boolean_measurement_timestamps(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-measurement-time.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="measurement timestamp must be an integer"):
+            writer.add_measurement(Measurement("value", 1.0, "1", True, None, {}))
 
 
 def test_each_capture_reports_its_own_child_peak_memory(tmp_path: Path) -> None:
