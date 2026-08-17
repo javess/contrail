@@ -17,6 +17,9 @@ class OtelImportError(ValueError):
     """Raised when OTLP JSON cannot be normalized safely."""
 
 
+_MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
+
+
 @dataclass(frozen=True, slots=True)
 class OtelImportResult:
     entity_count: int
@@ -97,6 +100,8 @@ def _timestamp(value: object, label: str) -> int | None:
         raise OtelImportError(f"{label} must be Unix nanoseconds") from exc
     if timestamp < 0:
         raise OtelImportError(f"{label} cannot be negative")
+    if timestamp > _MAX_RUNPACK_TIMESTAMP_NS:
+        raise OtelImportError(f"{label} exceeds the runpack timestamp range")
     return timestamp
 
 

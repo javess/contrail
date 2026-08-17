@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from runtime_tools.model import Entity, Execution
-from runtime_tools.prometheus import import_prometheus_response
+from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 
@@ -73,3 +75,32 @@ def test_prometheus_response_imports_only_windowed_samples_and_matches_pod(
         "worker-0"
     }
     assert source.is_file()
+
+
+def test_prometheus_response_rejects_non_finite_timestamps(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "result": [
+                        {
+                            "metric": {"__name__": "queue_depth"},
+                            "value": ["Infinity", "1"],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match="invalid Prometheus sample timestamp"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()

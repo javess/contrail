@@ -132,3 +132,36 @@ def test_otlp_json_import_rejects_an_impossible_local_interval(tmp_path: Path) -
         import_otlp_json(source, output, name="invalid")
 
     assert not output.exists()
+
+
+def test_otlp_json_import_rejects_timestamps_outside_runpack_range(tmp_path: Path) -> None:
+    source = tmp_path / "out-of-range.json"
+    output = tmp_path / "out-of-range.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": str(2**63),
+                                        "endTimeUnixNano": str(2**63),
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="exceeds the runpack timestamp range"):
+        import_otlp_json(source, output, name="out-of-range")
+
+    assert not output.exists()

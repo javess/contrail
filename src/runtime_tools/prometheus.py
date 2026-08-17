@@ -33,7 +33,7 @@ def _object(value: object, label: str) -> dict[str, object]:
 def _timestamp_ns(value: object) -> int:
     try:
         return int(Decimal(str(value)) * 1_000_000_000)
-    except (InvalidOperation, ValueError) as exc:
+    except (InvalidOperation, OverflowError, ValueError) as exc:
         raise PrometheusImportError(f"invalid Prometheus sample timestamp: {value}") from exc
 
 
