@@ -363,8 +363,14 @@ def _bottlenecks(
                     0.9,
                 )
             )
+    critical_ids = set(critical.event_ids) if critical is not None else set()
+    client_intervals = tuple(
+        _event_interval(event)
+        for event in events
+        if event.id in critical_ids and event.kind == "client.request" and _duration_ns(event) > 0
+    )
     client_seconds = (
-        sum(_duration_ns(event) for event in events if event.kind == "client.request")
+        sum(finish - start for start, finish in _merge_intervals(client_intervals))
         / 1_000_000_000
     )
     if (
@@ -376,7 +382,7 @@ def _bottlenecks(
             Bottleneck(
                 "external_dependency",
                 (
-                    f"client operations account for {client_seconds:.3f}s against a "
+                    f"client operations occupy {client_seconds:.3f}s of a "
                     f"{critical.duration_seconds:.3f}s critical path"
                 ),
                 0.75,

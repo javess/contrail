@@ -169,6 +169,34 @@ def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> N
     assert {item.classification for item in analysis.bottlenecks} == {"external_dependency"}
 
 
+def test_batchscope_does_not_sum_parallel_side_branch_clients_as_a_bottleneck(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "parallel-clients.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("parallel", "parallel", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("root", "run", "root", 0, 100_000_000))
+        writer.add_event(_event("compute", "operation", "compute", 0, 90_000_000))
+        writer.add_causal_edge(CausalEdge("root", "compute", "parent", 1.0, {}))
+        for index in range(60):
+            event_id = f"client-{index:02}"
+            writer.add_event(
+                _event(event_id, "client.request", "parallel-client", 0, 1_000_000)
+            )
+            writer.add_causal_edge(CausalEdge("root", event_id, "parent", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.duration_seconds == 0.1
+    assert not any(
+        item.classification == "external_dependency" for item in analysis.bottlenecks
+    )
+
+
 def test_batchscope_calculates_observed_post_compute_drain_rate(tmp_path: Path) -> None:
     runpack = tmp_path / "drain.runpack"
     with RunpackWriter(runpack) as writer:
