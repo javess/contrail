@@ -185,6 +185,27 @@ def test_reader_rejects_non_finite_embedded_json_numbers(tmp_path: Path) -> None
         inspect_runpack(output)
 
 
+def test_reader_rejects_reversed_execution_intervals(tmp_path: Path) -> None:
+    output = tmp_path / "reversed.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="reversed")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE executions SET finished_at_ns = started_at_ns - 1")
+
+    with pytest.raises(RunpackError, match="execution cannot finish before it starts"):
+        inspect_runpack(output)
+
+
+def test_reader_rejects_non_finite_measurements(tmp_path: Path) -> None:
+    output = tmp_path / "non-finite-measurement.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="non-finite-measurement")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE measurements SET value = 1e999 WHERE id = 1")
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="measurement value must be finite"):
+            reader.measurements()
+
+
 def test_reader_normalizes_invalid_attachment_content(tmp_path: Path) -> None:
     output = tmp_path / "invalid-attachment.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="invalid-attachment")

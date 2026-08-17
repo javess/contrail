@@ -588,11 +588,14 @@ class RunpackReader:
             raise RunpackError("execution command is invalid JSON") from exc
         if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
             raise RunpackError("execution command is invalid")
+        started_at_ns, finished_at_ns = _execution_interval(
+            row["started_at_ns"], row["finished_at_ns"]
+        )
         return Execution(
             id=row["id"],
             name=row["name"],
-            started_at_ns=row["started_at_ns"],
-            finished_at_ns=row["finished_at_ns"],
+            started_at_ns=started_at_ns,
+            finished_at_ns=finished_at_ns,
             command=tuple(command),
             working_directory=row["working_directory"],
             exit_code=row["exit_code"],
@@ -612,9 +615,11 @@ class RunpackReader:
         return tuple(
             Measurement(
                 name=row["name"],
-                value=row["value"],
+                value=_measurement_value(row["value"]),
                 unit=row["unit"],
-                timestamp_ns=row["timestamp_ns"],
+                timestamp_ns=_integer_value(
+                    row["timestamp_ns"], "measurement timestamp", optional=True
+                ),
                 entity_id=row["entity_id"],
                 attributes=_object(row["attributes_json"]),
             )
