@@ -163,7 +163,11 @@ def _critical_path(
     *,
     clock_inconsistent: bool,
 ) -> CriticalPath | None:
-    timed = {event.id: event for event in events if _duration_ns(event) > 0}
+    timed = {
+        event.id: event
+        for event in events
+        if event.started_at_ns is not None and event.finished_at_ns is not None
+    }
     if not timed:
         return None
     children: dict[str, list[str]] = {event_id: [] for event_id in timed}
