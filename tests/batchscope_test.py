@@ -78,17 +78,14 @@ def test_batchscope_derives_overlap_aware_critical_path_and_throughput(tmp_path:
         ("drain", 0.04),
     ]
     assert analysis.critical_path is not None
-    assert analysis.critical_path.duration_seconds == 0.06
-    assert analysis.critical_path.parallel_slack_seconds == 0.04
-    assert analysis.critical_path.event_names == ("python", "pipeline", "drain", "database.flush")
+    assert analysis.critical_path.duration_seconds == 0.1
+    assert analysis.critical_path.parallel_slack_seconds == 0.0
+    assert analysis.critical_path.event_names[:2] == ("python", "pipeline")
     assert analysis.throughput is not None
     assert analysis.throughput.rate_per_second == 1000.0
     assert analysis.throughput.remaining == 40.0
     assert analysis.throughput.estimated_drain_seconds == 0.04
-    assert {item.classification for item in analysis.bottlenecks} == {
-        "serialized_stage",
-        "external_dependency",
-    }
+    assert {item.classification for item in analysis.bottlenecks} == {"serialized_stage"}
 
 
 def test_batchscope_cli_emits_structured_json(tmp_path: Path) -> None:
@@ -125,3 +122,39 @@ def test_batchscope_labels_an_unlinked_process_path_as_inferred(tmp_path: Path) 
 
     assert analysis.critical_path is not None
     assert analysis.critical_path.certainty == "inferred"
+
+
+def test_critical_path_does_not_subtract_sequential_sibling_intervals(tmp_path: Path) -> None:
+    runpack = tmp_path / "siblings.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("siblings", "siblings", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("root", "run", "root", 0, 100_000_000))
+        writer.add_event(_event("first", "stage", "first", 0, 40_000_000))
+        writer.add_event(_event("second", "stage", "second", 40_000_000, 90_000_000))
+        writer.add_causal_edge(CausalEdge("root", "first", "parent", 1.0, {}))
+        writer.add_causal_edge(CausalEdge("root", "second", "parent", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.duration_seconds == 0.1
+    assert analysis.critical_path.parallel_slack_seconds == 0.0
+
+
+def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> None:
+    runpack = tmp_path / "external.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("external", "external", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("root", "run", "root", 0, 100_000_000))
+        writer.add_event(_event("database", "client.request", "database", 20_000_000, 80_000_000))
+        writer.add_causal_edge(CausalEdge("root", "database", "parent", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert {item.classification for item in analysis.bottlenecks} == {"external_dependency"}

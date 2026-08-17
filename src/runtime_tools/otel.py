@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from runtime_tools.artifacts import publish_without_overwrite
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue
 from runtime_tools.storage import RunpackWriter
 
@@ -265,7 +265,10 @@ def import_otlp_json(
                 writer.add_event(event)
             for edge in edges:
                 writer.add_causal_edge(edge)
-        os.replace(temporary, output)
+        try:
+            publish_without_overwrite(temporary, output)
+        except FileExistsError as exc:
+            raise OtelImportError(f"refusing to overwrite existing runpack: {output}") from exc
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

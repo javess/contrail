@@ -72,3 +72,19 @@ def test_reader_rejects_unknown_schema_major(tmp_path: Path) -> None:
 
     with pytest.raises(UnsupportedSchemaError, match="unsupported runpack schema"):
         RunpackReader(output)
+
+
+def test_each_capture_reports_its_own_child_peak_memory(tmp_path: Path) -> None:
+    large = tmp_path / "large.runpack"
+    small = tmp_path / "small.runpack"
+    record_process(
+        (sys.executable, "-c", "value = bytearray(50_000_000); print(len(value))"),
+        large,
+        name="large",
+    )
+    record_process((sys.executable, "-c", "print('small')"), small, name="small")
+
+    large_peak = inspect_runpack(large).peak_memory_bytes
+    small_peak = inspect_runpack(small).peak_memory_bytes
+    assert large_peak is not None and small_peak is not None
+    assert large_peak > small_peak + 20_000_000

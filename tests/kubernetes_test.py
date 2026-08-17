@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from runtime_tools.kubernetes import import_kubernetes_snapshot
+import pytest
+
+from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
 from runtime_tools.otel import import_otlp_json
 from runtime_tools.storage import RunpackReader
 
@@ -150,3 +152,58 @@ def test_kubernetes_snapshot_enriches_and_correlates_otel_runpack(tmp_path: Path
     )
     assert any(edge.kind == "correlates" for edge in edges)
     assert base.is_file()
+
+
+def test_kubernetes_snapshot_rejects_timezone_ambiguous_timestamps(tmp_path: Path) -> None:
+    trace = tmp_path / "trace.json"
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "kubernetes.json"
+    output = tmp_path / "output.runpack"
+    trace.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    import_otlp_json(trace, base, name="run")
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": {
+                            "name": "pod",
+                            "uid": "pod",
+                            "creationTimestamp": "2026-08-17T12:00:00",
+                        },
+                        "spec": {"containers": []},
+                        "status": {},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KubernetesImportError, match="requires a timezone"):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()

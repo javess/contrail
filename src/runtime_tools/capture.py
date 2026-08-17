@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import BinaryIO, cast
 
 from runtime_tools.annotations import AnnotationError, load_annotations
+from runtime_tools.artifacts import publish_without_overwrite
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue, Measurement
 from runtime_tools.storage import RunpackWriter
 
@@ -63,6 +64,20 @@ def _peak_memory_bytes(value: float) -> float:
     return value * 1024 if sys.platform.startswith("linux") else value
 
 
+def _wait_with_usage(
+    process: subprocess.Popen[bytes],
+) -> tuple[int, resource.struct_rusage]:
+    while True:
+        try:
+            _, status, usage = os.wait4(process.pid, 0)
+            break
+        except InterruptedError:
+            continue
+    exit_code = os.waitstatus_to_exitcode(status)
+    process.returncode = exit_code
+    return exit_code, usage
+
+
 def _initial_metadata() -> dict[str, JsonValue]:
     return {
         "platform": {
@@ -101,7 +116,6 @@ def record_process(
     annotation_path = output.with_name(f".{output.name}.annotations-{uuid.uuid4().hex}")
     started_at_ns = time.time_ns()
     started_monotonic_ns = time.perf_counter_ns()
-    usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
     metadata = _initial_metadata()
 
     try:
@@ -146,13 +160,12 @@ def record_process(
             with ThreadPoolExecutor(max_workers=2) as executor:
                 stdout_result = executor.submit(_pump, stdout_pipe, stdout)
                 stderr_result = executor.submit(_pump, stderr_pipe, stderr)
-                exit_code = process.wait()
+                exit_code, process_usage = _wait_with_usage(process)
                 stdout_digest = stdout_result.result()
                 stderr_digest = stderr_result.result()
 
             finished_at_ns = time.time_ns()
             wall_seconds = (time.perf_counter_ns() - started_monotonic_ns) / 1_000_000_000
-            usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
             metadata = {
                 **metadata,
                 "output": {
@@ -180,7 +193,7 @@ def record_process(
                 Measurement("process.wall_time", wall_seconds, "s", finished_at_ns, entity_id, {}),
                 Measurement(
                     "process.cpu.user",
-                    usage_after.ru_utime - usage_before.ru_utime,
+                    process_usage.ru_utime,
                     "s",
                     finished_at_ns,
                     entity_id,
@@ -188,7 +201,7 @@ def record_process(
                 ),
                 Measurement(
                     "process.cpu.system",
-                    usage_after.ru_stime - usage_before.ru_stime,
+                    process_usage.ru_stime,
                     "s",
                     finished_at_ns,
                     entity_id,
@@ -196,7 +209,7 @@ def record_process(
                 ),
                 Measurement(
                     "process.memory.peak",
-                    _peak_memory_bytes(usage_after.ru_maxrss),
+                    _peak_memory_bytes(process_usage.ru_maxrss),
                     "By",
                     finished_at_ns,
                     entity_id,
@@ -246,7 +259,10 @@ def record_process(
                             event_id, annotation_event.id, "parent", 1.0, {"source": "capture"}
                         )
                     )
-        os.replace(temporary, output)
+        try:
+            publish_without_overwrite(temporary, output)
+        except FileExistsError as exc:
+            raise CaptureError(f"refusing to overwrite existing runpack: {output}") from exc
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

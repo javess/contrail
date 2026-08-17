@@ -61,6 +61,8 @@ def _timestamp(value: object) -> int | None:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise KubernetesImportError(f"invalid Kubernetes timestamp: {value}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise KubernetesImportError(f"Kubernetes timestamp requires a timezone: {value}")
     return int(parsed.timestamp() * 1_000_000_000)
 
 

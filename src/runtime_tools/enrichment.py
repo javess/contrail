@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+from runtime_tools.artifacts import publish_without_overwrite
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 
@@ -31,7 +31,10 @@ def enrich_copy[T](
         shutil.copyfile(source, temporary)
         with RunpackWriter.open_existing(temporary) as writer:
             result = operation(writer)
-        os.replace(temporary, output)
+        try:
+            publish_without_overwrite(temporary, output)
+        except FileExistsError as exc:
+            raise EnrichmentError(f"refusing to overwrite existing runpack: {output}") from exc
         return result
     except BaseException:
         temporary.unlink(missing_ok=True)

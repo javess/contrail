@@ -99,33 +99,31 @@ def _duration_ns(event: Event) -> int:
     return max(0, event.finished_at_ns - event.started_at_ns)
 
 
-def _covered_by_children(event: Event, children: tuple[Event, ...]) -> int:
-    if event.started_at_ns is None or event.finished_at_ns is None:
-        return 0
-    intervals = []
-    for child in children:
-        if child.started_at_ns is None or child.finished_at_ns is None:
-            continue
-        start = max(event.started_at_ns, child.started_at_ns)
-        end = min(event.finished_at_ns, child.finished_at_ns)
-        if end > start:
-            intervals.append((start, end))
-    intervals.sort()
-    covered = 0
-    cursor_start: int | None = None
-    cursor_end: int | None = None
-    for start, end in intervals:
-        if cursor_start is None:
-            cursor_start, cursor_end = start, end
-        elif cursor_end is not None and start <= cursor_end:
-            cursor_end = max(cursor_end, end)
+def _merge_intervals(intervals: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
         else:
-            if cursor_end is not None:
-                covered += cursor_end - cursor_start
-            cursor_start, cursor_end = start, end
-    if cursor_start is not None and cursor_end is not None:
-        covered += cursor_end - cursor_start
-    return covered
+            previous_start, previous_end = merged[-1]
+            merged[-1] = (previous_start, max(previous_end, end))
+    return tuple(merged)
+
+
+@dataclass(frozen=True, slots=True)
+class _Path:
+    intervals: tuple[tuple[int, int], ...]
+    event_ids: tuple[str, ...]
+
+    @property
+    def duration_ns(self) -> int:
+        return sum(end - start for start, end in self.intervals)
+
+
+def _event_interval(event: Event) -> tuple[int, int]:
+    if event.started_at_ns is None or event.finished_at_ns is None:
+        raise ValueError("critical-path event requires a complete interval")
+    return event.started_at_ns, event.finished_at_ns
 
 
 def _critical_path(
@@ -143,23 +141,32 @@ def _critical_path(
             incoming.add(target)
             used_edge_count += 1
     state: dict[str, int] = {}
-    memo: dict[str, tuple[int, tuple[str, ...]]] = {}
+    memo: dict[str, _Path] = {}
     cycle_detected = False
 
-    def visit(event_id: str) -> tuple[int, tuple[str, ...]]:
+    def visit(event_id: str) -> _Path:
         nonlocal cycle_detected
         if state.get(event_id) == 1:
             cycle_detected = True
-            return 0, ()
+            return _Path((), ())
         if event_id in memo:
             return memo[event_id]
         state[event_id] = 1
-        child_events = tuple(timed[child] for child in children[event_id])
-        exclusive = _duration_ns(timed[event_id]) - _covered_by_children(
-            timed[event_id], child_events
+        event_interval = _event_interval(timed[event_id])
+        candidates = []
+        for child_id in children[event_id]:
+            child_path = visit(child_id)
+            candidates.append(
+                _Path(
+                    _merge_intervals((event_interval, *child_path.intervals)),
+                    (event_id, *child_path.event_ids),
+                )
+            )
+        result = max(
+            candidates,
+            key=lambda path: (path.duration_ns, len(path.event_ids)),
+            default=_Path((event_interval,), (event_id,)),
         )
-        best_child = max((visit(child) for child in children[event_id]), default=(0, ()))
-        result = (exclusive + best_child[0], (event_id, *best_child[1]))
         state[event_id] = 2
         memo[event_id] = result
         return result
@@ -169,12 +176,16 @@ def _critical_path(
     for event_id in timed:
         if event_id not in memo:
             candidates.append(visit(event_id))
-    duration_ns, path_ids = max(candidates, default=(0, ()))
-    duration_seconds = duration_ns / 1_000_000_000
+    best_path = max(
+        candidates,
+        key=lambda path: (path.duration_ns, len(path.event_ids)),
+        default=_Path((), ()),
+    )
+    duration_seconds = best_path.duration_ns / 1_000_000_000
     return CriticalPath(
         duration_seconds,
         max(0.0, round((total or duration_seconds) - duration_seconds, 12)),
-        tuple(timed[event_id].name for event_id in path_ids),
+        tuple(timed[event_id].name for event_id in best_path.event_ids),
         "observed" if used_edge_count else "inferred",
         cycle_detected,
     )
