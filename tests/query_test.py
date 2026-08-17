@@ -43,6 +43,14 @@ def test_runpack_query_truncates_without_loading_the_full_result(tmp_path: Path)
     assert result.truncated is True
 
 
+def test_runpack_query_rejects_excessive_output_limits(tmp_path: Path) -> None:
+    runpack = tmp_path / "query.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="query")
+
+    with pytest.raises(QueryError, match="query limit cannot exceed 100000"):
+        query_runpack(runpack, "SELECT name FROM events", limit=100_001)
+
+
 def test_runpack_query_cannot_mutate_the_artifact(tmp_path: Path) -> None:
     runpack = tmp_path / "query.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="query")

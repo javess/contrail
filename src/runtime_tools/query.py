@@ -15,6 +15,9 @@ class QueryError(ValueError):
     """Raised when a runpack query is invalid or attempts mutation."""
 
 
+MAX_QUERY_ROWS = 100_000
+
+
 _ALLOWED_SQLITE_ACTIONS = {
     sqlite3.SQLITE_FUNCTION,
     sqlite3.SQLITE_READ,
@@ -60,6 +63,8 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
         raise QueryError("SQL query cannot be empty")
     if limit <= 0:
         raise QueryError("query limit must be positive")
+    if limit > MAX_QUERY_ROWS:
+        raise QueryError(f"query limit cannot exceed {MAX_QUERY_ROWS}")
     with RunpackReader(path):
         pass
     uri = f"{path.resolve().as_uri()}?mode=ro"

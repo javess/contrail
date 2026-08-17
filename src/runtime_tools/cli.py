@@ -72,7 +72,9 @@ def _parser() -> argparse.ArgumentParser:
     query = subparsers.add_parser("query", help="run bounded read-only SQL over a runpack")
     query.add_argument("runpack", type=Path)
     query.add_argument("sql")
-    query.add_argument("--limit", type=int, default=1000)
+    query.add_argument(
+        "--limit", type=int, default=1000, help="maximum rows to return (hard limit: 100000)"
+    )
     query.add_argument("--format", choices=("table", "json", "jsonl"), default="table")
     return parser
 
