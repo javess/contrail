@@ -12,6 +12,14 @@ from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue,
 
 SCHEMA_VERSION = "1"
 APPLICATION_ID = 0x4354524C  # CTRL
+_REQUIRED_TABLES = {
+    "manifest",
+    "executions",
+    "entities",
+    "events",
+    "causal_edges",
+    "measurements",
+}
 
 _SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -98,10 +106,37 @@ def _json(value: JsonValue | tuple[str, ...]) -> str:
 
 
 def _object(value: str) -> dict[str, JsonValue]:
-    decoded = json.loads(value)
+    try:
+        decoded = json.loads(value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise RunpackError("invalid JSON object in runpack") from exc
     if not isinstance(decoded, dict):
         raise RunpackError("expected a JSON object in runpack")
     return decoded
+
+
+def _validate_connection(connection: sqlite3.Connection) -> None:
+    application_id = connection.execute("PRAGMA application_id").fetchone()
+    if application_id is None or application_id[0] != APPLICATION_ID:
+        raise RunpackError("file is not a Contrail runpack")
+    tables = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema WHERE type = 'table'"
+        ).fetchall()
+    }
+    missing = sorted(_REQUIRED_TABLES - tables)
+    if missing:
+        raise RunpackError(f"runpack is missing required tables: {', '.join(missing)}")
+    row = connection.execute(
+        "SELECT value FROM manifest WHERE key = 'schema_version'"
+    ).fetchone()
+    if row is None:
+        raise RunpackError("runpack has no schema version")
+    if row[0] != SCHEMA_VERSION:
+        raise UnsupportedSchemaError(
+            f"unsupported runpack schema {row[0]!r}; supported: {SCHEMA_VERSION}"
+        )
 
 
 class RunpackWriter:
@@ -133,16 +168,12 @@ class RunpackWriter:
         try:
             writer._connection = sqlite3.connect(path)
             writer._connection.execute("PRAGMA foreign_keys = ON")
-            row = writer._connection.execute(
-                "SELECT value FROM manifest WHERE key = 'schema_version'"
-            ).fetchone()
-            if row is None:
-                raise RunpackError("runpack has no schema version")
-            if row[0] != SCHEMA_VERSION:
-                raise UnsupportedSchemaError(
-                    f"unsupported runpack schema {row[0]!r}; supported: {SCHEMA_VERSION}"
-                )
-        except (sqlite3.DatabaseError, RunpackError):
+            _validate_connection(writer._connection)
+        except sqlite3.DatabaseError as exc:
+            if hasattr(writer, "_connection"):
+                writer._connection.close()
+            raise RunpackError(f"invalid runpack: {path}") from exc
+        except RunpackError:
             if hasattr(writer, "_connection"):
                 writer._connection.close()
             raise
@@ -338,34 +369,37 @@ class RunpackReader:
     def __init__(self, path: Path) -> None:
         if not path.is_file():
             raise RunpackError(f"runpack does not exist: {path}")
+        connection: sqlite3.Connection | None = None
         try:
-            self._connection = sqlite3.connect(path)
+            uri = f"{path.resolve().as_uri()}?mode=ro"
+            connection = sqlite3.connect(uri, uri=True)
+            self._connection = connection
             self._connection.row_factory = sqlite3.Row
-            self._validate()
+            _validate_connection(self._connection)
         except sqlite3.DatabaseError as exc:
-            self._connection.close()
+            if connection is not None:
+                connection.close()
             raise RunpackError(f"invalid runpack: {path}") from exc
         except RunpackError:
-            self._connection.close()
+            if connection is not None:
+                connection.close()
             raise
 
-    def _validate(self) -> None:
-        row = self._connection.execute(
-            "SELECT value FROM manifest WHERE key = 'schema_version'"
-        ).fetchone()
-        if row is None:
-            raise RunpackError("runpack has no schema version")
-        if row["value"] != SCHEMA_VERSION:
-            raise UnsupportedSchemaError(
-                f"unsupported runpack schema {row['value']!r}; supported: {SCHEMA_VERSION}"
-            )
+    def _execute(self, sql: str) -> sqlite3.Cursor:
+        try:
+            return self._connection.execute(sql)
+        except sqlite3.DatabaseError as exc:
+            raise RunpackError(f"could not read runpack: {exc}") from exc
 
     def execution(self) -> Execution:
-        rows = self._connection.execute("SELECT * FROM executions").fetchall()
+        rows = self._execute("SELECT * FROM executions").fetchall()
         if len(rows) != 1:
             raise RunpackError(f"expected exactly one execution, found {len(rows)}")
         row = rows[0]
-        command = json.loads(row["command_json"])
+        try:
+            command = json.loads(row["command_json"])
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise RunpackError("execution command is invalid JSON") from exc
         if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
             raise RunpackError("execution command is invalid")
         return Execution(
@@ -381,7 +415,7 @@ class RunpackReader:
         )
 
     def measurements(self) -> tuple[Measurement, ...]:
-        rows = self._connection.execute(
+        rows = self._execute(
             "SELECT name, value, unit, timestamp_ns, entity_id, attributes_json "
             "FROM measurements ORDER BY id"
         ).fetchall()
@@ -398,7 +432,7 @@ class RunpackReader:
         )
 
     def entities(self) -> tuple[Entity, ...]:
-        rows = self._connection.execute("SELECT * FROM entities ORDER BY id").fetchall()
+        rows = self._execute("SELECT * FROM entities ORDER BY id").fetchall()
         return tuple(
             Entity(
                 id=row["id"],
@@ -411,7 +445,7 @@ class RunpackReader:
         )
 
     def events(self) -> tuple[Event, ...]:
-        rows = self._connection.execute(
+        rows = self._execute(
             "SELECT * FROM events ORDER BY started_at_ns, sequence, id"
         ).fetchall()
         return tuple(
@@ -431,7 +465,7 @@ class RunpackReader:
         )
 
     def causal_edges(self) -> tuple[CausalEdge, ...]:
-        rows = self._connection.execute(
+        rows = self._execute(
             """
             SELECT source_event_id, target_event_id, kind, confidence, attributes_json
             FROM causal_edges
@@ -450,7 +484,7 @@ class RunpackReader:
         )
 
     def clock_inconsistency_count(self) -> int:
-        row = self._connection.execute(
+        row = self._execute(
             """
             SELECT count(*)
             FROM causal_edges AS edge
@@ -469,7 +503,7 @@ class RunpackReader:
         return int(row[0])
 
     def operation_counts(self) -> dict[tuple[str, str, str, str], int]:
-        rows = self._connection.execute(
+        rows = self._execute(
             """
             SELECT
                 COALESCE(entity.kind, 'unowned') AS entity_kind,
@@ -490,7 +524,7 @@ class RunpackReader:
         }
 
     def edge_counts(self) -> dict[tuple[str, str, str, str, str], int]:
-        rows = self._connection.execute(
+        rows = self._execute(
             """
             SELECT
                 COALESCE(source_entity.kind, 'unowned') AS source_kind,
@@ -520,7 +554,7 @@ class RunpackReader:
 
     def counts(self) -> dict[str, int]:
         return {
-            table: self._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            table: self._execute(f"SELECT count(*) FROM {table}").fetchone()[0]
             for table in ("entities", "events", "causal_edges", "measurements")
         }
 

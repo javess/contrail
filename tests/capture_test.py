@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from runtime_tools import CaptureError, inspect_runpack, record_process
-from runtime_tools.storage import RunpackReader, UnsupportedSchemaError
+from runtime_tools.storage import RunpackError, RunpackReader, UnsupportedSchemaError
 
 
 def test_record_process_captures_outcome_resources_and_output_identity(tmp_path: Path) -> None:
@@ -72,6 +72,26 @@ def test_reader_rejects_unknown_schema_major(tmp_path: Path) -> None:
 
     with pytest.raises(UnsupportedSchemaError, match="unsupported runpack schema"):
         RunpackReader(output)
+
+
+def test_reader_rejects_sqlite_files_without_runpack_identity(tmp_path: Path) -> None:
+    output = tmp_path / "not-a-runpack.runpack"
+    with sqlite3.connect(output) as connection:
+        connection.execute("CREATE TABLE manifest (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        connection.execute("INSERT INTO manifest VALUES ('schema_version', '1')")
+
+    with pytest.raises(RunpackError, match="not a Contrail runpack"):
+        RunpackReader(output)
+
+
+def test_reader_reports_malformed_embedded_json_as_runpack_error(tmp_path: Path) -> None:
+    output = tmp_path / "malformed.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="malformed")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE executions SET metadata_json = '{'")
+
+    with pytest.raises(RunpackError, match="invalid JSON object"):
+        inspect_runpack(output)
 
 
 def test_each_capture_reports_its_own_child_peak_memory(tmp_path: Path) -> None:

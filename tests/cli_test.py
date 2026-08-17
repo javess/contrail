@@ -128,3 +128,28 @@ def test_runtime_cli_imports_otlp_json_and_prints_causal_tree(tmp_path: Path) ->
     assert "outcome:  unknown (no exit status)" in inspected.stdout
     assert "runtime:  0.000s" in inspected.stdout
     assert "checkout :: charge [operation] 0.002ms" in inspected.stdout
+
+
+def test_runtime_cli_reports_corrupt_runpack_without_traceback(tmp_path: Path) -> None:
+    runpack = tmp_path / "corrupt.runpack"
+    runpack.write_bytes(b"not sqlite")
+
+    inspected = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "inspect",
+            str(runpack),
+            "--format",
+            "json",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert inspected.returncode == 2
+    assert inspected.stdout == ""
+    assert inspected.stderr == f"runtime: invalid runpack: {runpack}\n"
+    assert "Traceback" not in inspected.stderr
