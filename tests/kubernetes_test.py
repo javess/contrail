@@ -289,3 +289,76 @@ def test_kubernetes_snapshot_preserves_rfc3339_nanoseconds(tmp_path: Path) -> No
     with RunpackReader(output) as reader:
         pod = next(event for event in reader.events() if event.kind == "workload.pod")
     assert pod.started_at_ns == 123_456_789
+
+
+def test_kubernetes_fallback_identity_includes_namespace(tmp_path: Path) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "namespaces.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": {"name": "worker", "namespace": namespace},
+                        "spec": {"containers": []},
+                        "status": {},
+                    }
+                    for namespace in ("first", "second")
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_kubernetes_snapshot(base, snapshot, output)
+
+    with RunpackReader(output) as reader:
+        pods = tuple(entity for entity in reader.entities() if entity.kind == "pod")
+    assert {pod.attributes["k8s.uid"] for pod in pods} == {
+        "name:Pod:first:worker",
+        "name:Pod:second:worker",
+    }
+
+
+def test_kubernetes_event_preserves_epoch_timestamp_over_later_fallback(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "epoch-event.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("worker", "pod"),
+                        "spec": {"containers": []},
+                        "status": {},
+                    },
+                    {
+                        "kind": "Event",
+                        "metadata": _metadata(
+                            "started", "event", creationTimestamp="1970-01-01T00:00:01Z"
+                        ),
+                        "involvedObject": {"uid": "pod"},
+                        "eventTime": "1970-01-01T00:00:00Z",
+                        "reason": "Started",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_kubernetes_snapshot(base, snapshot, output)
+
+    with RunpackReader(output) as reader:
+        event = next(item for item in reader.events() if item.kind == "kubernetes.event")
+    assert event.started_at_ns == 0

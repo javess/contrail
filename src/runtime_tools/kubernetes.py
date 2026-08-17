@@ -59,10 +59,19 @@ def _name(item: dict[str, object]) -> str:
     return name
 
 
+def _namespace(metadata: dict[str, object]) -> str:
+    value = metadata.get("namespace")
+    return value if isinstance(value, str) and value else "default"
+
+
 def _uid(item: dict[str, object]) -> str:
     metadata = _metadata(item)
     value = metadata.get("uid")
-    return str(value) if value else f"name:{item.get('kind', 'unknown')}:{_name(item)}"
+    return (
+        str(value)
+        if value
+        else f"name:{item.get('kind', 'unknown')}:{_namespace(metadata)}:{_name(item)}"
+    )
 
 
 def _timestamp(value: object) -> int | None:
@@ -102,7 +111,7 @@ def _attributes(item: dict[str, object]) -> dict[str, JsonValue]:
     )
     return {
         "k8s.uid": _uid(item),
-        "k8s.namespace": str(metadata.get("namespace", "default")),
+        "k8s.namespace": _namespace(metadata),
         "k8s.labels": normalized_labels,
     }
 
@@ -171,7 +180,9 @@ def _container_interval(status: dict[str, object]) -> tuple[int | None, int | No
     terminated = state.get("terminated", {})
     started = _timestamp(running.get("startedAt")) if isinstance(running, dict) else None
     if isinstance(terminated, dict):
-        started = _timestamp(terminated.get("startedAt")) or started
+        terminated_started = _timestamp(terminated.get("startedAt"))
+        if terminated_started is not None:
+            started = terminated_started
         return started, _timestamp(terminated.get("finishedAt"))
     return started, None
 
@@ -371,14 +382,16 @@ def import_kubernetes_snapshot(
         if involved_entity_id is None:
             continue
         event_id = f"k8s:event:{_uid(item)}"
+        event_timestamp = _timestamp(item.get("eventTime"))
+        if event_timestamp is None:
+            event_timestamp = _timestamp(_metadata(item).get("creationTimestamp"))
         events.append(
             Event(
                 event_id,
                 "kubernetes.event",
                 str(item.get("reason", _name(item))),
                 involved_entity_id,
-                _timestamp(item.get("eventTime"))
-                or _timestamp(_metadata(item).get("creationTimestamp")),
+                event_timestamp,
                 None,
                 "kubernetes.apiserver",
                 None,
