@@ -86,6 +86,8 @@ def _max_regression(
     label: str,
 ) -> ClaimResult:
     percent = _number(assertion.config, "percent", assertion)
+    if percent < 0:
+        raise ContractError(f"{assertion.type} percent cannot be negative")
     expected = f"candidate {label} <= baseline + {percent:g}%"
     if change.baseline is None or change.candidate is None:
         return _result(contract, assertion, "unverifiable", expected, f"{label} unavailable")

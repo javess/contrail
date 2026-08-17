@@ -38,15 +38,26 @@ class Contract:
     assertions: tuple[Assertion, ...]
 
 
-def _json_value(value: object, label: str) -> JsonValue:
+def _json_value(value: object, label: str, active_containers: set[int] | None = None) -> JsonValue:
     if isinstance(value, float) and not math.isfinite(value):
         raise ContractError(f"{label} cannot contain non-finite numbers")
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    if isinstance(value, list):
-        return [_json_value(item, label) for item in value]
-    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
-        return {str(key): _json_value(item, label) for key, item in value.items()}
+    if isinstance(value, (list, dict)):
+        active = active_containers if active_containers is not None else set()
+        identity = id(value)
+        if identity in active:
+            raise ContractError(f"{label} cannot contain recursive values")
+        active.add(identity)
+        try:
+            if isinstance(value, list):
+                return [_json_value(item, label, active) for item in value]
+            if all(isinstance(key, str) for key in value):
+                return {
+                    str(key): _json_value(item, label, active) for key, item in value.items()
+                }
+        finally:
+            active.remove(identity)
     raise ContractError(f"{label} must contain only JSON-compatible values")
 
 
@@ -92,7 +103,10 @@ def load_contracts(path: Path) -> tuple[Contract, ...]:
         raise ContractError(f"could not read contract file: {path}") from exc
     except yaml.YAMLError as exc:
         raise ContractError(f"invalid contract YAML: {exc}") from exc
-    root = _object(document, "contract document")
+    try:
+        root = _object(document, "contract document")
+    except RecursionError as exc:
+        raise ContractError("contract document nesting is too deep") from exc
     raw_contracts = root.get("contracts")
     if raw_contracts is None:
         return (_parse_contract(root, path.stem),)

@@ -179,3 +179,35 @@ def test_proofline_rejects_unsupported_assertion_type(tmp_path: Path) -> None:
 
     with pytest.raises(ContractError, match="unsupported assertion type"):
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
+def test_proofline_rejects_recursive_yaml_values(tmp_path: Path) -> None:
+    contract = tmp_path / "recursive.yaml"
+    contract.write_text(
+        """
+name: recursive
+assertions:
+  - &claim
+    type: output_equivalent
+    nested: *claim
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="cannot contain recursive values"):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
+def test_proofline_rejects_negative_regression_thresholds(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "negative.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=True)
+    contract.write_text(
+        "name: negative\nassertions:\n  - type: max_runtime_regression\n    percent: -1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="percent cannot be negative"):
+        verify_contracts(contract, baseline, candidate)
