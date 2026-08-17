@@ -43,6 +43,7 @@ def test_record_process_captures_outcome_resources_and_output_identity(tmp_path:
         "events": 1,
         "causal_edges": 0,
         "measurements": 6,
+        "attachments": 0,
     }
 
 
@@ -53,6 +54,42 @@ def test_record_process_preserves_nonzero_exit_as_execution_outcome(tmp_path: Pa
 
     assert exit_code == 7
     assert inspect_runpack(output).exit_code == 7
+
+
+def test_record_process_can_store_bounded_output_explicitly(tmp_path: Path) -> None:
+    output = tmp_path / "output.runpack"
+
+    record_process(
+        (
+            sys.executable,
+            "-c",
+            "import sys; print('hello'); print('error', file=sys.stderr)",
+        ),
+        output,
+        name="output",
+        capture_output_limit=3,
+    )
+
+    with RunpackReader(output) as reader:
+        attachments = {attachment.name: attachment for attachment in reader.attachments()}
+    assert attachments["stdout"].content == b"hel"
+    assert attachments["stdout"].attributes == {
+        "captured_bytes": 3,
+        "total_bytes": 6,
+        "truncated": True,
+    }
+    assert attachments["stderr"].content == b"err"
+    assert attachments["stderr"].attributes["total_bytes"] == 6
+
+
+def test_record_process_rejects_unbounded_output_capture(tmp_path: Path) -> None:
+    with pytest.raises(CaptureError, match="cannot exceed"):
+        record_process(
+            (sys.executable, "-c", "pass"),
+            tmp_path / "too-large.runpack",
+            name="too-large",
+            capture_output_limit=64 * 1024 * 1024 + 1,
+        )
 
 
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:
@@ -82,6 +119,19 @@ def test_reader_accepts_additive_schema_minor_versions(tmp_path: Path) -> None:
         connection.execute("UPDATE manifest SET value = '1.7' WHERE key = 'schema_version'")
 
     assert inspect_runpack(output).name == "future-minor"
+
+
+def test_reader_accepts_schema_one_without_optional_attachments(tmp_path: Path) -> None:
+    output = tmp_path / "schema-one.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="schema-one")
+    with sqlite3.connect(output) as connection:
+        connection.execute("DROP TABLE attachments")
+        connection.execute("UPDATE manifest SET value = '1' WHERE key = 'schema_version'")
+
+    summary = inspect_runpack(output)
+
+    assert summary.name == "schema-one"
+    assert summary.record_counts["attachments"] == 0
 
 
 def test_reader_rejects_sqlite_files_without_runpack_identity(tmp_path: Path) -> None:

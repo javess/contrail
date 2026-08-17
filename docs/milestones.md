@@ -14,6 +14,8 @@ Later work may refine earlier schemas only through explicit versioning.
 - `runtime record --name demo -- python demo.py` writes a `.runpack`.
 - Capture process lifecycle, exit code, wall time, CPU, peak memory, Git revision,
   selected platform metadata, and stdout/stderr hashes and byte counts.
+- Allow explicitly requested, bounded stdout/stderr attachments without changing
+  the privacy-preserving default.
 - `runtime inspect demo.runpack` renders the captured facts.
 
 ## 2. OpenTelemetry import
@@ -72,4 +74,3 @@ Later work may refine earlier schemas only through explicit versioning.
 The first public demonstration is ready when a baseline/candidate local pipeline
 shows equivalent output, a meaningful wall-time regression, amplified database
 operations, and a new dependency in both terminal and visual reports.
-

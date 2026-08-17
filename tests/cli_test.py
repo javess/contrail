@@ -18,6 +18,9 @@ def test_runtime_cli_records_then_inspects_json(tmp_path: Path) -> None:
             "cli-demo",
             "--output",
             str(output),
+            "--include-output",
+            "--output-limit-bytes",
+            "4",
             "--",
             sys.executable,
             "-c",
@@ -55,6 +58,7 @@ def test_runtime_cli_records_then_inspects_json(tmp_path: Path) -> None:
         "entities": 1,
         "events": 1,
         "measurements": 6,
+        "attachments": 2,
     }
 
 

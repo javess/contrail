@@ -17,7 +17,15 @@ from typing import BinaryIO, cast
 
 from runtime_tools.annotations import AnnotationError, load_annotations
 from runtime_tools.artifacts import publish_without_overwrite
-from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue, Measurement
+from runtime_tools.model import (
+    Attachment,
+    CausalEdge,
+    Entity,
+    Event,
+    Execution,
+    JsonValue,
+    Measurement,
+)
 from runtime_tools.storage import RunpackWriter
 
 
@@ -25,10 +33,15 @@ class CaptureError(ValueError):
     """Raised when a process cannot be captured."""
 
 
+MAX_CAPTURE_OUTPUT_BYTES = 64 * 1024 * 1024
+
+
 @dataclass(frozen=True, slots=True)
 class OutputDigest:
     byte_count: int
     sha256: str
+    captured: bytes | None
+    truncated: bool
 
 
 def _git_revision(cwd: Path) -> str | None:
@@ -47,16 +60,30 @@ def _git_revision(cwd: Path) -> str | None:
     return result.stdout.strip() or None
 
 
-def _pump(source: BinaryIO, sink: BinaryIO | None) -> OutputDigest:
+def _pump(
+    source: BinaryIO,
+    sink: BinaryIO | None,
+    capture_limit: int | None,
+) -> OutputDigest:
     digest = hashlib.sha256()
     byte_count = 0
+    captured = bytearray() if capture_limit is not None else None
     while chunk := source.read(64 * 1024):
         digest.update(chunk)
         byte_count += len(chunk)
+        if captured is not None:
+            assert capture_limit is not None
+            if len(captured) < capture_limit:
+                captured.extend(chunk[: capture_limit - len(captured)])
         if sink is not None:
             sink.write(chunk)
             sink.flush()
-    return OutputDigest(byte_count=byte_count, sha256=digest.hexdigest())
+    return OutputDigest(
+        byte_count=byte_count,
+        sha256=digest.hexdigest(),
+        captured=bytes(captured) if captured is not None else None,
+        truncated=captured is not None and byte_count > len(captured),
+    )
 
 
 def _peak_memory_bytes(value: float) -> float:
@@ -97,10 +124,17 @@ def record_process(
     cwd: Path | None = None,
     stdout: BinaryIO | None = None,
     stderr: BinaryIO | None = None,
+    capture_output_limit: int | None = None,
 ) -> int:
     """Run ``command``, write ``output``, and return the process exit code."""
     if not command:
         raise CaptureError("a command is required")
+    if capture_output_limit is not None and capture_output_limit <= 0:
+        raise CaptureError("capture output limit must be positive")
+    if capture_output_limit is not None and capture_output_limit > MAX_CAPTURE_OUTPUT_BYTES:
+        raise CaptureError(
+            f"capture output limit cannot exceed {MAX_CAPTURE_OUTPUT_BYTES} bytes per stream"
+        )
     if output.exists():
         raise CaptureError(f"refusing to overwrite existing runpack: {output}")
     working_directory = (cwd or Path.cwd()).resolve()
@@ -158,8 +192,8 @@ def record_process(
             stdout_pipe = cast(BinaryIO, process.stdout)
             stderr_pipe = cast(BinaryIO, process.stderr)
             with ThreadPoolExecutor(max_workers=2) as executor:
-                stdout_result = executor.submit(_pump, stdout_pipe, stdout)
-                stderr_result = executor.submit(_pump, stderr_pipe, stderr)
+                stdout_result = executor.submit(_pump, stdout_pipe, stdout, capture_output_limit)
+                stderr_result = executor.submit(_pump, stderr_pipe, stderr, capture_output_limit)
                 exit_code, process_usage = _wait_with_usage(process)
                 stdout_digest = stdout_result.result()
                 stderr_digest = stderr_result.result()
@@ -248,6 +282,23 @@ def record_process(
                     attributes={"exit_code": exit_code},
                 ),
                 measurements=measurements,
+            )
+            output_digests = (("stdout", stdout_digest), ("stderr", stderr_digest))
+            writer.add_attachments(
+                Attachment(
+                    id=f"capture:{execution_id}:{stream_name}",
+                    kind="log",
+                    name=stream_name,
+                    media_type="application/octet-stream",
+                    content=digest.captured,
+                    attributes={
+                        "captured_bytes": len(digest.captured),
+                        "total_bytes": digest.byte_count,
+                        "truncated": digest.truncated,
+                    },
+                )
+                for stream_name, digest in output_digests
+                if digest.captured is not None
             )
             annotation_targets = {edge.target_event_id for edge in annotation_edges}
             writer.add_causal_edges(

@@ -25,6 +25,12 @@ def _parser() -> argparse.ArgumentParser:
     record = subparsers.add_parser("record", help="capture a local process")
     record.add_argument("--name", help="logical execution name")
     record.add_argument("--output", type=Path, help="output .runpack path")
+    record.add_argument(
+        "--include-output",
+        action="store_true",
+        help="store bounded stdout/stderr content (may contain secrets)",
+    )
+    record.add_argument("--output-limit-bytes", type=int, default=1_048_576)
     record.add_argument("command", nargs=argparse.REMAINDER, help="command after --")
 
     inspect = subparsers.add_parser("inspect", help="inspect a .runpack")
@@ -36,6 +42,11 @@ def _parser() -> argparse.ArgumentParser:
     import_otel.add_argument("source", type=Path)
     import_otel.add_argument("--name", help="logical execution name")
     import_otel.add_argument("--output", type=Path, help="output .runpack path")
+    import_otel.add_argument(
+        "--include-raw",
+        action="store_true",
+        help="store the source OTLP JSON in the runpack",
+    )
 
     serve = subparsers.add_parser("serve", help="open a local execution timeline")
     serve.add_argument("runpack", type=Path)
@@ -94,13 +105,16 @@ def main(argv: list[str] | None = None) -> int:
                 name=name,
                 stdout=_binary_stream("stdout"),
                 stderr=_binary_stream("stderr"),
+                capture_output_limit=(args.output_limit_bytes if args.include_output else None),
             )
             print(f"recorded {output}", file=sys.stderr)
             return exit_code
         if args.subcommand == "import-otel":
             name = args.name or args.source.stem
             output = args.output or args.source.with_suffix(".runpack")
-            otel_result = import_otlp_json(args.source, output, name=name)
+            otel_result = import_otlp_json(
+                args.source, output, name=name, include_raw=args.include_raw
+            )
             print(
                 f"imported {otel_result.event_count} spans and "
                 f"{otel_result.edge_count} causal edges into {output}",

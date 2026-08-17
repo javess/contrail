@@ -11,9 +11,17 @@ from pathlib import Path
 from types import TracebackType
 
 from runtime_tools import __version__
-from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue, Measurement
+from runtime_tools.model import (
+    Attachment,
+    CausalEdge,
+    Entity,
+    Event,
+    Execution,
+    JsonValue,
+    Measurement,
+)
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "1.1"
 SCHEMA_MAJOR_VERSION = "1"
 APPLICATION_ID = 0x4354524C  # CTRL
 _REQUIRED_TABLES = {
@@ -88,12 +96,22 @@ CREATE TABLE measurements (
     attributes_json TEXT NOT NULL
 );
 
+CREATE TABLE attachments (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    content BLOB NOT NULL,
+    attributes_json TEXT NOT NULL
+);
+
 CREATE INDEX events_time_idx ON events(started_at_ns, finished_at_ns);
 CREATE INDEX events_entity_idx ON events(entity_id);
 CREATE INDEX events_semantic_idx ON events(kind, name);
 CREATE INDEX edges_target_idx ON causal_edges(target_event_id);
 CREATE INDEX measurements_name_time_idx ON measurements(name, timestamp_ns);
 CREATE INDEX measurements_entity_idx ON measurements(entity_id);
+CREATE INDEX attachments_kind_name_idx ON attachments(kind, name);
 """
 
 
@@ -397,6 +415,26 @@ class RunpackWriter:
                         _json(measurement.attributes),
                     )
                     for measurement in measurements
+                ),
+            )
+
+    def add_attachments(self, attachments: Iterable[Attachment]) -> None:
+        with self._writing(), self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO attachments(id, kind, name, media_type, content, attributes_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        attachment.id,
+                        attachment.kind,
+                        attachment.name,
+                        attachment.media_type,
+                        attachment.content,
+                        _json(attachment.attributes),
+                    )
+                    for attachment in attachments
                 ),
             )
 
@@ -721,11 +759,48 @@ class RunpackReader:
             counts[key] = counts.get(key, 0) + 1
         return counts
 
+    def attachments(self) -> tuple[Attachment, ...]:
+        tables = {
+            str(row[0])
+            for row in self._execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'table'"
+            ).fetchall()
+        }
+        if "attachments" not in tables:
+            return ()
+        rows = self._execute(
+            """
+            SELECT id, kind, name, media_type, content, attributes_json
+            FROM attachments
+            ORDER BY id
+            """
+        ).fetchall()
+        return tuple(
+            Attachment(
+                id=row["id"],
+                kind=row["kind"],
+                name=row["name"],
+                media_type=row["media_type"],
+                content=bytes(row["content"]),
+                attributes=_object(row["attributes_json"]),
+            )
+            for row in rows
+        )
+
     def counts(self) -> dict[str, int]:
-        return {
+        counts = {
             table: self._execute(f"SELECT count(*) FROM {table}").fetchone()[0]
             for table in ("entities", "events", "causal_edges", "measurements")
         }
+        attachment_count = self._execute(
+            "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'attachments'"
+        ).fetchone()[0]
+        counts["attachments"] = (
+            self._execute("SELECT count(*) FROM attachments").fetchone()[0]
+            if attachment_count
+            else 0
+        )
+        return counts
 
     def close(self) -> None:
         self._connection.close()

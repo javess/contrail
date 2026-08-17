@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from runtime_tools.artifacts import publish_without_overwrite
-from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue
+from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, JsonValue
 from runtime_tools.storage import RunpackWriter
 
 
@@ -126,16 +126,19 @@ def _event_id(trace_id: str, span_id: str) -> str:
     return f"otel:{trace_id}:{span_id}"
 
 
-def _load_document(source: Path) -> dict[str, object]:
+def _load_document(source: Path) -> tuple[dict[str, object], bytes]:
     try:
-        value = json.loads(source.read_text(encoding="utf-8"))
+        raw = source.read_bytes()
+        value = json.loads(raw.decode("utf-8"))
     except OSError as exc:
         raise OtelImportError(f"could not read OTLP JSON: {source}") from exc
+    except UnicodeDecodeError as exc:
+        raise OtelImportError("OTLP JSON must be UTF-8") from exc
     except json.JSONDecodeError as exc:
         raise OtelImportError(
             f"invalid OTLP JSON at line {exc.lineno}, column {exc.colno}"
         ) from exc
-    return _as_object(value, "OTLP document")
+    return _as_object(value, "OTLP document"), raw
 
 
 def import_otlp_json(
@@ -143,13 +146,14 @@ def import_otlp_json(
     output: Path,
     *,
     name: str,
+    include_raw: bool = False,
 ) -> OtelImportResult:
     """Normalize one OTLP/JSON trace export into a new runpack."""
     if output.exists():
         raise OtelImportError(f"refusing to overwrite existing runpack: {output}")
     if not output.parent.is_dir():
         raise OtelImportError(f"output directory does not exist: {output.parent}")
-    document = _load_document(source)
+    document, raw_document = _load_document(source)
     resource_spans = _as_list(document.get("resourceSpans"), "resourceSpans")
     execution_id = uuid.uuid4().hex
     temporary = output.with_name(f".{output.name}.tmp-{uuid.uuid4().hex}")
@@ -305,6 +309,19 @@ def import_otlp_json(
             writer.add_entities(entities)
             writer.add_events(events)
             writer.add_causal_edges(edges)
+            if include_raw:
+                writer.add_attachments(
+                    (
+                        Attachment(
+                            id=f"raw:otlp-json:{execution_id}",
+                            kind="raw",
+                            name=source.name,
+                            media_type="application/json",
+                            content=raw_document,
+                            attributes={"adapter": "otlp-json"},
+                        ),
+                    )
+                )
         try:
             publish_without_overwrite(temporary, output)
         except FileExistsError as exc:

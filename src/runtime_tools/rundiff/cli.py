@@ -21,6 +21,8 @@ def _parser() -> argparse.ArgumentParser:
     record = subparsers.add_parser("record", help="capture a named local execution")
     record.add_argument("name")
     record.add_argument("--output", type=Path)
+    record.add_argument("--include-output", action="store_true")
+    record.add_argument("--output-limit-bytes", type=int, default=1_048_576)
 
     compare = subparsers.add_parser("compare", help="compare two .runpack artifacts")
     compare.add_argument("baseline", type=Path)
@@ -49,6 +51,8 @@ def _record(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="rundiff record")
     parser.add_argument("name")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--include-output", action="store_true")
+    parser.add_argument("--output-limit-bytes", type=int, default=1_048_576)
     if "--" not in argv:
         parser.parse_args(argv)
         print("rundiff: a command is required after --", file=sys.stderr)
@@ -67,6 +71,7 @@ def _record(argv: list[str]) -> int:
             name=args.name,
             stdout=_binary_stream("stdout"),
             stderr=_binary_stream("stderr"),
+            capture_output_limit=(args.output_limit_bytes if args.include_output else None),
         )
     except (CaptureError, RunpackError) as exc:
         print(f"rundiff: {exc}", file=sys.stderr)

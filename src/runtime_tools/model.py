@@ -61,3 +61,13 @@ class Measurement:
     timestamp_ns: int | None
     entity_id: str | None
     attributes: dict[str, JsonValue]
+
+
+@dataclass(frozen=True, slots=True)
+class Attachment:
+    id: str
+    kind: str
+    name: str
+    media_type: str
+    content: bytes
+    attributes: dict[str, JsonValue]

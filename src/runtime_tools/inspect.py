@@ -163,7 +163,8 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
             f"{summary.record_counts['entities']} entities, "
             f"{summary.record_counts['events']} events, "
             f"{summary.record_counts['causal_edges']} edges, "
-            f"{summary.record_counts['measurements']} measurements"
+            f"{summary.record_counts['measurements']} measurements, "
+            f"{summary.record_counts['attachments']} attachments"
         ),
     ]
     return "\n".join(lines)

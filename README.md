@@ -29,6 +29,15 @@ Capture relays stdout and stderr to the terminal but stores only their byte
 counts and SHA-256 identities. Environment values and output content are not
 included in the artifact by default.
 
+Output content can be included explicitly as bounded binary attachments. This
+may capture secrets, so it is opt-in; each stream stores at most the configured
+prefix plus its original byte count and truncation state:
+
+```bash
+uv run runtime record --name demo --include-output \
+  --output-limit-bytes 1048576 -- python demo.py
+```
+
 Runpacks are versioned SQLite databases, so their normalized evidence remains
 inspectable without Contrail or a hosted service:
 
@@ -54,6 +63,10 @@ same artifact and inspected as a causal tree:
 uv run runtime import-otel trace.json --name checkout
 uv run runtime inspect trace.runpack --tree
 ```
+
+Pass `--include-raw` only when the original OTLP JSON should travel with the
+runpack. Normal inspection and the local UI expose attachment counts, not
+attachment content; content remains available through an explicit SQL query.
 
 Compare any two runpacks with RunDiff. The text report emphasizes changed
 operation counts and runtime dependencies; JSON keeps the same structured facts

@@ -18,7 +18,9 @@ runtime query run.runpack \
 ```
 
 The primary tables are `executions`, `entities`, `events`, `causal_edges`, and
-`measurements`. JSON attributes use the `attributes_json` column. SQLite's JSON
-functions can inspect those attributes when the local SQLite build enables
-them. Queries are single statements; writes fail because the connection itself
-is read-only rather than relying on SQL text filtering.
+`measurements`. Schema 1.1 runpacks can also contain `attachments`; its `content`
+column is a BLOB and may contain secrets. JSON attributes use the
+`attributes_json` column. SQLite's JSON functions can inspect those attributes
+when the local SQLite build enables them. Queries are single statements; both
+the read-only connection and a SQLite authorizer block writes, `ATTACH`, and
+other side effects.

@@ -34,7 +34,8 @@ The first stable boundary consists of:
 3. events, including optional intervals;
 4. explicit causal edges independent of timestamp ordering;
 5. measurements associated with an entity or the execution;
-6. source and confidence metadata that preserve uncertainty.
+6. optional bounded attachments for selected logs or raw source evidence;
+7. source and confidence metadata that preserve uncertainty.
 
 The core deliberately does not contain Kubernetes, OTel, RunDiff, BatchScope,
 or Proofline types. Those packages translate into or query the core records.
@@ -60,8 +61,9 @@ partitions as Parquet without changing analysis concepts. Raw source telemetry
 is optional and never required for core queries.
 
 Every artifact contains a schema version, producer version, execution row, and
-normalized tables. Readers reject unsupported major schema versions and ignore
-unknown additive fields within a supported version.
+normalized tables. Readers reject unsupported major schema versions and accept
+additive minor versions. Version 1.1 adds optional attachments while version 1
+core tables remain readable.
 
 ## Package direction
 
@@ -90,5 +92,5 @@ to load 100 million events into memory.
 Capture is local by default. Environment values, stdout, and stderr content are
 not stored by default because they commonly contain secrets. Version 1 records
 only selected non-sensitive environment metadata plus output byte counts and
-hashes. Future raw telemetry inclusion must be explicit and documented.
-
+hashes. Bounded output content and raw OTLP input require explicit CLI flags;
+normal inspect and UI paths do not render their content.

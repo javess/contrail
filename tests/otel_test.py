@@ -261,3 +261,22 @@ def test_otlp_json_import_normalizes_asynchronous_span_links(tmp_path: Path) -> 
     assert edge.source_event_id == "otel:producer-trace:publish"
     assert edge.target_event_id == "otel:consumer-trace:consume"
     assert edge.attributes["otel.link.attributes"] == {"messaging.message.id": "message-1"}
+
+
+def test_otlp_json_import_can_preserve_raw_source_explicitly(tmp_path: Path) -> None:
+    source = tmp_path / "raw.json"
+    output = tmp_path / "raw.runpack"
+    raw = (
+        b'{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"trace",'
+        b'"spanId":"span","startTimeUnixNano":"1","endTimeUnixNano":"2"}]}]}]}'
+    )
+    source.write_bytes(raw)
+
+    import_otlp_json(source, output, name="raw", include_raw=True)
+
+    with RunpackReader(output) as reader:
+        attachments = reader.attachments()
+    assert len(attachments) == 1
+    assert attachments[0].kind == "raw"
+    assert attachments[0].media_type == "application/json"
+    assert attachments[0].content == raw
