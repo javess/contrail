@@ -98,9 +98,16 @@ def test_reader_reports_malformed_embedded_json_as_runpack_error(tmp_path: Path)
 def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) -> None:
     output = tmp_path / "collision.runpack"
     with RunpackWriter(output) as writer:
-        writer.add_entity(Entity("same", "worker", "first", None, {}))
         with pytest.raises(RunpackError, match="UNIQUE constraint failed"):
-            writer.add_entity(Entity("same", "worker", "second", None, {}))
+            writer.add_entities(
+                (
+                    Entity("same", "worker", "first", None, {}),
+                    Entity("same", "worker", "second", None, {}),
+                )
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.entities() == ()
 
 
 def test_each_capture_reports_its_own_child_peak_memory(tmp_path: Path) -> None:

@@ -185,10 +185,8 @@ def record_process(
                 )
             except AnnotationError as exc:
                 raise CaptureError(str(exc)) from exc
-            for annotation_event in annotation_events:
-                writer.add_event(annotation_event)
-            for annotation_edge in annotation_edges:
-                writer.add_causal_edge(annotation_edge)
+            writer.add_events(annotation_events)
+            writer.add_causal_edges(annotation_edges)
             measurements = (
                 Measurement("process.wall_time", wall_seconds, "s", finished_at_ns, entity_id, {}),
                 Measurement(
@@ -252,13 +250,17 @@ def record_process(
                 measurements=measurements,
             )
             annotation_targets = {edge.target_event_id for edge in annotation_edges}
-            for annotation_event in annotation_events:
-                if annotation_event.id not in annotation_targets:
-                    writer.add_causal_edge(
-                        CausalEdge(
-                            event_id, annotation_event.id, "parent", 1.0, {"source": "capture"}
-                        )
-                    )
+            writer.add_causal_edges(
+                CausalEdge(
+                    event_id,
+                    annotation_event.id,
+                    "parent",
+                    1.0,
+                    {"source": "capture"},
+                )
+                for annotation_event in annotation_events
+                if annotation_event.id not in annotation_targets
+            )
         try:
             publish_without_overwrite(temporary, output)
         except FileExistsError as exc:

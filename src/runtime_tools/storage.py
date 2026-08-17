@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
@@ -233,6 +233,25 @@ class RunpackWriter:
             )
             self._connection.commit()
 
+    def add_entities(self, entities: Iterable[Entity]) -> None:
+        with self._writing(), self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO entities(id, kind, name, parent_entity_id, attributes_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        entity.id,
+                        entity.kind,
+                        entity.name,
+                        entity.parent_entity_id,
+                        _json(entity.attributes),
+                    )
+                    for entity in entities
+                ),
+            )
+
     def add_event(self, event: Event) -> None:
         with self._writing():
             self._connection.execute(
@@ -257,6 +276,32 @@ class RunpackWriter:
             )
             self._connection.commit()
 
+    def add_events(self, events: Iterable[Event]) -> None:
+        with self._writing(), self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO events(
+                    id, kind, name, entity_id, started_at_ns, finished_at_ns,
+                    clock_domain, uncertainty_ns, sequence, attributes_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        event.id,
+                        event.kind,
+                        event.name,
+                        event.entity_id,
+                        event.started_at_ns,
+                        event.finished_at_ns,
+                        event.clock_domain,
+                        event.uncertainty_ns,
+                        event.sequence,
+                        _json(event.attributes),
+                    )
+                    for event in events
+                ),
+            )
+
     def add_causal_edge(self, edge: CausalEdge) -> None:
         with self._writing():
             self._connection.execute(
@@ -274,6 +319,26 @@ class RunpackWriter:
                 ),
             )
             self._connection.commit()
+
+    def add_causal_edges(self, edges: Iterable[CausalEdge]) -> None:
+        with self._writing(), self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO causal_edges(
+                    source_event_id, target_event_id, kind, confidence, attributes_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        edge.source_event_id,
+                        edge.target_event_id,
+                        edge.kind,
+                        edge.confidence,
+                        _json(edge.attributes),
+                    )
+                    for edge in edges
+                ),
+            )
 
     def add_measurement(self, measurement: Measurement) -> None:
         with self._writing():
@@ -293,6 +358,27 @@ class RunpackWriter:
                 ),
             )
             self._connection.commit()
+
+    def add_measurements(self, measurements: Iterable[Measurement]) -> None:
+        with self._writing(), self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO measurements(
+                    name, value, unit, timestamp_ns, entity_id, attributes_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        measurement.name,
+                        measurement.value,
+                        measurement.unit,
+                        measurement.timestamp_ns,
+                        measurement.entity_id,
+                        _json(measurement.attributes),
+                    )
+                    for measurement in measurements
+                ),
+            )
 
     def expand_execution_bounds(self, started_at_ns: int, finished_at_ns: int | None) -> None:
         with self._writing():

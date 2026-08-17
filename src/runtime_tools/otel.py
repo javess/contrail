@@ -264,12 +264,9 @@ def import_otlp_json(
                     },
                 )
             )
-            for entity in entities:
-                writer.add_entity(entity)
-            for event in events:
-                writer.add_event(event)
-            for edge in edges:
-                writer.add_causal_edge(edge)
+            writer.add_entities(entities)
+            writer.add_events(events)
+            writer.add_causal_edges(edges)
         try:
             publish_without_overwrite(temporary, output)
         except FileExistsError as exc:

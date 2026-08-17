@@ -165,3 +165,40 @@ def test_otlp_json_import_rejects_timestamps_outside_runpack_range(tmp_path: Pat
         import_otlp_json(source, output, name="out-of-range")
 
     assert not output.exists()
+
+
+def test_otlp_json_bulk_import_handles_ten_thousand_spans(tmp_path: Path) -> None:
+    source = tmp_path / "large-trace.json"
+    output = tmp_path / "large-trace.runpack"
+    span_count = 10_000
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": str(index),
+                                        "name": "work",
+                                        "startTimeUnixNano": str(index + 1),
+                                        "endTimeUnixNano": str(index + 2),
+                                    }
+                                    for index in range(span_count)
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_json(source, output, name="large-trace")
+
+    assert result.event_count == span_count
+    with RunpackReader(output) as reader:
+        assert reader.counts()["events"] == span_count

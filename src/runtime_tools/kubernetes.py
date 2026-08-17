@@ -365,12 +365,9 @@ def import_kubernetes_snapshot(
         finishes = [event.finished_at_ns for event in events if event.finished_at_ns is not None]
         if starts:
             writer.expand_execution_bounds(min(starts), max(finishes) if finishes else None)
-        for entity in entities:
-            writer.add_entity(entity)
-        for event in events:
-            writer.add_event(event)
-        for edge in edges:
-            writer.add_causal_edge(edge)
+        writer.add_entities(entities)
+        writer.add_events(events)
+        writer.add_causal_edges(edges)
         return KubernetesImportResult(len(entities), len(events), len(edges), len(correlations))
 
     return enrich_copy(runpack, output, append)

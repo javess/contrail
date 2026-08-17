@@ -143,8 +143,7 @@ def import_prometheus_response(
         )
 
     def append(writer: RunpackWriter) -> PrometheusImportResult:
-        for measurement in measurements:
-            writer.add_measurement(measurement)
+        writer.add_measurements(measurements)
         return PrometheusImportResult(len(measurements), dropped, len(matched_entities))
 
     return enrich_copy(runpack, output, append)
