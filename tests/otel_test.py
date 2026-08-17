@@ -280,3 +280,44 @@ def test_otlp_json_import_can_preserve_raw_source_explicitly(tmp_path: Path) -> 
     assert attachments[0].kind == "raw"
     assert attachments[0].media_type == "application/json"
     assert attachments[0].content == raw
+
+
+def test_otlp_json_import_keeps_execution_open_when_any_span_is_incomplete(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "partial.json"
+    output = tmp_path / "partial.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "complete",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                    },
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "open",
+                                        "startTimeUnixNano": "3",
+                                    },
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_otlp_json(source, output, name="partial")
+
+    summary = inspect_runpack(output)
+    assert summary.finished_at_ns is None
+    assert summary.wall_time_seconds is None

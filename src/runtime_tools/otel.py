@@ -254,7 +254,7 @@ def import_otlp_json(
     if not starts:
         raise OtelImportError("OTLP document contains no span start timestamps")
     started_at_ns = min(starts)
-    finished_at_ns = max(finishes) if finishes else None
+    finished_at_ns = max(finishes) if len(finishes) == len(events) else None
     edges: list[CausalEdge] = []
     missing_parent_count = 0
     for trace_id, parent_span_id, child_id in parent_references:
