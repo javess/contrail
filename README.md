@@ -89,6 +89,18 @@ uv run proofline verify examples/local/contracts.yaml \
 See [Proofline contracts](docs/contracts.md) for the supported assertion types
 and exit-code behavior.
 
+Proofline can also execute one repository-relative workload at two Git refs in
+temporary detached worktrees, preserve both runpacks, and evaluate immediately:
+
+```bash
+uv run proofline run examples/local/contracts.yaml \
+  --baseline-ref main --candidate-ref HEAD \
+  --workload examples/local/pipeline.py
+```
+
+See [Proofline execution](docs/experiments.md) for isolation guarantees and the
+initial fixed-environment tradeoff.
+
 Domain work that cannot be inferred from process or OTel evidence can use the
 small annotation API. Outside `runtime record` these calls are harmless no-ops.
 
