@@ -168,10 +168,11 @@ def _known_equivalence(baseline: object | None, candidate: object | None) -> boo
 
 
 def _outcome(*equivalences: bool | None) -> Outcome:
-    known = tuple(value for value in equivalences if value is not None)
-    if not known:
-        return "unknown"
-    return "equivalent" if all(known) else "different"
+    if any(value is False for value in equivalences):
+        return "different"
+    if all(value is True for value in equivalences):
+        return "equivalent"
+    return "unknown"
 
 
 def _operation_changes(

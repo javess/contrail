@@ -287,3 +287,32 @@ def test_compare_runpacks_treats_changed_stderr_as_different_behavior(tmp_path: 
     assert diff.stderr_equivalent is False
     assert diff.outcome == "different"
     assert "stderr:      different" in render_diff(diff, "text")
+
+
+def test_compare_runpacks_keeps_outcome_unknown_when_stderr_evidence_is_missing(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, identity in ((baseline, "baseline"), (candidate, "candidate")):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(
+                    identity,
+                    identity,
+                    0,
+                    1,
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    {"output": {"stdout": {"bytes": 4, "sha256": "same"}}},
+                )
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.exit_code_equivalent is True
+    assert diff.output_equivalent is True
+    assert diff.stderr_equivalent is None
+    assert diff.outcome == "unknown"
