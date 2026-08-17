@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from runtime_tools import CaptureError, inspect_runpack, record_process
+from runtime_tools import CaptureError, capture, inspect_runpack, record_process
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter, UnsupportedSchemaError
 
@@ -150,6 +150,23 @@ def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None
         record_process((sys.executable, "-c", "pass"), output, name="existing")
 
     assert output.read_bytes() == b"keep me"
+
+
+def test_record_process_normalizes_publication_failures_and_cleans_temporary_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "unpublished.runpack"
+
+    def fail_publication(temporary: Path, destination: Path) -> None:
+        raise OSError("hard links unavailable")
+
+    monkeypatch.setattr(capture, "publish_without_overwrite", fail_publication)
+
+    with pytest.raises(CaptureError, match="could not publish runpack.*hard links unavailable"):
+        record_process((sys.executable, "-c", "pass"), output, name="unpublished")
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".unpublished.runpack.tmp-*"))
 
 
 def test_reader_rejects_unknown_schema_major(tmp_path: Path) -> None:

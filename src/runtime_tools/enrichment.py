@@ -35,6 +35,8 @@ def enrich_copy[T](
             publish_without_overwrite(temporary, output)
         except FileExistsError as exc:
             raise EnrichmentError(f"refusing to overwrite existing runpack: {output}") from exc
+        except OSError as exc:
+            raise EnrichmentError(f"could not publish runpack {output}: {exc}") from exc
         return result
     except BaseException:
         temporary.unlink(missing_ok=True)

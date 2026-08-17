@@ -332,6 +332,8 @@ def import_otlp_json(
             publish_without_overwrite(temporary, output)
         except FileExistsError as exc:
             raise OtelImportError(f"refusing to overwrite existing runpack: {output}") from exc
+        except OSError as exc:
+            raise OtelImportError(f"could not publish runpack {output}: {exc}") from exc
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

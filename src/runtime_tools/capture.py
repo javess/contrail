@@ -348,6 +348,8 @@ def record_process(
             publish_without_overwrite(temporary, output)
         except FileExistsError as exc:
             raise CaptureError(f"refusing to overwrite existing runpack: {output}") from exc
+        except OSError as exc:
+            raise CaptureError(f"could not publish runpack {output}: {exc}") from exc
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
