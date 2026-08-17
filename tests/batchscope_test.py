@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from runtime_tools import record_process
 from runtime_tools.batchscope import analyze_runpack
@@ -229,3 +232,55 @@ def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> Non
     assert analysis.critical_path is not None
     assert analysis.critical_path.duration_seconds == 0.12
     assert analysis.critical_path.certainty == "inferred"
+
+
+def test_batchscope_handles_causal_chains_beyond_python_recursion_limit(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "long-chain.runpack"
+    chain_length = 1_100
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution(
+                "long-chain",
+                "long-chain",
+                0,
+                chain_length,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {},
+            )
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+    with sqlite3.connect(runpack) as connection:
+        connection.executemany(
+            """
+            INSERT INTO events(
+                id, kind, name, entity_id, started_at_ns, finished_at_ns,
+                clock_domain, uncertainty_ns, sequence, attributes_json
+            ) VALUES (?, 'operation', ?, 'worker', ?, ?, 'test', NULL, ?, '{}')
+            """,
+            (
+                (f"event-{index}", f"event-{index}", index, index + 1, index)
+                for index in range(chain_length)
+            ),
+        )
+        connection.executemany(
+            """
+            INSERT INTO causal_edges(
+                source_event_id, target_event_id, kind, confidence, attributes_json
+            ) VALUES (?, ?, 'parent', 1.0, '{}')
+            """,
+            (
+                (f"event-{index}", f"event-{index + 1}")
+                for index in range(chain_length - 1)
+            ),
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.duration_seconds == pytest.approx(chain_length / 1e9)
+    assert len(analysis.critical_path.event_ids) == chain_length

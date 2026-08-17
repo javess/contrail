@@ -160,30 +160,45 @@ def _critical_path(
 
     def visit(event_id: str) -> _Path:
         nonlocal cycle_detected
-        if state.get(event_id) == 1:
-            cycle_detected = True
-            return _Path((), ())
         if event_id in memo:
             return memo[event_id]
-        state[event_id] = 1
-        event_interval = _event_interval(timed[event_id])
-        candidates = []
-        for child_id in children[event_id]:
-            child_path = visit(child_id)
-            candidates.append(
+        stack = [(event_id, False)]
+        while stack:
+            current_id, expanded = stack.pop()
+            if current_id in memo:
+                continue
+            if not expanded:
+                if state.get(current_id) == 1:
+                    cycle_detected = True
+                    continue
+                state[current_id] = 1
+                stack.append((current_id, True))
+                for child_id in reversed(children[current_id]):
+                    if child_id in memo:
+                        continue
+                    if state.get(child_id) == 1:
+                        cycle_detected = True
+                    else:
+                        stack.append((child_id, False))
+                continue
+
+            event_interval = _event_interval(timed[current_id])
+            candidates = [
                 _Path(
-                    _merge_intervals((event_interval, *child_path.intervals)),
-                    (event_id, *child_path.event_ids),
+                    _merge_intervals((event_interval, *memo[child_id].intervals)),
+                    (current_id, *memo[child_id].event_ids),
                 )
+                for child_id in children[current_id]
+                if child_id in memo
+            ]
+            result = max(
+                candidates,
+                key=lambda path: (path.duration_ns, len(path.event_ids)),
+                default=_Path((event_interval,), (current_id,)),
             )
-        result = max(
-            candidates,
-            key=lambda path: (path.duration_ns, len(path.event_ids)),
-            default=_Path((event_interval,), (event_id,)),
-        )
-        state[event_id] = 2
-        memo[event_id] = result
-        return result
+            state[current_id] = 2
+            memo[current_id] = result
+        return memo[event_id]
 
     roots = [event_id for event_id in timed if event_id not in incoming]
     candidates = [visit(root) for root in roots]
