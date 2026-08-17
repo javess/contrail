@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -109,12 +110,26 @@ def _json(value: JsonValue | tuple[str, ...]) -> str:
 
 def _object(value: str) -> dict[str, JsonValue]:
     try:
-        decoded = json.loads(value)
+        decoded = _checked_json(json.loads(value))
     except (json.JSONDecodeError, TypeError) as exc:
         raise RunpackError("invalid JSON object in runpack") from exc
     if not isinstance(decoded, dict):
         raise RunpackError("expected a JSON object in runpack")
     return decoded
+
+
+def _checked_json(value: object) -> JsonValue:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise RunpackError("non-finite number in runpack JSON")
+        return value
+    if isinstance(value, list):
+        return [_checked_json(item) for item in value]
+    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
+        return {key: _checked_json(item) for key, item in value.items()}
+    raise RunpackError("invalid value in runpack JSON")
 
 
 def _validate_connection(connection: sqlite3.Connection) -> None:

@@ -95,6 +95,16 @@ def test_reader_reports_malformed_embedded_json_as_runpack_error(tmp_path: Path)
         inspect_runpack(output)
 
 
+def test_reader_rejects_non_finite_embedded_json_numbers(tmp_path: Path) -> None:
+    output = tmp_path / "non-finite.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="non-finite")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE executions SET metadata_json = ?", ('{"value": 1e999}',))
+
+    with pytest.raises(RunpackError, match="non-finite number"):
+        inspect_runpack(output)
+
+
 def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) -> None:
     output = tmp_path / "collision.runpack"
     with RunpackWriter(output) as writer:
