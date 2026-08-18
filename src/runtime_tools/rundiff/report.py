@@ -59,6 +59,7 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
             f"  exit status: {_equivalence(diff.exit_code_equivalent)}",
             f"  stdout:      {_equivalence(diff.output_equivalent)}",
             f"  stderr:      {_equivalence(diff.stderr_equivalent)}",
+            f"  op errors:   {_equivalence(diff.operation_errors_equivalent)}",
             "",
             "Runtime",
             f"  {_format_change(diff.wall_time, _duration)}",

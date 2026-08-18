@@ -190,6 +190,7 @@ class ExecutionDiff:
     exit_code_equivalent: bool | None
     output_equivalent: bool | None
     stderr_equivalent: bool | None
+    operation_errors_equivalent: bool | None
     wall_time: ValueChange
     critical_path: ValueChange
     baseline_critical_path_certainty: str | None
@@ -218,6 +219,7 @@ class ExecutionDiff:
             "exit_code_equivalent": self.exit_code_equivalent,
             "output_equivalent": self.output_equivalent,
             "stderr_equivalent": self.stderr_equivalent,
+            "operation_errors_equivalent": self.operation_errors_equivalent,
             "wall_time": self.wall_time.as_json_value(),
             "critical_path": self.critical_path.as_json_value(),
             "baseline_critical_path_certainty": self.baseline_critical_path_certainty,
@@ -474,6 +476,11 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         baseline_summary.stderr_complete,
         candidate_summary.stderr_complete,
     )
+    error_equivalent = (
+        None
+        if baseline_summary.annotation_error or candidate_summary.annotation_error
+        else baseline_errors == candidate_errors
+    )
     return ExecutionDiff(
         baseline_id=baseline_summary.id,
         baseline_name=baseline_summary.name,
@@ -486,10 +493,16 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         candidate_missing_causal_references=candidate_summary.missing_causal_references,
         baseline_incomplete_streams=_incomplete_streams(baseline_summary),
         candidate_incomplete_streams=_incomplete_streams(candidate_summary),
-        outcome=_outcome(exit_equivalent, output_equivalent, stderr_equivalent),
+        outcome=_outcome(
+            exit_equivalent,
+            output_equivalent,
+            stderr_equivalent,
+            error_equivalent,
+        ),
         exit_code_equivalent=exit_equivalent,
         output_equivalent=output_equivalent,
         stderr_equivalent=stderr_equivalent,
+        operation_errors_equivalent=error_equivalent,
         wall_time=_value_change(
             baseline_summary.wall_time_seconds, candidate_summary.wall_time_seconds
         ),

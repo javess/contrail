@@ -92,6 +92,7 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "Path waiting" in javascript
     assert "Duration shifts" in javascript
     assert "stderr_equivalent" in javascript
+    assert "operation_errors_equivalent" in javascript
     assert "nsToSeconds(event.duration_ns)" in javascript
     assert "run.summary.record_counts.attachments" in javascript
     assert "Evidence warning" in javascript

@@ -119,10 +119,11 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
 
     diff = compare_runpacks(baseline, candidate)
 
-    assert diff.outcome == "equivalent"
+    assert diff.outcome == "different"
     assert diff.exit_code_equivalent is True
     assert diff.output_equivalent is True
     assert diff.stderr_equivalent is True
+    assert diff.operation_errors_equivalent is False
     assert diff.wall_time.baseline == 0.01
     assert diff.wall_time.candidate == 0.02
     assert diff.wall_time.percent == 100.0
@@ -279,8 +280,9 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert "gateway → metadata [parent]: 0 → 1" in text_report
     assert command.returncode == 0
     payload = json.loads(command.stdout)
-    assert payload["outcome"] == "equivalent"
+    assert payload["outcome"] == "different"
     assert payload["stderr_equivalent"] is True
+    assert payload["operation_errors_equivalent"] is False
     assert payload["wall_time"]["percent"] == 100.0
     assert payload["critical_path"]["percent"] == 100.0
     assert payload["entity_count_changes"] == [
@@ -626,6 +628,8 @@ def test_compare_runpacks_surfaces_incomplete_annotation_evidence(tmp_path: Path
 
     assert diff.baseline_annotation_error is None
     assert diff.candidate_annotation_error == "invalid annotation JSON on line 1"
+    assert diff.operation_errors_equivalent is None
+    assert diff.outcome == "unknown"
     assert "candidate: annotations ignored" in render_diff(diff, "text")
 
 
