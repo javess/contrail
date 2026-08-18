@@ -1322,9 +1322,15 @@ class RunpackReader:
         }
         if "attachments" not in tables:
             return ()
-        total_bytes = self._execute(
-            "SELECT COALESCE(sum(length(content)), 0) FROM attachments"
-        ).fetchone()[0]
+        maximum_bytes, total_bytes = self._execute(
+            "SELECT COALESCE(max(length(CAST(content AS BLOB))), 0), "
+            "COALESCE(sum(length(CAST(content AS BLOB))), 0) FROM attachments"
+        ).fetchone()
+        if maximum_bytes > MAX_RUNPACK_ATTACHMENT_BYTES:
+            raise RunpackError(
+                "attachment content exceeds the "
+                f"{MAX_RUNPACK_ATTACHMENT_BYTES}-byte runpack field limit"
+            )
         if total_bytes > MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES:
             raise RunpackError(
                 "attachment content exceeds the "

@@ -927,6 +927,25 @@ def test_reader_rejects_oversized_aggregate_attachment_content(
             reader.attachments()
 
 
+def test_reader_counts_malformed_text_attachment_sizes_as_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "text-attachment-size.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="text-attachment")
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?)",
+            ("text", "raw", "text", "text/plain", "€€", "{}"),
+        )
+    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 10)
+    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="aggregate runpack limit"):
+            reader.attachments()
+
+
 def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) -> None:
     output = tmp_path / "collision.runpack"
     with RunpackWriter(output) as writer:
