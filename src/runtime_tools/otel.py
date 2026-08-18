@@ -726,6 +726,10 @@ def import_otlp_logs(
             scope_name = _semantic_name(scope.get("name"), "log scope name", default="")
             scope_version = _semantic_name(scope.get("version"), "log scope version", default="")
             scope_attributes = _attributes(scope.get("attributes", []))
+            scope_dropped_attributes = _nonnegative_count(
+                scope.get("droppedAttributesCount"),
+                "scope droppedAttributesCount",
+            )
             log_records = _as_list(scope_group.get("logRecords", []), "logRecords")
             scope_event_count = 0
             for record_index, raw_log_record in enumerate(log_records):
@@ -739,22 +743,10 @@ def import_otlp_logs(
                 if raw_timestamp in (None, ""):
                     raw_timestamp = record.get("observedTimeUnixNano")
                 timestamp_ns = _timestamp(raw_timestamp, "log timestamp")
-                if timestamp_ns is not None and (
-                    timestamp_ns < execution.started_at_ns
-                    or (
-                        execution.finished_at_ns is not None
-                        and timestamp_ns > execution.finished_at_ns
-                    )
-                ):
-                    dropped += 1
-                    continue
-
-                dropped_attribute_count = _bounded_count_total(
-                    dropped_attribute_count,
+                record_dropped_attributes = _nonnegative_count(
                     record.get("droppedAttributesCount"),
                     "log droppedAttributesCount",
                 )
-
                 trace_id = _identifier(record.get("traceId"), "log traceId", optional=True)
                 span_id = _identifier(record.get("spanId"), "log spanId", optional=True)
                 if bool(trace_id) != bool(span_id):
@@ -782,6 +774,22 @@ def import_otlp_logs(
                 if trace_id:
                     attributes["otel.trace_id"] = trace_id
                     attributes["otel.span_id"] = span_id
+
+                if timestamp_ns is not None and (
+                    timestamp_ns < execution.started_at_ns
+                    or (
+                        execution.finished_at_ns is not None
+                        and timestamp_ns > execution.finished_at_ns
+                    )
+                ):
+                    dropped += 1
+                    continue
+
+                dropped_attribute_count = _bounded_count_total(
+                    dropped_attribute_count,
+                    record_dropped_attributes,
+                    "log droppedAttributesCount",
+                )
 
                 event_id = (
                     "otel:log:"
@@ -832,7 +840,7 @@ def import_otlp_logs(
             if scope_event_count:
                 dropped_attribute_count = _bounded_count_total(
                     dropped_attribute_count,
-                    scope.get("droppedAttributesCount"),
+                    scope_dropped_attributes,
                     "scope droppedAttributesCount",
                 )
 

@@ -111,6 +111,39 @@ def test_otlp_logs_enrich_known_spans_and_bound_timestamped_records(tmp_path: Pa
         assert all(event.kind != "log.record" for event in reader.events())
 
 
+def test_otlp_logs_reject_malformed_records_outside_the_run_window(tmp_path: Path) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "20",
+                                        "severityNumber": "INVALID",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="log severityNumber must be"):
+        import_otlp_logs(source, logs, output)
+
+    assert not output.exists()
+
+
 def test_otlp_logs_reject_records_over_the_input_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
