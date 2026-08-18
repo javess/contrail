@@ -58,8 +58,9 @@ as clock-skew evidence without deleting the causal relationship.
 Execution, entity, and event IDs are unique within an artifact. Generated IDs
 are opaque. Repeatable logical identity belongs in semantic keys such as entity
 kind/name, operation name, stage path, attributes, and source-local sequence.
-RunDiff matches those keys at exact, structural, or aggregate levels rather than
-assuming IDs survive repeated executions.
+RunDiff currently compares aggregate semantic keys rather than assuming IDs
+survive repeated executions. Exact and structural matching remain future layers
+over the same identity model.
 
 ## Query implications
 
