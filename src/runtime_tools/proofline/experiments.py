@@ -75,6 +75,31 @@ def _validate_ref(ref: str) -> None:
         raise ExperimentError("Git refs must be valid UTF-8") from exc
 
 
+def _validate_workload_invocation(workload: Path, workload_args: tuple[str, ...]) -> None:
+    if not isinstance(workload, Path):
+        raise ExperimentError("workload must be a repository-relative path")
+    workload_text = str(workload)
+    if workload.is_absolute() or ".." in workload.parts:
+        raise ExperimentError("workload must be a repository-relative path")
+    if "\0" in workload_text:
+        raise ExperimentError("workload path cannot contain NUL bytes")
+    try:
+        workload_text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ExperimentError("workload path must be valid UTF-8") from exc
+    if not isinstance(workload_args, tuple) or not all(
+        isinstance(argument, str) for argument in workload_args
+    ):
+        raise ExperimentError("workload arguments must be a tuple of strings")
+    if any("\0" in argument for argument in workload_args):
+        raise ExperimentError("workload arguments cannot contain NUL bytes")
+    try:
+        for argument in workload_args:
+            argument.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ExperimentError("workload arguments must be valid UTF-8") from exc
+
+
 def _resolve_commit(repo: Path, ref: str) -> str:
     _validate_ref(ref)
     return _git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}", capture=True)
@@ -112,10 +137,9 @@ def run_experiment(
     output_dir: Path,
     cwd: Path | None = None,
 ) -> ExperimentResult:
-    if workload.is_absolute() or ".." in workload.parts:
-        raise ExperimentError("workload must be a repository-relative path")
     _validate_ref(baseline_ref)
     _validate_ref(candidate_ref)
+    _validate_workload_invocation(workload, workload_args)
     contract = contract.resolve()
     load_contracts(contract)
     repo = _repo_root((cwd or Path.cwd()).resolve())

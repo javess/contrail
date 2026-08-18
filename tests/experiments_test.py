@@ -158,6 +158,37 @@ def test_proofline_rejects_unrepresentable_git_refs_before_loading_contracts(
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    ("workload", "workload_args", "message"),
+    (
+        (Path("bad\0workload.py"), (), "workload path cannot contain NUL bytes"),
+        (Path("bad-\udcff.py"), (), "workload path must be valid UTF-8"),
+        (Path("workload.py"), ("bad\0argument",), "workload arguments cannot contain NUL bytes"),
+        (Path("workload.py"), ("bad-\udcff",), "workload arguments must be valid UTF-8"),
+    ),
+)
+def test_proofline_rejects_unrepresentable_workloads_before_loading_contracts(
+    tmp_path: Path,
+    workload: Path,
+    workload_args: tuple[str, ...],
+    message: str,
+) -> None:
+    output = tmp_path / "results"
+
+    with pytest.raises(ExperimentError, match=message):
+        run_experiment(
+            tmp_path / "missing-contract.yaml",
+            baseline_ref="main",
+            candidate_ref="main",
+            workload=workload,
+            workload_args=workload_args,
+            output_dir=output,
+            cwd=tmp_path,
+        )
+
+    assert not output.exists()
+
+
 def test_proofline_validates_contracts_before_creating_worktrees_or_outputs(
     tmp_path: Path,
 ) -> None:
