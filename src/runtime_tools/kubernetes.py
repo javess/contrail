@@ -316,7 +316,10 @@ def import_kubernetes_snapshot(
                 raise KubernetesImportError(f"duplicate Kubernetes object uid: {uid}")
             entity_by_uid[uid] = f"k8s:{kind.lower()}:{uid}"
             if kind == "Node":
-                node_uid_by_name[_name(item)] = uid
+                node_name = _name(item)
+                if node_name in node_uid_by_name:
+                    raise KubernetesImportError(f"duplicate Kubernetes Node name: {node_name}")
+                node_uid_by_name[node_name] = uid
 
     for item in items:
         kind = _kind(item)
@@ -416,9 +419,13 @@ def import_kubernetes_snapshot(
         statuses = _container_statuses(pod_status)
         containers = _list(spec.get("containers", []), "Pod containers")
         if pod_entity:
+            container_names: set[str] = set()
             for raw_container in containers:
                 container = _object(raw_container, "container")
                 name = _required_string(container.get("name"), "container name")
+                if name in container_names:
+                    raise KubernetesImportError(f"duplicate container name: {name}")
+                container_names.add(name)
                 resources = _object(container.get("resources", {}), "container resources")
                 container_entity_id = f"{pod_entity}:container:{name}"
                 container_status = statuses.get(name, {})

@@ -505,6 +505,52 @@ def test_kubernetes_enrichment_reports_identity_collisions_without_publishing(
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    ("items", "message"),
+    (
+        (
+            [
+                {"kind": "Node", "metadata": _metadata("node-a", "node-1"), "status": {}},
+                {"kind": "Node", "metadata": _metadata("node-a", "node-2"), "status": {}},
+            ],
+            "duplicate Kubernetes Node name: node-a",
+        ),
+        (
+            [
+                {
+                    "kind": "Pod",
+                    "metadata": _metadata("worker", "pod"),
+                    "spec": {
+                        "containers": [
+                            {"name": "task", "resources": {}},
+                            {"name": "task", "resources": {}},
+                        ]
+                    },
+                    "status": {},
+                }
+            ],
+            "duplicate container name: task",
+        ),
+    ),
+)
+def test_kubernetes_snapshot_rejects_ambiguous_workload_names(
+    tmp_path: Path,
+    items: list[dict[str, object]],
+    message: str,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "ambiguous.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(json.dumps({"items": items}), encoding="utf-8")
+
+    with pytest.raises(KubernetesImportError, match=message):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()
+
+
 def test_kubernetes_snapshot_preserves_rfc3339_nanoseconds(tmp_path: Path) -> None:
     base = tmp_path / "base.runpack"
     snapshot = tmp_path / "nanoseconds.json"
