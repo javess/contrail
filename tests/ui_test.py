@@ -181,7 +181,7 @@ def test_local_ui_serves_packaged_assets_and_read_only_data(tmp_path: Path) -> N
         server.server_close()
         thread.join(timeout=2)
 
-    assert "Runtime timeline" in html
+    assert "Regression comparison" in html
     assert payload["runs"][0]["summary"]["name"] == "served"
 
 
@@ -310,8 +310,15 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert 'id="proofline"' in html
     assert 'id="proofline-eyebrow"' in html
     assert 'id="proofline-findings"' in html
+    assert 'id="comparison-overview"' in html
+    assert html.index('id="overview"') < html.index('id="proofline"')
+    assert html.index('id="proofline"') < html.index('id="comparison"')
     assert "renderProofline()" in javascript
-    assert ".proofline:not(.hidden) + .summary" in stylesheet
+    assert "renderOverview()" in javascript
+    assert "state.runIndex = candidateRunIndex(data)" in javascript
+    assert ".verdict-card.danger" in stylesheet
+    assert ".problem-findings" in stylesheet
+    assert ".passed-findings" in stylesheet
     assert ".event.evidence-highlight" in stylesheet
     assert ".event.selected" in stylesheet
     assert 'id="analysis"' in html
@@ -319,7 +326,7 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "Path waiting" in javascript
     assert "Path certainty" in javascript
     assert "Causal cycle detected; critical path is inferred" in javascript
-    assert "diff.cpu_time.baseline" in javascript
+    assert 'comparisonMetric("CPU time", diff.cpu_time, fmtDuration)' in javascript
     assert "run.summary.cpu_user_seconds + run.summary.cpu_system_seconds" in javascript
     assert "const cpuTime = finiteNumber(rawCpuTime) ? rawCpuTime : null" in javascript
     assert "`Signal ${-value}`" in javascript
@@ -429,9 +436,11 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
         }
 
         const selectors = [
+          "#loading-state", "#overview", "#comparison-overview",
           "#run-switcher", "#proofline", "#proofline-eyebrow", "#proofline-heading",
           "#proofline-summary", "#proofline-findings",
           "#summary", "#analysis", "#comparison",
+          "#selected-run-heading", "#selected-run-description",
           "#comparison-grid", "#entity-filter", "#kind-filter", "#zoom",
           "#timeline", "#axis", "#detail", "main",
         ];
@@ -815,7 +824,7 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
           if (nodes["#proofline-eyebrow"].textContent !==
                 "PROOFLINE / CONSISTENCY-CHECKED REPORT" ||
               nodes["#proofline-heading"].textContent !==
-                "Retained runtime contract findings" ||
+                "Retained regression verdict" ||
               !nodes["#proofline-summary"].innerHTML.includes("CHECKED REPORT") ||
               !nodes["#proofline-summary"].innerHTML.includes("3 report results") ||
               !nodes["#proofline-findings"].innerHTML.includes("Reported expected") ||

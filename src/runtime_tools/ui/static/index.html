@@ -3,30 +3,54 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Contrail Runtime Timeline</title>
+    <title>Contrail Regression Comparison</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <header class="masthead">
-      <div>
+      <div class="masthead-copy">
         <p class="eyebrow">CONTRAIL / EXECUTION EVIDENCE</p>
-        <h1>Runtime timeline</h1>
+        <h1>Regression comparison</h1>
+        <p class="masthead-description">Understand what changed, which guarantees failed, and the evidence behind each regression.</p>
       </div>
       <div id="run-switcher" class="segmented" aria-label="Select execution"></div>
     </header>
 
     <main>
+      <div id="loading-state" class="loading-state" role="status">Loading comparison evidence…</div>
+
+      <section id="overview" class="overview hidden" aria-label="Comparison verdict">
+        <div id="comparison-overview" class="comparison-overview"></div>
+      </section>
+
       <section id="proofline" class="proofline hidden" aria-label="Proofline contract evidence">
         <div class="section-heading">
           <div>
             <p id="proofline-eyebrow" class="eyebrow">PROOFLINE / VERIFIED</p>
-            <h2 id="proofline-heading">Runtime contract findings</h2>
+            <h2 id="proofline-heading">Contract verdict</h2>
+            <p class="section-description">Failed checks explain why the candidate is unsafe and link to exact runtime evidence.</p>
           </div>
           <div id="proofline-summary" class="proofline-summary"></div>
         </div>
         <div id="proofline-findings" class="proofline-findings"></div>
       </section>
 
+      <section id="comparison" class="comparison hidden" aria-label="Run comparison">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">BASELINE → CANDIDATE</p>
+            <h2>Behavior changes</h2>
+            <p class="section-description">Observed deltas are facts; contract findings above determine which ones are regressions.</p>
+          </div>
+        </div>
+        <div id="comparison-grid" class="comparison-grid"></div>
+      </section>
+
+      <div class="execution-heading">
+        <p class="eyebrow">SELECTED EXECUTION</p>
+        <h2 id="selected-run-heading">Candidate evidence</h2>
+        <p id="selected-run-description" class="section-description">Inspect the candidate summary, lifecycle, and exact intervals supporting the comparison.</p>
+      </div>
       <section id="summary" class="summary" aria-label="Execution summary" tabindex="-1"></section>
 
       <section class="analysis-shell" aria-label="Execution analysis">
@@ -37,16 +61,6 @@
           </div>
         </div>
         <div id="analysis" class="analysis-grid"></div>
-      </section>
-
-      <section id="comparison" class="comparison hidden" aria-label="Run comparison">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">STRUCTURED DIFF</p>
-            <h2>Behavior changes</h2>
-          </div>
-        </div>
-        <div id="comparison-grid" class="comparison-grid"></div>
       </section>
 
       <section class="timeline-shell">
@@ -69,7 +83,7 @@
     <aside id="detail" class="detail" aria-live="polite">
       <p class="eyebrow">SELECTED EVIDENCE</p>
       <h2>Choose an interval</h2>
-      <p>Click a bar to inspect its normalized attributes and timing.</p>
+      <p>Select a failed check or timeline interval to inspect normalized attributes, timing, and causal links.</p>
     </aside>
 
     <script src="/app.js" defer></script>

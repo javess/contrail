@@ -41,6 +41,52 @@ const displayValue = value => {
 
 function currentRun() { return state.data.runs[state.runIndex]; }
 
+function candidateRunIndex(data = state.data) {
+  const verification = data.proofline && typeof data.proofline === "object" && data.proofline.verification && typeof data.proofline.verification === "object" ? data.proofline.verification : {};
+  const verifiedIndex = data.runs.findIndex(run => run.summary.id === verification.candidate_id);
+  if (verifiedIndex >= 0) return verifiedIndex;
+  return data.comparison && data.runs.length > 1 ? data.runs.length - 1 : 0;
+}
+
+function findingCounts() {
+  const proofline = state.data.proofline;
+  const findings = proofline && Array.isArray(proofline.findings) ? proofline.findings : [];
+  return findings.reduce((counts, finding) => {
+    const status = finding.status === "pass" || finding.status === "fail" || finding.status === "unverifiable" ? finding.status : "unknown";
+    counts[status] += 1;
+    return counts;
+  }, { pass: 0, fail: 0, unverifiable: 0, unknown: 0 });
+}
+
+function fmtPercentChange(baseline, candidate) {
+  if (!finiteNumber(baseline) || !finiteNumber(candidate)) return "change unavailable";
+  if (baseline === candidate) return "no change";
+  if (baseline === 0) return candidate > 0 ? "new in candidate" : "removed in candidate";
+  const percent = (candidate - baseline) / Math.abs(baseline) * 100;
+  return `${percent > 0 ? "+" : ""}${percent.toFixed(1)}%`;
+}
+
+function comparisonMetric(label, values, formatter) {
+  const baseline = values ? values.baseline : null;
+  const candidate = values ? values.candidate : null;
+  return `<div class="comparison-metric"><span>${escapeHtml(label)}</span><div class="metric-pair"><span><small>Baseline</small><strong>${escapeHtml(formatter(baseline))}</strong></span><span class="metric-arrow" aria-hidden="true">→</span><span><small>Candidate</small><strong>${escapeHtml(formatter(candidate))}</strong></span></div><p>${escapeHtml(fmtPercentChange(baseline, candidate))}</p></div>`;
+}
+
+function renderOverview() {
+  const section = document.querySelector("#overview");
+  const diff = state.data.comparison;
+  if (!diff) { section.classList.add("hidden"); return; }
+  section.classList.remove("hidden");
+  const counts = findingCounts();
+  const problemCount = counts.fail + counts.unverifiable;
+  const hasProofline = state.data.proofline && typeof state.data.proofline === "object";
+  const title = counts.fail > 0 ? `${counts.fail} regression${counts.fail === 1 ? "" : "s"} detected` : counts.unverifiable > 0 ? `${counts.unverifiable} check${counts.unverifiable === 1 ? "" : "s"} need evidence` : hasProofline ? "Candidate satisfies the contract" : diff.outcome === "equivalent" ? "Executions are behaviorally equivalent" : "Candidate behavior changed";
+  const tone = counts.fail > 0 ? "danger" : counts.unverifiable > 0 || diff.outcome !== "equivalent" ? "attention" : "success";
+  const message = problemCount > 0 ? "Start with the failed checks below, then follow a finding to its exact candidate evidence." : hasProofline ? `${counts.pass} check${counts.pass === 1 ? "" : "s"} passed. Review observed deltas below for context.` : "No policy was supplied, so changes are shown as observations rather than regressions.";
+  const outputStatus = `<div class="comparison-metric"><span>Business result</span><div class="metric-pair"><span><small>Baseline</small><strong>${escapeHtml(fmtExitStatus(diff.baseline.exit_code))}</strong></span><span class="metric-arrow" aria-hidden="true">→</span><span><small>Candidate</small><strong>${escapeHtml(fmtExitStatus(diff.candidate.exit_code))}</strong></span></div><p>stdout ${escapeHtml(fmtEquivalence(diff.output_equivalent))}</p></div>`;
+  document.querySelector("#comparison-overview").innerHTML = `<div class="verdict-card ${tone}"><p class="eyebrow">COMPARISON VERDICT</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><div class="verdict-counts"><span><strong>${counts.fail}</strong> failed</span><span><strong>${counts.unverifiable}</strong> unverifiable</span><span><strong>${counts.pass}</strong> passed</span></div></div><div class="overview-metrics">${outputStatus}${comparisonMetric("Runtime", diff.wall_time, fmtDuration)}${comparisonMetric("CPU time", diff.cpu_time, fmtDuration)}${comparisonMetric("Critical path", diff.critical_path, fmtDuration)}</div>`;
+}
+
 function resetFilters() {
   state.entity = "";
   state.kind = "";
@@ -78,10 +124,12 @@ function switchRunManually(runIndex) {
 
 function renderSwitcher() {
   const node = document.querySelector("#run-switcher");
+  const candidateIndex = candidateRunIndex();
   node.innerHTML = state.data.runs.map((run, index) => {
     const active = index === state.runIndex;
     const name = displayValue(run.summary.name);
-    return `<button class="${active ? "active" : ""}" data-run="${index}" aria-pressed="${active}" aria-label="Show execution ${escapeHtml(name)}">${escapeHtml(name)}</button>`;
+    const role = state.data.comparison ? index === 0 ? "Baseline" : index === candidateIndex ? "Candidate" : "Execution" : "Execution";
+    return `<button class="${active ? "active" : ""}" data-run="${index}" aria-pressed="${active}" aria-label="Show ${escapeHtml(role.toLowerCase())} execution ${escapeHtml(name)}"><span>${escapeHtml(role)}</span>${escapeHtml(name)}</button>`;
   }).join("");
   node.querySelectorAll("button").forEach(button => button.addEventListener("click", () => {
     switchRunManually(Number(button.dataset.run));
@@ -131,19 +179,21 @@ function renderProofline() {
   }
   section.classList.remove("hidden");
   const retainedReport = proofline.source === "report";
-  document.querySelector("#proofline-heading").textContent = retainedReport ? "Retained runtime contract findings" : "Runtime contract findings";
+  document.querySelector("#proofline-heading").textContent = retainedReport ? "Retained regression verdict" : "Regression verdict";
   const verification = proofline.verification && typeof proofline.verification === "object" ? proofline.verification : {};
   const passed = verification.passed === true;
   const findings = Array.isArray(proofline.findings) ? proofline.findings : [];
+  const counts = findingCounts();
   const artifactBoundReport = retainedReport && findings.length > 0 && findings.every(finding => finding.report_assurance === "artifact_bound_policy_replayed");
   const replayedReport = retainedReport && findings.length > 0 && findings.every(finding => finding.report_assurance === "policy_replayed_against_current_evidence");
   document.querySelector("#proofline-eyebrow").textContent = artifactBoundReport ? "PROOFLINE / ARTIFACT-BOUND REPORT" : replayedReport ? "PROOFLINE / REPLAY-VERIFIED REPORT" : retainedReport ? "PROOFLINE / CONSISTENCY-CHECKED REPORT" : "PROOFLINE / VERIFIED";
-  const verdictClass = retainedReport ? "report" : passed ? "pass" : "fail";
-  const verdictText = artifactBoundReport ? "ARTIFACT-BOUND REPORT" : replayedReport ? "REPLAYED REPORT" : retainedReport ? "CHECKED REPORT" : passed ? "PASS" : "ATTENTION";
+  const verdictClass = counts.fail > 0 ? "fail" : counts.unverifiable > 0 ? "report" : "pass";
+  const verdictText = counts.fail > 0 ? `${counts.fail} FAILED` : counts.unverifiable > 0 ? `${counts.unverifiable} UNVERIFIABLE` : passed ? "ALL PASSED" : "ATTENTION";
+  const assuranceText = artifactBoundReport ? "ARTIFACT-BOUND REPORT" : replayedReport ? "REPLAYED REPORT" : retainedReport ? "CHECKED REPORT" : "LIVE CONTRACT";
   const resultLabel = retainedReport ? `${findings.length} report results` : `${findings.length} findings`;
-  document.querySelector("#proofline-summary").innerHTML = `<span class="proofline-verdict ${verdictClass}">${verdictText}</span><span>${resultLabel} · ${escapeHtml(displayValue(verification.claim_count))} claims</span><span title="${escapeHtml(displayValue(proofline.source))}">${escapeHtml(displayValue(proofline.source))}</span>`;
+  document.querySelector("#proofline-summary").innerHTML = `<span class="proofline-verdict ${verdictClass}">${verdictText}</span><span>${resultLabel} · ${escapeHtml(displayValue(verification.claim_count))} claims</span><span class="assurance-chip">${assuranceText}</span><span title="${escapeHtml(displayValue(proofline.source))}">${escapeHtml(displayValue(proofline.source))}</span>`;
   const findingsNode = document.querySelector("#proofline-findings");
-  findingsNode.innerHTML = findings.length ? findings.map((finding, index) => {
+  const renderFinding = (finding, index) => {
     const status = displayValue(finding.status);
     const statusClass = status === "pass" ? "pass" : status === "fail" ? "fail" : status === "unverifiable" ? "unverifiable" : "unknown";
     const contract = displayValue(finding.contract);
@@ -155,8 +205,14 @@ function renderProofline() {
     const expectedLabel = artifactBound ? "Artifact-bound expected" : replayed ? "Replayed expected" : retainedReport ? "Reported expected" : "Expected";
     const observedLabel = artifactBound ? "Artifact-bound observed" : replayed ? "Replayed observed" : retainedReport ? "Reported observed" : "Observed";
     const assurance = retainedReport ? `<span class="finding-assurance">${escapeHtml(reportAssurance(finding))}</span>` : "";
-    return `<button type="button" class="proofline-finding status-${statusClass}${active ? " active" : ""}" data-finding="${index}" aria-pressed="${active}" aria-label="Inspect ${escapeHtml(shownStatus)} finding ${escapeHtml(contract)}: ${escapeHtml(name)}"><span class="finding-heading"><span class="finding-status">${escapeHtml(shownStatus)}</span><strong>${escapeHtml(contract)} / ${escapeHtml(name)}</strong><small>${escapeHtml(displayValue(finding.type))} · claim ${escapeHtml(displayValue(finding.result_index))}</small></span>${assurance}<span class="finding-expectation"><span>${expectedLabel}</span><code>${escapeHtml(displayValue(finding.expected))}</code><span>${observedLabel}</span><code>${escapeHtml(displayValue(finding.observed))}</code></span>${renderEvidenceReferences(finding, retainedReport)}<span class="finding-action">${escapeHtml(renderFindingAction(proofline, finding))} →</span></button>`;
-  }).join("") : '<p class="empty proofline-empty">No actionable contract findings</p>';
+    return `<button type="button" class="proofline-finding status-${statusClass}${active ? " active" : ""}" data-finding="${index}" aria-pressed="${active}" aria-label="Inspect ${escapeHtml(shownStatus)} finding ${escapeHtml(contract)}: ${escapeHtml(name)}"><span class="finding-heading"><span class="finding-status">${escapeHtml(shownStatus)}</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(contract)} · ${escapeHtml(displayValue(finding.type))} · claim ${escapeHtml(displayValue(finding.result_index))}</small></span>${assurance}<span class="finding-expectation"><span>${expectedLabel}</span><code>${escapeHtml(displayValue(finding.expected))}</code><span>${observedLabel}</span><code>${escapeHtml(displayValue(finding.observed))}</code></span>${renderEvidenceReferences(finding, retainedReport)}<span class="finding-action">${escapeHtml(renderFindingAction(proofline, finding))} →</span></button>`;
+  };
+  const entries = findings.map((finding, index) => ({ finding, index }));
+  const problems = entries.filter(({ finding }) => finding.status !== "pass");
+  const passes = entries.filter(({ finding }) => finding.status === "pass");
+  const problemGroup = problems.length ? `<div class="finding-group problem-findings"><div class="finding-group-heading"><h3>Needs attention</h3><span>${problems.length} check${problems.length === 1 ? "" : "s"}</span></div><div class="finding-grid">${problems.map(({ finding, index }) => renderFinding(finding, index)).join("")}</div></div>` : "";
+  const passGroup = passes.length ? `<div class="finding-group passed-findings"><div class="finding-group-heading"><h3>Passed checks</h3><span>${passes.length} safeguard${passes.length === 1 ? "" : "s"}</span></div><div class="finding-grid">${passes.map(({ finding, index }) => renderFinding(finding, index)).join("")}</div></div>` : "";
+  findingsNode.innerHTML = findings.length ? problemGroup + passGroup : '<p class="empty proofline-empty">No contract results were available</p>';
   findingsNode.querySelectorAll("button").forEach(button => button.addEventListener("click", () => {
     activateFinding(Number(button.dataset.finding));
   }));
@@ -213,6 +269,10 @@ function activateFinding(findingIndex) {
 
 function renderSummary() {
   const run = currentRun();
+  const candidateIndex = candidateRunIndex();
+  const role = state.data.comparison ? state.runIndex === 0 ? "Baseline" : state.runIndex === candidateIndex ? "Candidate" : "Selected execution" : "Execution";
+  document.querySelector("#selected-run-heading").textContent = `${role} evidence`;
+  document.querySelector("#selected-run-description").textContent = `Inspect the ${role.toLowerCase()} summary, lifecycle, and exact intervals supporting the comparison.`;
   const critical = run.analysis.critical_path;
   const rawCpuTime = run.summary.cpu_user_seconds == null || run.summary.cpu_system_seconds == null
     ? null
@@ -268,17 +328,21 @@ function renderAnalysis() {
   document.querySelector("#analysis").innerHTML = `<article><h3>Lifecycle</h3><ol class="phase-list">${lifecycle}</ol></article><article><h3>Throughput &amp; drain</h3><div class="throughput">${throughputBody}</div></article><article><h3>Bottlenecks</h3><ul class="bottleneck-list">${bottlenecks}</ul></article>`;
 }
 
+function deltaPair(baseline, candidate, formatter = fmtNumber) {
+  return `<span class="delta-pair"><span><small>Baseline</small><strong>${escapeHtml(formatter(baseline))}</strong></span><span class="metric-arrow" aria-hidden="true">→</span><span><small>Candidate</small><strong>${escapeHtml(formatter(candidate))}</strong></span></span>`;
+}
+
 function renderComparison() {
   const section = document.querySelector("#comparison");
   const diff = state.data.comparison;
   if (!diff) { section.classList.add("hidden"); return; }
   section.classList.remove("hidden");
-  const operations = diff.operation_count_changes.slice(0, 5).map(item => `<p><span class="positive">${item.baseline} → ${item.candidate}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No count changes</p>";
-  const errors = diff.operation_error_count_changes.slice(0, 5).map(item => `<p><span class="positive">${item.baseline} → ${item.candidate}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No failed-operation changes</p>";
-  const entities = diff.entity_count_changes.slice(0, 5).map(item => `<p>${escapeHtml(item.change_kind.toUpperCase())} <span class="positive">${item.baseline} → ${item.candidate}</span> ${escapeHtml(item.entity_name)} [${escapeHtml(item.entity_kind)}]</p>`).join("") || "<p>No entity changes</p>";
-  const concurrency = diff.operation_concurrency_changes.slice(0, 5).map(item => `<p><span class="positive">${item.baseline} → ${item.candidate}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No concurrency changes</p>";
-  const durations = diff.operation_duration_changes.filter(item => Math.abs(item.candidate_seconds - item.baseline_seconds) >= .001).slice(0, 5).map(item => `<p><span class="positive">${fmtDuration(item.baseline_seconds)} → ${fmtDuration(item.candidate_seconds)}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No duration changes of at least 1 ms</p>";
-  const edges = diff.edge_count_changes.slice(0, 5).map(item => `<p>${escapeHtml(item.change_kind.toUpperCase())} ${escapeHtml(item.source_name)} → ${escapeHtml(item.target_name)}</p>`).join("") || "<p>No dependency changes</p>";
+  const operations = diff.operation_count_changes.slice(0, 5).map(item => `<div class="change-row">${deltaPair(item.baseline, item.candidate)}<p><strong>${escapeHtml(item.operation_name)}</strong><span>${escapeHtml(item.entity_name)}</span></p></div>`).join("") || '<p class="empty-state">No operation count changes</p>';
+  const errors = diff.operation_error_count_changes.slice(0, 5).map(item => `<div class="change-row problem">${deltaPair(item.baseline, item.candidate)}<p><strong>${escapeHtml(item.operation_name)}</strong><span>${escapeHtml(item.entity_name)}</span></p></div>`).join("") || '<p class="empty-state">No failed-operation changes</p>';
+  const entities = diff.entity_count_changes.slice(0, 5).map(item => `<div class="change-row"><span class="change-kind">${escapeHtml(item.change_kind)}</span>${deltaPair(item.baseline, item.candidate)}<p><strong>${escapeHtml(item.entity_name)}</strong><span>${escapeHtml(item.entity_kind)}</span></p></div>`).join("") || '<p class="empty-state">No entity changes</p>';
+  const concurrency = diff.operation_concurrency_changes.slice(0, 5).map(item => `<div class="change-row">${deltaPair(item.baseline, item.candidate)}<p><strong>${escapeHtml(item.operation_name)}</strong><span>${escapeHtml(item.entity_name)}</span></p></div>`).join("") || '<p class="empty-state">No concurrency changes</p>';
+  const durations = diff.operation_duration_changes.filter(item => Math.abs(item.candidate_seconds - item.baseline_seconds) >= .001).slice(0, 5).map(item => `<div class="change-row">${deltaPair(item.baseline_seconds, item.candidate_seconds, fmtDuration)}<p><strong>${escapeHtml(item.operation_name)}</strong><span>${escapeHtml(item.entity_name)}</span></p></div>`).join("") || '<p class="empty-state">No duration changes of at least 1 ms</p>';
+  const edges = diff.edge_count_changes.slice(0, 5).map(item => `<div class="change-row dependency"><span class="change-kind">${escapeHtml(item.change_kind)}</span><p><strong>${escapeHtml(item.source_name)} → ${escapeHtml(item.target_name)}</strong><span>${escapeHtml(item.relation || "dependency")}</span></p></div>`).join("") || '<p class="empty-state">No dependency changes</p>';
   const environment = diff.environment_changes.slice(0, 5).map(item => `${escapeHtml(item.variable)} (${escapeHtml(item.change_kind)})`).join(", ") || "no selected drift";
   const annotationWarnings = [["Baseline", diff.baseline_annotation_error], ["Candidate", diff.candidate_annotation_error]].filter(([, error]) => error).map(([side, error]) => `<p class="evidence-warning">${side} annotations ignored: ${escapeHtml(error)}</p>`).join("");
   const relayWarnings = [
@@ -291,8 +355,8 @@ function renderComparison() {
   const causalWarnings = [["Baseline", diff.baseline_missing_causal_references], ["Candidate", diff.candidate_missing_causal_references]].filter(([, count]) => count == null || count > 0).map(([side, count]) => `<p class="evidence-warning">${side} ${count == null ? "causal completeness metadata invalid" : `${count} unresolved causal references`}</p>`).join("");
   const semanticWarnings = [["Baseline", diff.baseline_dropped_attribute_count], ["Candidate", diff.candidate_dropped_attribute_count]].filter(([, count]) => count == null || count > 0).map(([side, count]) => `<p class="evidence-warning">${side} ${count == null ? "dropped-attribute metadata invalid" : `${count} exporter-dropped OTLP attributes`}</p>`).join("");
   const warnings = annotationWarnings + relayWarnings + outputWarnings + causalWarnings + semanticWarnings;
-  const timing = `${warnings}<p>Outcome: ${escapeHtml(diff.outcome)}</p><p>Exit status: ${fmtExitStatus(diff.baseline.exit_code)} → ${fmtExitStatus(diff.candidate.exit_code)}</p><p>Stdout: ${fmtEquivalence(diff.output_equivalent)} · stderr: ${fmtEquivalence(diff.stderr_equivalent)} · operation errors: ${fmtEquivalence(diff.operation_errors_equivalent)}</p><p>Runtime: ${fmtDuration(diff.wall_time.baseline)} → <span class="positive">${fmtDuration(diff.wall_time.candidate)}</span></p><p>CPU time: ${fmtDuration(diff.cpu_time.baseline)} → <span class="positive">${fmtDuration(diff.cpu_time.candidate)}</span></p><p>Critical path: ${fmtDuration(diff.critical_path.baseline)} → <span class="positive">${fmtDuration(diff.critical_path.candidate)}</span></p><p>Environment: ${environment}</p>`;
-  document.querySelector("#comparison-grid").innerHTML = `<div class="change-list"><h3>Outcome & timing</h3>${timing}</div><div class="change-list"><h3>Entities</h3>${entities}</div><div class="change-list"><h3>Operation counts</h3>${operations}</div><div class="change-list"><h3>Failed operations</h3>${errors}</div><div class="change-list"><h3>Max concurrency</h3>${concurrency}</div><div class="change-list"><h3>Duration shifts</h3>${durations}</div><div class="change-list"><h3>Dependencies</h3>${edges}</div>`;
+  const timing = `${warnings}<div class="outcome-row"><span>Comparison outcome</span><strong>${escapeHtml(diff.outcome)}</strong></div><div class="outcome-row"><span>Exit status</span><strong>${escapeHtml(fmtExitStatus(diff.baseline.exit_code))} → ${escapeHtml(fmtExitStatus(diff.candidate.exit_code))}</strong></div><div class="outcome-row"><span>Business output</span><strong>${escapeHtml(fmtEquivalence(diff.output_equivalent))}</strong></div><div class="outcome-row"><span>stderr</span><strong>${escapeHtml(fmtEquivalence(diff.stderr_equivalent))}</strong></div><div class="outcome-row"><span>Operation errors</span><strong>${escapeHtml(fmtEquivalence(diff.operation_errors_equivalent))}</strong></div><div class="outcome-row"><span>Environment</span><strong>${environment}</strong></div>`;
+  document.querySelector("#comparison-grid").innerHTML = `<div class="change-list outcome-list"><h3>Outcome</h3>${timing}</div><div class="change-list"><h3>Operation counts</h3>${operations}</div><div class="change-list"><h3>Failed operations</h3>${errors}</div><div class="change-list"><h3>Dependencies</h3>${edges}</div><div class="change-list"><h3>Duration shifts</h3>${durations}</div><div class="change-list"><h3>Concurrency</h3>${concurrency}</div><div class="change-list"><h3>Entities</h3>${entities}</div>`;
 }
 
 function renderFilters() {
@@ -418,7 +482,11 @@ function showDetail(event, entities) {
   syncTimelineSelection();
 }
 
-function renderAll() { renderSwitcher(); renderProofline(); renderSummary(); renderAnalysis(); renderComparison(); renderFilters(); renderTimeline(); }
+function renderAll() {
+  document.querySelector("#loading-state").classList.add("hidden");
+  renderOverview(); renderSwitcher(); renderProofline(); renderComparison();
+  renderSummary(); renderAnalysis(); renderFilters(); renderTimeline();
+}
 
 document.querySelector("#entity-filter").addEventListener("change", event => { state.entity = event.target.value; renderTimeline(); });
 document.querySelector("#kind-filter").addEventListener("change", event => { state.kind = event.target.value; renderTimeline(); });
@@ -427,6 +495,6 @@ document.querySelector("#zoom").addEventListener("input", event => { state.zoom 
 fetch("/api/data").then(response => {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
-}).then(data => { state.data = data; renderAll(); }).catch(error => {
+}).then(data => { state.data = data; state.runIndex = candidateRunIndex(data); renderAll(); }).catch(error => {
   document.querySelector("main").innerHTML = `<p>Could not load execution evidence: ${escapeHtml(error.message)}</p>`;
 });
