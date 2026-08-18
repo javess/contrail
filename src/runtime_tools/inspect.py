@@ -89,9 +89,11 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
 def render_causal_tree(path: Path) -> str:
     with RunpackReader(path) as reader:
         events = reader.events()
-        edges = tuple(edge for edge in reader.causal_edges() if edge.kind == "parent")
+        all_edges = reader.causal_edges()
         entity_names = {entity.id: entity.name for entity in reader.entities()}
         inconsistency_count = reader.clock_inconsistency_count()
+    edges = tuple(edge for edge in all_edges if edge.kind == "parent")
+    other_edges = tuple(edge for edge in all_edges if edge.kind != "parent")
     by_id = {event.id: event for event in events}
     children: dict[str, list[str]] = {event.id: [] for event in events}
     incoming: set[str] = set()
@@ -144,6 +146,16 @@ def render_causal_tree(path: Path) -> str:
     for event in events:
         if event.id not in visited:
             append_tree(event.id)
+    if other_edges:
+        lines.append("CAUSAL LINKS")
+        for edge in other_edges:
+            source = by_id.get(edge.source_event_id)
+            target = by_id.get(edge.target_event_id)
+            if source is None or target is None:
+                continue
+            lines.append(
+                f"  {source.name} → {target.name} [{edge.kind}, confidence {edge.confidence:.2f}]"
+            )
     lines.append(f"clock inconsistencies: {inconsistency_count}")
     return "\n".join(lines)
 

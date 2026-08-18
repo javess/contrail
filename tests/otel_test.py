@@ -261,6 +261,9 @@ def test_otlp_json_import_normalizes_asynchronous_span_links(tmp_path: Path) -> 
     assert edge.source_event_id == "otel:producer-trace:publish"
     assert edge.target_event_id == "otel:consumer-trace:consume"
     assert edge.attributes["otel.link.attributes"] == {"messaging.message.id": "message-1"}
+    tree = render_causal_tree(output)
+    assert "CAUSAL LINKS" in tree
+    assert "publish → consume [link, confidence 1.00]" in tree
 
 
 def test_otlp_json_import_can_preserve_raw_source_explicitly(tmp_path: Path) -> None:
