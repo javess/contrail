@@ -250,6 +250,34 @@ def test_kubernetes_snapshot_preserves_deployment_owner_chains(tmp_path: Path) -
     }
 
 
+def test_kubernetes_does_not_guess_between_non_controller_owners() -> None:
+    item: dict[str, object] = {
+        "kind": "Pod",
+        "metadata": {
+            "name": "worker",
+            "ownerReferences": [{"uid": "job-a"}, {"uid": "job-b"}],
+        },
+    }
+
+    assert kubernetes._owner_uid(item) is None
+
+
+def test_kubernetes_rejects_multiple_controller_owners() -> None:
+    item: dict[str, object] = {
+        "kind": "Pod",
+        "metadata": {
+            "name": "worker",
+            "ownerReferences": [
+                {"uid": "job-a", "controller": True},
+                {"uid": "job-b", "controller": True},
+            ],
+        },
+    }
+
+    with pytest.raises(KubernetesImportError, match="multiple controllers"):
+        kubernetes._owner_uid(item)
+
+
 def test_kubernetes_correlates_cross_service_trace_roots_to_each_pod(tmp_path: Path) -> None:
     base = tmp_path / "base.runpack"
     snapshot = tmp_path / "pods.json"

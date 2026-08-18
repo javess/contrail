@@ -179,18 +179,22 @@ def _owner_uid(item: dict[str, object]) -> str | None:
         return None
     if not isinstance(owners, list):
         raise KubernetesImportError("ownerReferences must be a list")
-    fallback: str | None = None
+    owner_uids: list[str] = []
+    controller_uids: list[str] = []
     for raw_owner in owners:
         owner = _object(raw_owner, "ownerReferences entry")
         uid = _required_string(owner.get("uid"), "ownerReferences uid")
+        owner_uids.append(uid)
         controller = owner.get("controller")
         if controller is not None and not isinstance(controller, bool):
             raise KubernetesImportError("ownerReferences controller must be a boolean")
         if controller is True:
-            return uid
-        if fallback is None:
-            fallback = uid
-    return fallback
+            controller_uids.append(uid)
+    if len(controller_uids) > 1:
+        raise KubernetesImportError("ownerReferences contains multiple controllers")
+    if controller_uids:
+        return controller_uids[0]
+    return owner_uids[0] if len(owner_uids) == 1 else None
 
 
 def _replica_attributes(item: dict[str, object], status: dict[str, object]) -> dict[str, JsonValue]:
