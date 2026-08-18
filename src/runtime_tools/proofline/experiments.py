@@ -152,6 +152,15 @@ def _create_output_directory(output_dir: Path) -> None:
         raise ExperimentError(f"could not create output directory: {output_dir}") from exc
 
 
+def _resolve_path(path: Path, label: str) -> Path:
+    if not isinstance(path, Path):
+        raise ExperimentError(f"{label} must be a path")
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ExperimentError(f"could not resolve {label}: {path}") from exc
+
+
 def run_experiment(
     contract: Path,
     *,
@@ -165,9 +174,9 @@ def run_experiment(
     _validate_ref(baseline_ref)
     _validate_ref(candidate_ref)
     _validate_workload_invocation(workload, workload_args)
-    contract = contract.resolve()
+    contract = _resolve_path(contract, "contract path")
     load_contracts(contract)
-    repo = _repo_root((cwd or Path.cwd()).resolve())
+    repo = _repo_root(_resolve_path(cwd or Path.cwd(), "working directory"))
     if output_dir.exists():
         raise ExperimentError(f"refusing to reuse output directory: {output_dir}")
     if not output_dir.parent.is_dir():

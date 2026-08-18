@@ -297,7 +297,10 @@ def record_process(
         )
     if output.exists():
         raise CaptureError(f"refusing to overwrite existing runpack: {output}")
-    working_directory = (cwd or Path.cwd()).resolve()
+    try:
+        working_directory = (cwd or Path.cwd()).resolve()
+    except (OSError, RuntimeError) as exc:
+        raise CaptureError("could not resolve the capture working directory") from exc
     if not working_directory.is_dir():
         raise CaptureError(f"working directory does not exist: {working_directory}")
     if not output.parent.is_dir():

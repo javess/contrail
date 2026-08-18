@@ -284,3 +284,22 @@ def test_proofline_validates_contracts_before_creating_worktrees_or_outputs(
 
     assert not output.exists()
     assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
+
+
+def test_proofline_normalizes_contract_path_symlink_loops(tmp_path: Path) -> None:
+    contract = tmp_path / "loop.yaml"
+    contract.symlink_to(contract.name)
+    output = tmp_path / "results"
+
+    with pytest.raises(ExperimentError, match="could not resolve contract path"):
+        run_experiment(
+            contract,
+            baseline_ref="main",
+            candidate_ref="main",
+            workload=Path("workload.py"),
+            workload_args=(),
+            output_dir=output,
+            cwd=tmp_path,
+        )
+
+    assert not output.exists()

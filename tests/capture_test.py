@@ -532,6 +532,23 @@ def test_record_process_rejects_invalid_names_before_creating_artifacts(
     assert not tuple(tmp_path.glob(".invalid-name.*"))
 
 
+def test_record_process_normalizes_working_directory_symlink_loops(tmp_path: Path) -> None:
+    working_directory = tmp_path / "loop"
+    working_directory.symlink_to(working_directory.name)
+    output = tmp_path / "unresolved.runpack"
+
+    with pytest.raises(CaptureError, match="could not resolve the capture working directory"):
+        record_process(
+            (sys.executable, "-c", "pass"),
+            output,
+            name="unresolved",
+            cwd=working_directory,
+        )
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".unresolved.*"))
+
+
 def test_record_process_normalizes_publication_failures_and_cleans_temporary_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
