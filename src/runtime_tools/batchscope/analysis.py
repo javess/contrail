@@ -403,6 +403,10 @@ def _progress_values(completed: object, total: object) -> tuple[float, float] | 
         total_value = float(total)
     except OverflowError:
         return None
+    completed_is_inexact = isinstance(completed, int) and int(completed_value) != completed
+    total_is_inexact = isinstance(total, int) and int(total_value) != total
+    if completed_is_inexact or total_is_inexact:
+        return None
     if not (
         math.isfinite(completed_value)
         and math.isfinite(total_value)

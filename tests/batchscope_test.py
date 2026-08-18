@@ -580,6 +580,27 @@ def test_throughput_ignores_progress_integers_outside_float_range(tmp_path: Path
     assert analyze_runpack(runpack).throughput is None
 
 
+def test_throughput_does_not_round_large_integer_progress_to_complete(tmp_path: Path) -> None:
+    runpack = tmp_path / "imprecise-progress.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 1, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(
+            _event(
+                "progress",
+                "progress",
+                "progress",
+                1,
+                1,
+                {"completed": 2**53, "total": 2**53 + 1},
+            )
+        )
+
+    assert analyze_runpack(runpack).throughput is None
+
+
 def test_throughput_omits_overflowed_rates_from_json(tmp_path: Path) -> None:
     runpack = tmp_path / "overflowed-rate.runpack"
     with RunpackWriter(runpack) as writer:
