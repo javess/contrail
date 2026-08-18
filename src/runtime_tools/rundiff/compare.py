@@ -275,7 +275,7 @@ def _output_equivalence(
     baseline_complete: bool | None,
     candidate_complete: bool | None,
 ) -> bool | None:
-    if baseline_complete is False or candidate_complete is False:
+    if baseline_complete is not True or candidate_complete is not True:
         return None
     return _known_equivalence(baseline, candidate)
 
