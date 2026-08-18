@@ -87,6 +87,15 @@ _REQUIRED_COLUMNS = {
 _OPTIONAL_COLUMNS = {
     "attachments": {"id", "kind", "name", "media_type", "content", "attributes_json"}
 }
+_PRIMARY_KEYS = {
+    "manifest": ("key",),
+    "executions": ("id",),
+    "entities": ("id",),
+    "events": ("id",),
+    "causal_edges": ("source_event_id", "target_event_id", "kind"),
+    "measurements": ("id",),
+    "attachments": ("id",),
+}
 
 _SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -479,13 +488,21 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
     for table, required_columns in (_REQUIRED_COLUMNS | _OPTIONAL_COLUMNS).items():
         if table not in tables:
             continue
-        columns = {
-            str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        table_info = connection.execute(f"PRAGMA table_info({table})").fetchall()
+        columns = {str(row[1]) for row in table_info}
         missing_columns = sorted(required_columns - columns)
         if missing_columns:
             raise RunpackError(
                 f"runpack table {table} is missing required columns: {', '.join(missing_columns)}"
+            )
+        primary_key = tuple(
+            str(row[1]) for row in sorted(table_info, key=lambda row: row[5]) if row[5]
+        )
+        expected_primary_key = _PRIMARY_KEYS[table]
+        if primary_key != expected_primary_key:
+            raise RunpackError(
+                f"runpack table {table} does not enforce required primary key: "
+                f"{', '.join(expected_primary_key)}"
             )
     row = connection.execute("SELECT value FROM manifest WHERE key = 'schema_version'").fetchone()
     if row is None:
