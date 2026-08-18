@@ -275,3 +275,25 @@ assertions:
 
     assert report.results[0].status == "unverifiable"
     assert report.results[0].observed == "annotation evidence incomplete"
+
+
+def test_proofline_reports_incomplete_output_identity_as_unverifiable(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "output.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=False)
+    with sqlite3.connect(baseline) as connection:
+        row = connection.execute("SELECT metadata_json FROM executions").fetchone()
+        metadata = json.loads(row[0])
+        metadata["output"]["stdout"]["pipe_open_after_exit"] = True
+        connection.execute("UPDATE executions SET metadata_json = ?", (json.dumps(metadata),))
+    contract.write_text(
+        "name: output\nassertions:\n  - type: output_equivalent\n",
+        encoding="utf-8",
+    )
+
+    report = verify_contracts(contract, baseline, candidate)
+
+    assert report.results[0].status == "unverifiable"
+    assert report.results[0].observed == "output identity incomplete (baseline: stdout)"

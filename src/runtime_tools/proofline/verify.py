@@ -118,6 +118,17 @@ def _operation_totals(path: Path, operation: str) -> int:
         )
 
 
+def _incomplete_output_observation(diff: ExecutionDiff) -> str | None:
+    incomplete = []
+    if "stdout" in diff.baseline_incomplete_streams:
+        incomplete.append("baseline: stdout")
+    if "stdout" in diff.candidate_incomplete_streams:
+        incomplete.append("candidate: stdout")
+    if not incomplete:
+        return None
+    return f"output identity incomplete ({'; '.join(incomplete)})"
+
+
 def _evaluate(
     contract: Contract,
     assertion: Assertion,
@@ -132,7 +143,7 @@ def _evaluate(
                 assertion,
                 "unverifiable",
                 "equivalent output",
-                "output identity unavailable",
+                _incomplete_output_observation(diff) or "output identity unavailable",
             )
         return _result(
             contract,
