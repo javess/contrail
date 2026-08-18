@@ -611,14 +611,13 @@ class RunpackWriter:
             UPDATE executions
             SET started_at_ns = min(started_at_ns, ?),
                 finished_at_ns = CASE
+                    WHEN finished_at_ns IS NULL THEN NULL
                     WHEN ? IS NULL THEN finished_at_ns
-                    WHEN finished_at_ns IS NULL THEN ?
                     ELSE max(finished_at_ns, ?)
                 END
             """,
                 (
                     normalized_start,
-                    normalized_finish,
                     normalized_finish,
                     normalized_finish,
                 ),

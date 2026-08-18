@@ -619,6 +619,18 @@ def test_writer_rejects_invalid_execution_bound_expansions(
     assert (execution.started_at_ns, execution.finished_at_ns) == (0, 1)
 
 
+def test_execution_bound_expansion_does_not_close_an_open_execution(tmp_path: Path) -> None:
+    output = tmp_path / "open-expansion.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 10, None, (), str(tmp_path), None, None, {}))
+        writer.expand_execution_bounds(5, 20)
+
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+    assert execution.started_at_ns == 5
+    assert execution.finished_at_ns is None
+
+
 def test_writer_rejects_reversed_interval_when_finishing_execution(tmp_path: Path) -> None:
     output = tmp_path / "reversed-finish.runpack"
     with RunpackWriter(output) as writer:
