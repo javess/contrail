@@ -64,9 +64,11 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
         for item in reader.measurements():
             measurements.setdefault(item.name, item.value)
         peak_memory = _nonnegative(measurements.get("process.memory.peak"))
-        wall_time = _nonnegative(measurements.get("process.wall_time"))
-        if wall_time is None and execution.finished_at_ns is not None:
-            wall_time = (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
+        wall_time = (
+            (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
+            if execution.finished_at_ns is not None
+            else None
+        )
         return ExecutionSummary(
             schema_version=manifest["schema_version"],
             producer_version=manifest.get("producer_version", "unknown"),

@@ -97,6 +97,21 @@ def test_inspection_preserves_base_measurements_after_additive_enrichment(
     assert summary.peak_memory_bytes == 100
 
 
+def test_inspection_uses_normalized_execution_bounds_over_process_wall_measurement(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "expanded.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 10_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_measurement(Measurement("process.wall_time", 1.0, "s", 1_000_000_000, None, {}))
+
+    summary = inspect_runpack(runpack)
+
+    assert summary.wall_time_seconds == 10.0
+
+
 def test_inspection_keeps_invalid_summary_evidence_unknown(tmp_path: Path) -> None:
     runpack = tmp_path / "invalid-summary.runpack"
     with RunpackWriter(runpack) as writer:
