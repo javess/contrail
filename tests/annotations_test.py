@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sys
@@ -314,6 +315,32 @@ def test_annotation_writer_retries_interrupted_writes(
     record = json.loads(annotations.read_text(encoding="utf-8"))
     assert calls == 2
     assert record["name"] == "interrupted-write"
+    assert record["attributes"] == {"detail": "complete"}
+
+
+def test_annotation_writer_retries_interrupted_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", str(annotations))
+    flock = fcntl.flock
+    calls: list[int] = []
+    interrupted: set[int] = set()
+
+    def interrupted_once_per_operation(descriptor: int, operation: int) -> None:
+        calls.append(operation)
+        if operation not in interrupted:
+            interrupted.add(operation)
+            raise InterruptedError
+        flock(descriptor, operation)
+
+    monkeypatch.setattr(fcntl, "flock", interrupted_once_per_operation)
+
+    runtime.event("interrupted-lock", detail="complete")
+
+    record = json.loads(annotations.read_text(encoding="utf-8"))
+    assert calls == [fcntl.LOCK_EX] * 2 + [fcntl.LOCK_UN] * 2
+    assert record["name"] == "interrupted-lock"
     assert record["attributes"] == {"detail": "complete"}
 
 

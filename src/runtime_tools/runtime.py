@@ -43,7 +43,7 @@ def _write(record: dict[str, JsonValue]) -> None:
         raise ValueError("annotation strings must be valid UTF-8") from exc
     descriptor = os.open(Path(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        _flock(descriptor, fcntl.LOCK_EX)
         try:
             remaining = memoryview(payload)
             while remaining:
@@ -55,9 +55,18 @@ def _write(record: dict[str, JsonValue]) -> None:
                     raise OSError("could not append annotation record")
                 remaining = remaining[written:]
         finally:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            _flock(descriptor, fcntl.LOCK_UN)
     finally:
         os.close(descriptor)
+
+
+def _flock(descriptor: int, operation: int) -> None:
+    while True:
+        try:
+            fcntl.flock(descriptor, operation)
+            return
+        except InterruptedError:
+            continue
 
 
 class _Scope:
