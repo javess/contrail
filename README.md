@@ -84,7 +84,8 @@ uv run runtime enrich-otel-logs trace.runpack logs.json \
 Known log timestamps outside the execution window are dropped. Service resource
 attributes identify log owners, and trace/span IDs create causal `emits` edges
 only when they match one known span. Timestamp-less records remain explicit
-rather than receiving fabricated times.
+rather than receiving fabricated times. Unresolved log-to-span references are
+retained as causal-completeness metadata for RunDiff and Proofline.
 
 Pass `--include-raw` to either OTLP command only when the original JSON should
 travel with the runpack. Normal inspection and the local UI expose attachment
