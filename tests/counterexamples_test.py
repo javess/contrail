@@ -199,6 +199,17 @@ def test_counterexample_parameters_reject_non_utf8_yaml(tmp_path: Path) -> None:
         counterexamples.load_parameters(parameters)
 
 
+def test_counterexample_parameters_reject_non_utf8_yaml_strings(tmp_path: Path) -> None:
+    parameters = tmp_path / "non-utf8-string.yaml"
+    parameters.write_text(
+        'parameters:\n  "bad-\\uD800":\n    type: integer\n    min: 0\n    max: 1\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="string that is not valid UTF-8"):
+        counterexamples.load_parameters(parameters)
+
+
 def test_counterexample_parameters_normalize_excessive_yaml_nesting(tmp_path: Path) -> None:
     parameters = tmp_path / "nested.yaml"
     parameters.write_text("value: " + "[" * 2_000 + "0" + "]" * 2_000, encoding="utf-8")

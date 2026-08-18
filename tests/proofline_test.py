@@ -324,6 +324,17 @@ def test_proofline_rejects_non_utf8_contracts(tmp_path: Path) -> None:
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 
+def test_proofline_rejects_non_utf8_yaml_strings(tmp_path: Path) -> None:
+    contract = tmp_path / "non-utf8-string.yaml"
+    contract.write_text(
+        'name: "bad-\\uD800"\nassertions:\n  - type: output_equivalent\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="string that is not valid UTF-8"):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
 def test_proofline_normalizes_excessive_contract_nesting(tmp_path: Path) -> None:
     contract = tmp_path / "nested.yaml"
     contract.write_text("value: " + "[" * 2_000 + "0" + "]" * 2_000, encoding="utf-8")

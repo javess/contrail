@@ -66,6 +66,23 @@ def load_yaml(value: str) -> Any:
     return yaml.load(value, Loader=_UniqueKeyLoader)
 
 
+def _validate_utf8_strings(value: object, label: str) -> None:
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise YamlInputError(f"{label} contains a string that is not valid UTF-8") from exc
+        return
+    if isinstance(value, list):
+        for item in value:
+            _validate_utf8_strings(item, label)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _validate_utf8_strings(key, label)
+            _validate_utf8_strings(item, label)
+
+
 def load_yaml_file(path: Path, *, label: str, max_bytes: int) -> Any:
     """Read and decode a bounded UTF-8 YAML document."""
     try:
@@ -80,6 +97,8 @@ def load_yaml_file(path: Path, *, label: str, max_bytes: int) -> Any:
     except UnicodeDecodeError as exc:
         raise YamlInputError(f"{label} must be UTF-8") from exc
     try:
-        return load_yaml(value)
+        document = load_yaml(value)
     except RecursionError as exc:
         raise YamlInputError(f"{label} nesting is too deep") from exc
+    _validate_utf8_strings(document, label)
+    return document
