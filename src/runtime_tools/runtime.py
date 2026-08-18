@@ -36,7 +36,10 @@ def _write(record: dict[str, JsonValue]) -> None:
         try:
             remaining = memoryview(payload)
             while remaining:
-                written = os.write(descriptor, remaining)
+                try:
+                    written = os.write(descriptor, remaining)
+                except InterruptedError:
+                    continue
                 if written <= 0:
                     raise OSError("could not append annotation record")
                 remaining = remaining[written:]

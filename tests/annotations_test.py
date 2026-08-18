@@ -272,6 +272,31 @@ def test_annotation_writer_completes_short_writes(
     assert record["attributes"] == {"detail": "complete"}
 
 
+def test_annotation_writer_retries_interrupted_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", str(annotations))
+    write = os.write
+    calls = 0
+
+    def interrupted_once(descriptor: int, data: bytes | bytearray | memoryview) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise InterruptedError
+        return write(descriptor, data)
+
+    monkeypatch.setattr(os, "write", interrupted_once)
+
+    runtime.event("interrupted-write", detail="complete")
+
+    record = json.loads(annotations.read_text(encoding="utf-8"))
+    assert calls == 2
+    assert record["name"] == "interrupted-write"
+    assert record["attributes"] == {"detail": "complete"}
+
+
 def test_annotation_writer_keeps_concurrent_short_writes_as_complete_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
