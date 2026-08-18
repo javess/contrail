@@ -603,8 +603,9 @@ def import_kubernetes_snapshot(
     def append(writer: RunpackWriter) -> KubernetesImportResult:
         starts = [event.started_at_ns for event in events if event.started_at_ns is not None]
         finishes = [event.finished_at_ns for event in events if event.finished_at_ns is not None]
-        if starts:
-            writer.expand_execution_bounds(min(starts), max(finishes) if finishes else None)
+        timestamps = [*starts, *finishes]
+        if timestamps:
+            writer.expand_execution_bounds(min(timestamps), max(finishes) if finishes else None)
         writer.add_entities(entities)
         writer.add_events(events)
         writer.add_causal_edges(edges)
