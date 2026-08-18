@@ -21,6 +21,9 @@ class ExperimentError(ValueError):
 
 
 GIT_COMMAND_TIMEOUT_SECONDS = 120
+MAX_GIT_REF_BYTES = 4 * 1024
+MAX_WORKLOAD_ARGUMENTS = 1_024
+MAX_WORKLOAD_INVOCATION_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +57,8 @@ def _git(repo: Path, *args: str, capture: bool = False) -> str:
         )
     except FileNotFoundError as exc:
         raise ExperimentError("git is required for Proofline execution") from exc
+    except OSError as exc:
+        raise ExperimentError(f"could not execute Git: {exc}") from exc
     except subprocess.CalledProcessError as exc:
         message = exc.stderr.strip() or f"git {' '.join(args)} failed"
         raise ExperimentError(message) from exc
@@ -78,9 +83,11 @@ def _validate_ref(ref: str) -> None:
     if "\0" in ref:
         raise ExperimentError("Git refs cannot contain NUL bytes")
     try:
-        ref.encode("utf-8")
+        encoded = ref.encode("utf-8")
     except UnicodeEncodeError as exc:
         raise ExperimentError("Git refs must be valid UTF-8") from exc
+    if len(encoded) > MAX_GIT_REF_BYTES:
+        raise ExperimentError(f"Git refs cannot exceed {MAX_GIT_REF_BYTES} UTF-8 bytes")
 
 
 def _validate_workload_invocation(workload: Path, workload_args: tuple[str, ...]) -> None:
@@ -99,13 +106,23 @@ def _validate_workload_invocation(workload: Path, workload_args: tuple[str, ...]
         isinstance(argument, str) for argument in workload_args
     ):
         raise ExperimentError("workload arguments must be a tuple of strings")
+    if len(workload_args) > MAX_WORKLOAD_ARGUMENTS:
+        raise ExperimentError(
+            f"workload arguments cannot contain more than {MAX_WORKLOAD_ARGUMENTS} entries"
+        )
     if any("\0" in argument for argument in workload_args):
         raise ExperimentError("workload arguments cannot contain NUL bytes")
     try:
-        for argument in workload_args:
-            argument.encode("utf-8")
+        encoded_arguments = [argument.encode("utf-8") for argument in workload_args]
     except UnicodeEncodeError as exc:
         raise ExperimentError("workload arguments must be valid UTF-8") from exc
+    invocation_bytes = len(workload_text.encode("utf-8")) + sum(
+        len(argument) for argument in encoded_arguments
+    )
+    if invocation_bytes > MAX_WORKLOAD_INVOCATION_BYTES:
+        raise ExperimentError(
+            f"workload path and arguments cannot exceed {MAX_WORKLOAD_INVOCATION_BYTES} UTF-8 bytes"
+        )
 
 
 def _resolve_commit(repo: Path, ref: str) -> str:

@@ -30,6 +30,18 @@ def test_proofline_bounds_git_commands(monkeypatch: pytest.MonkeyPatch, tmp_path
         experiments._git(tmp_path, "status")
 
 
+def test_proofline_normalizes_git_launch_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise OSError("argument vector is too large")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+
+    with pytest.raises(ExperimentError, match="could not execute Git: argument vector"):
+        experiments._git(tmp_path, "status")
+
+
 def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -169,6 +181,19 @@ def test_proofline_rejects_unrepresentable_git_refs_before_loading_contracts(
     assert not output.exists()
 
 
+def test_proofline_bounds_git_refs_before_loading_contracts(tmp_path: Path) -> None:
+    with pytest.raises(ExperimentError, match="Git refs cannot exceed 4096 UTF-8 bytes"):
+        run_experiment(
+            tmp_path / "missing-contract.yaml",
+            baseline_ref="a" * 4_097,
+            candidate_ref="main",
+            workload=Path("workload.py"),
+            workload_args=(),
+            output_dir=tmp_path / "results",
+            cwd=tmp_path,
+        )
+
+
 @pytest.mark.parametrize(
     ("workload", "workload_args", "message"),
     (
@@ -198,6 +223,28 @@ def test_proofline_rejects_unrepresentable_workloads_before_loading_contracts(
         )
 
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("workload_args", "message"),
+    (
+        (("value",) * 1_025, "cannot contain more than 1024 entries"),
+        (("x" * (1024 * 1024),), "cannot exceed 1048576 UTF-8 bytes"),
+    ),
+)
+def test_proofline_bounds_workload_invocations_before_loading_contracts(
+    tmp_path: Path, workload_args: tuple[str, ...], message: str
+) -> None:
+    with pytest.raises(ExperimentError, match=message):
+        run_experiment(
+            tmp_path / "missing-contract.yaml",
+            baseline_ref="main",
+            candidate_ref="main",
+            workload=Path("workload.py"),
+            workload_args=workload_args,
+            output_dir=tmp_path / "results",
+            cwd=tmp_path,
+        )
 
 
 def test_proofline_validates_contracts_before_creating_worktrees_or_outputs(
