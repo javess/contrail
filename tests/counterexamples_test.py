@@ -134,6 +134,33 @@ parameters:
         )
 
 
+@pytest.mark.parametrize(
+    "document",
+    (
+        "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 1\n    minimum: 0\n",
+        "version: 1\nparameters:\n  value:\n    type: integer\n    min: 0\n    max: 1\n",
+    ),
+)
+def test_counterexample_parameters_reject_unknown_fields(tmp_path: Path, document: str) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(document, encoding="utf-8")
+
+    with pytest.raises(ContractError, match="contains unsupported fields"):
+        counterexamples.load_parameters(parameters)
+
+
+@pytest.mark.parametrize("flag", ("--value=other", "--value other", "--"))
+def test_counterexample_parameters_reject_ambiguous_flags(tmp_path: Path, flag: str) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(
+        f"parameters:\n  value:\n    type: integer\n    min: 0\n    max: 1\n    flag: {flag!r}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="option name without whitespace"):
+        counterexamples.load_parameters(parameters)
+
+
 def test_counterexample_search_caps_parameter_count(tmp_path: Path) -> None:
     parameters = tmp_path / "parameters.yaml"
     entries = "\n".join(

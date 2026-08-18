@@ -50,6 +50,12 @@ def _integer(value: object, label: str) -> int:
     return value
 
 
+def _reject_unknown_fields(value: dict[str, object], allowed: set[str], label: str) -> None:
+    unknown = sorted(value.keys() - allowed)
+    if unknown:
+        raise ContractError(f"{label} contains unsupported fields: {', '.join(unknown)}")
+
+
 def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
     try:
         document = load_yaml_file(
@@ -62,6 +68,7 @@ def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
     except yaml.YAMLError as exc:
         raise ContractError(f"invalid parameter YAML: {exc}") from exc
     root = _object(document, "parameter document")
+    _reject_unknown_fields(root, {"parameters"}, "parameter document")
     raw_parameters = _object(root.get("parameters"), "parameters")
     if not raw_parameters:
         raise ContractError("parameters cannot be empty")
@@ -75,6 +82,7 @@ def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
         if not isinstance(name, str) or not name:
             raise ContractError("parameter names must be non-empty strings")
         spec = _object(raw_spec, f"parameter {name}")
+        _reject_unknown_fields(spec, {"type", "min", "max", "flag"}, f"parameter {name}")
         if spec.get("type") != "integer":
             raise ContractError(f"parameter {name} supports only type: integer")
         minimum = _integer(spec.get("min"), f"parameter {name} min")
@@ -82,8 +90,16 @@ def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
         if maximum < minimum:
             raise ContractError(f"parameter {name} max must be >= min")
         flag = spec.get("flag", f"--{name.replace('_', '-')}")
-        if not isinstance(flag, str) or not flag.startswith("-"):
-            raise ContractError(f"parameter {name} flag must start with '-'")
+        if (
+            not isinstance(flag, str)
+            or not flag.startswith("-")
+            or flag in {"-", "--"}
+            or "=" in flag
+            or any(character.isspace() for character in flag)
+        ):
+            raise ContractError(
+                f"parameter {name} flag must be an option name without whitespace or '='"
+            )
         if flag in flags:
             raise ContractError(f"parameter flags must be unique: {flag}")
         flags.add(flag)

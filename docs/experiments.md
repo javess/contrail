@@ -59,7 +59,8 @@ Each generated value becomes `--parameter=value`. Non-violating case artifacts
 are temporary; only the minimized violating case is preserved. Search is
 deterministic, has no Hypothesis example database, and is bounded by
 `--max-examples` (default 25, hard limit 1,000). Parameter files contain at most
-64 integer dimensions, and every bound must fit a signed 64-bit integer. The
+64 integer dimensions, and every bound must fit a signed 64-bit integer.
+Unknown parameter fields and ambiguous custom flags are rejected. The
 final output directory is validated before the search begins and is never
 reused. The final preserved run must reproduce an explicit failed claim or the
 search reports an error. An unverifiable claim caused by missing evidence is
