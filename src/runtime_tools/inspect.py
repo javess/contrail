@@ -66,7 +66,7 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
         measurements: dict[tuple[str, str], float] = {}
         for item in reader.measurements():
             measurements.setdefault((item.name, item.unit), item.value)
-        peak_memory = _nonnegative(measurements.get(("process.memory.peak", "By")))
+        peak_memory = _peak_memory_bytes(measurements.get(("process.memory.peak", "By")))
         wall_time = (
             (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
             if execution.finished_at_ns is not None
@@ -86,7 +86,7 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             wall_time_seconds=wall_time,
             cpu_user_seconds=_nonnegative(measurements.get(("process.cpu.user", "s"))),
             cpu_system_seconds=_nonnegative(measurements.get(("process.cpu.system", "s"))),
-            peak_memory_bytes=int(peak_memory) if peak_memory is not None else None,
+            peak_memory_bytes=peak_memory,
             stdout_bytes=_as_int(_nested_output(execution.metadata, "stdout", "bytes")),
             stdout_sha256=_as_sha256(_nested_output(execution.metadata, "stdout", "sha256")),
             stdout_complete=_stream_complete(execution.metadata, "stdout"),
@@ -202,6 +202,12 @@ def _as_sha256(value: str | int | None) -> str | None:
 
 def _nonnegative(value: float | None) -> float | None:
     return value if value is not None and value >= 0 else None
+
+
+def _peak_memory_bytes(value: float | None) -> int | None:
+    if value is None or value < 0 or value > _MAX_COMPLETENESS_COUNT or not value.is_integer():
+        return None
+    return int(value)
 
 
 def _annotation_error(metadata: dict[str, JsonValue]) -> str | None:

@@ -153,6 +153,16 @@ def test_inspection_does_not_mislabel_reserved_measurements_with_wrong_units(
     assert summary.peak_memory_bytes is None
 
 
+def test_inspection_keeps_invalid_peak_memory_measurements_unknown(tmp_path: Path) -> None:
+    for index, value in enumerate((1.5, float(1 << 63))):
+        runpack = tmp_path / f"invalid-peak-{index}.runpack"
+        with RunpackWriter(runpack) as writer:
+            writer.add_execution(Execution("run", "run", 0, 10, (), str(tmp_path), 0, None, {}))
+            writer.add_measurement(Measurement("process.memory.peak", value, "By", 10, None, {}))
+
+        assert inspect_runpack(runpack).peak_memory_bytes is None
+
+
 def test_inspection_keeps_invalid_summary_evidence_unknown(tmp_path: Path) -> None:
     runpack = tmp_path / "invalid-summary.runpack"
     with RunpackWriter(runpack) as writer:
