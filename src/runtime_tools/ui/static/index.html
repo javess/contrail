@@ -9,9 +9,9 @@
   <body>
     <header class="masthead">
       <div class="masthead-copy">
-        <p class="eyebrow">CONTRAIL / EXECUTION EVIDENCE</p>
-        <h1>Regression comparison</h1>
-        <p class="masthead-description">Understand what changed, which guarantees failed, and the evidence behind each regression.</p>
+        <p class="eyebrow">CHANGE REVIEW</p>
+        <h1>Can this change ship?</h1>
+        <p class="masthead-description">See what got worse, what stayed safe, and where to investigate.</p>
       </div>
       <div id="run-switcher" class="segmented" aria-label="Select execution"></div>
     </header>
@@ -23,12 +23,12 @@
         <div id="comparison-overview" class="comparison-overview"></div>
       </section>
 
-      <section id="proofline" class="proofline hidden" aria-label="Proofline contract evidence">
+      <section id="proofline" class="proofline hidden" aria-label="Release safeguards">
         <div class="section-heading">
           <div>
-            <p id="proofline-eyebrow" class="eyebrow">PROOFLINE / VERIFIED</p>
-            <h2 id="proofline-heading">Contract verdict</h2>
-            <p class="section-description">Failed checks explain why the candidate is unsafe and link to exact runtime evidence.</p>
+            <p id="proofline-eyebrow" class="eyebrow">RELEASE SAFEGUARDS</p>
+            <h2 id="proofline-heading">What needs attention</h2>
+            <p class="section-description">Each safeguard explains the risk in plain language and links to the activity that caused it.</p>
           </div>
           <div id="proofline-summary" class="proofline-summary"></div>
         </div>
@@ -38,26 +38,26 @@
       <section id="comparison" class="comparison hidden" aria-label="Run comparison">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">BASELINE → CANDIDATE</p>
-            <h2>Behavior changes</h2>
-            <p class="section-description">Observed deltas are facts; contract findings above determine which ones are regressions.</p>
+            <p class="eyebrow">ADDITIONAL CONTEXT</p>
+            <h2>Other changes worth knowing</h2>
+            <p class="section-description">Changes already explained by a failed safeguard are not repeated here.</p>
           </div>
         </div>
         <div id="comparison-grid" class="comparison-grid"></div>
       </section>
 
       <div class="execution-heading">
-        <p class="eyebrow">SELECTED EXECUTION</p>
-        <h2 id="selected-run-heading">Candidate evidence</h2>
-        <p id="selected-run-description" class="section-description">Inspect the candidate summary, lifecycle, and exact intervals supporting the comparison.</p>
+        <p class="eyebrow">VERSION OVERVIEW</p>
+        <h2 id="selected-run-heading">New version</h2>
+        <p id="selected-run-description" class="section-description">A concise summary of the version currently selected above.</p>
       </div>
       <section id="summary" class="summary" aria-label="Execution summary" tabindex="-1"></section>
 
       <section class="analysis-shell" aria-label="Execution analysis">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">BATCHSCOPE / EXPLAINED</p>
-            <h2>Lifecycle &amp; constraints</h2>
+            <p class="eyebrow">NEW VERSION</p>
+            <h2>What the application did</h2>
           </div>
         </div>
         <div id="analysis" class="analysis-grid"></div>
@@ -66,13 +66,13 @@
       <section class="timeline-shell">
         <div class="section-heading controls-heading">
           <div>
-            <p class="eyebrow">OBSERVED INTERVALS</p>
-            <h2>Execution lanes</h2>
+            <p class="eyebrow">ACTIVITY TIMELINE</p>
+            <h2>When things happened</h2>
           </div>
           <div class="controls">
-            <label>Entity <select id="entity-filter"><option value="">All</option></select></label>
-            <label>Kind <select id="kind-filter"><option value="">All</option></select></label>
-            <label>Zoom <input id="zoom" type="range" min="1" max="8" step="0.5" value="1"></label>
+            <label>Component <select id="entity-filter"><option value="">All</option></select></label>
+            <label>Activity <select id="kind-filter"><option value="">All</option></select></label>
+            <label>Timeline scale <input id="zoom" type="range" min="1" max="8" step="0.5" value="1"></label>
           </div>
         </div>
         <div id="axis" class="axis"></div>
@@ -81,9 +81,9 @@
     </main>
 
     <aside id="detail" class="detail" aria-live="polite">
-      <p class="eyebrow">SELECTED EVIDENCE</p>
-      <h2>Choose an interval</h2>
-      <p>Select a failed check or timeline interval to inspect normalized attributes, timing, and causal links.</p>
+      <p class="eyebrow">ACTIVITY DETAILS</p>
+      <h2>Choose an activity</h2>
+      <p>Select a failed safeguard or an activity in the timeline to see what happened.</p>
     </aside>
 
     <script src="/app.js" defer></script>

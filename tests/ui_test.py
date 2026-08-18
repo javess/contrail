@@ -181,7 +181,7 @@ def test_local_ui_serves_packaged_assets_and_read_only_data(tmp_path: Path) -> N
         server.server_close()
         thread.join(timeout=2)
 
-    assert "Regression comparison" in html
+    assert "Can this change ship?" in html
     assert payload["runs"][0]["summary"]["name"] == "served"
 
 
@@ -323,20 +323,16 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert ".event.selected" in stylesheet
     assert 'id="analysis"' in html
     assert "renderAnalysis()" in javascript
-    assert "Path waiting" in javascript
+    assert "Waiting on critical path" in javascript
     assert "Path certainty" in javascript
     assert "Causal cycle detected; critical path is inferred" in javascript
-    assert 'comparisonMetric("CPU time", diff.cpu_time, fmtDuration)' in javascript
     assert "run.summary.cpu_user_seconds + run.summary.cpu_system_seconds" in javascript
     assert "const cpuTime = finiteNumber(rawCpuTime) ? rawCpuTime : null" in javascript
     assert "`Signal ${-value}`" in javascript
-    assert "fmtExitStatus(diff.baseline.exit_code)" in javascript
-    assert "Duration shifts" in javascript
+    assert "Time spent in activities" in javascript
     assert "Math.abs(item.candidate_seconds - item.baseline_seconds) >= .001" in javascript
     assert "No duration changes of at least 1 ms" in javascript
-    assert "stderr_equivalent" in javascript
-    assert "operation_errors_equivalent" in javascript
-    assert "nsToSeconds(event.duration_ns)" in javascript
+    assert "fmtActivityDuration(event.duration_ns)" in javascript
     assert "run.summary.record_counts.attachments" in javascript
     assert "Evidence warning" in javascript
     assert "diff.candidate_annotation_error" in javascript
@@ -352,13 +348,13 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "diff.baseline_stdout_relay_error" in javascript
     assert "diff.candidate_stderr_relay_error" in javascript
     assert "Remaining after compute" in javascript
-    assert "No constraint classified from available evidence" in javascript
+    assert "No likely slowdown was identified" in javascript
     assert "Untimed evidence" in javascript
     assert "event.start_offset_ns != null" in javascript
     assert "run.timeline_duration_ns" in javascript
     assert "const scaleNs = timelineDurationNs > 0 ? timelineDurationNs : 1" in javascript
-    assert "Causal links" in javascript
-    assert "Clock domain" in javascript
+    assert "How it fits" in javascript
+    assert "Clock source" in javascript
     assert "Resource measurements" in javascript
     assert "escapeDisplayControls(value).replace" in javascript
     assert r"[\p{Cc}\p{Cf}\p{Cs}]" in javascript
@@ -571,15 +567,11 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
           if (nodes["#proofline-findings"].children.length !== 3) {
             throw new Error("every Proofline finding was not actionable");
           }
-          if (!nodes["#proofline-summary"].innerHTML.includes("3 findings · 3 claims") ||
+          if (!nodes["#proofline-summary"].innerHTML.includes("2 failed") ||
               !nodes["#proofline-summary"].innerHTML.includes("contracts &lt;unsafe&gt;.yaml")) {
-            throw new Error("the Proofline verdict summary was incomplete or unsafe");
+            throw new Error("the safeguard summary was incomplete or unsafe");
           }
-          if (!prooflineHtml.includes("contract &lt;unsafe&gt;") ||
-              prooflineHtml.includes("contract <unsafe>")) {
-            throw new Error("unsafe contract text was not escaped");
-          }
-          if (!prooflineHtml.includes("count &quot;claim&quot;") ||
+          if (!prooflineHtml.includes("Count &quot;claim&quot;") ||
               !prooflineHtml.includes("at most &lt;2&gt;")) {
             throw new Error("unsafe finding fields were not escaped");
           }
@@ -654,7 +646,7 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
           if (nodes["#detail"].innerHTML.includes("baseline event")) {
             throw new Error("run switch retained stale evidence");
           }
-          if (!nodes["#detail"].innerHTML.includes("Choose an interval")) {
+          if (!nodes["#detail"].innerHTML.includes("Choose an activity")) {
             throw new Error("run switch did not reset detail");
           }
 
@@ -670,12 +662,12 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
             throw new Error("finish-only event was assigned a fabricated start position");
           }
           if (!nodes["#detail"].innerHTML.includes(
-            "<dt>Finish offset</dt><dd>500.0 µs</dd>",
+            "<dt>Finish after run began</dt><dd>500.0 µs</dd>",
           )) {
             throw new Error("finish-only evidence did not render its known finish");
           }
           if (!nodes["#detail"].innerHTML.includes(
-            "<dt>Start offset</dt><dd>unknown</dd>",
+            "<dt>Start after run began</dt><dd>unknown</dd>",
           )) {
             throw new Error("finish-only evidence fabricated a known start");
           }
@@ -683,7 +675,7 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
           if (nodes["#detail"].innerHTML.includes("candidate event")) {
             throw new Error("filter retained hidden evidence");
           }
-          if (!nodes["#detail"].innerHTML.includes("Choose an interval")) {
+          if (!nodes["#detail"].innerHTML.includes("Choose an activity")) {
             throw new Error("filter did not reset detail");
           }
 
@@ -732,8 +724,8 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
           if (nodes["#proofline-findings"].children[0].attributes["aria-pressed"] !== "true") {
             throw new Error("the active finding did not expose its pressed state");
           }
-          if (!nodes["#proofline-findings"].innerHTML.includes("operation &lt;match&gt;")) {
-            throw new Error("the backend relationship was not safely rendered");
+          if (!nodes["#proofline-findings"].innerHTML.includes("View 2 related activities")) {
+            throw new Error("the related-activity action was not rendered");
           }
 
           nodes["#proofline-findings"].children[1].trigger("click");
@@ -741,7 +733,7 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
             throw new Error("candidate summary findings did not focus and scroll the summary");
           }
           if (state.highlightedEventIds.length || state.selectedEventId !== null ||
-              !nodes["#detail"].innerHTML.includes("Choose an interval")) {
+              !nodes["#detail"].innerHTML.includes("Choose an activity")) {
             throw new Error("candidate summary findings retained event evidence state");
           }
           if (nodes["#timeline"].children.some(button =>
@@ -763,7 +755,7 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
           nodes["#run-switcher"].children[0].trigger("click");
           if (state.activeFindingIndex !== null || state.highlightedEventIds.length ||
               state.selectedEventId !== null ||
-              !nodes["#detail"].innerHTML.includes("Choose an interval")) {
+              !nodes["#detail"].innerHTML.includes("Choose an activity")) {
             throw new Error("manual run switching retained Proofline navigation state");
           }
           if (nodes["#timeline"].children.some(button =>
@@ -790,50 +782,33 @@ def test_packaged_ui_stacks_selectable_overlaps_and_clears_stale_evidence() -> N
           });
           renderProofline();
           if (nodes["#proofline-eyebrow"].textContent !==
-                "PROOFLINE / ARTIFACT-BOUND REPORT" ||
-              !nodes["#proofline-summary"].innerHTML.includes("ARTIFACT-BOUND REPORT") ||
-              !nodes["#proofline-findings"].innerHTML.includes("Artifact-bound expected") ||
-              !nodes["#proofline-findings"].innerHTML.includes("Artifact-bound observed") ||
-              !nodes["#proofline-findings"].innerHTML.includes("Artifact-bound fact") ||
-              !nodes["#proofline-findings"].innerHTML.includes(
-                "Policy and result replayed against the exact bound runpack artifacts",
-              ) || nodes["#proofline-findings"].innerHTML.toLowerCase().includes("authentic")) {
-            throw new Error("artifact-bound report assurance was not distinct and precise");
+                "RELEASE SAFEGUARDS" ||
+              !nodes["#proofline-summary"].innerHTML.includes(
+                "saved review was rechecked against these exact execution files",
+              ) || nodes["#proofline-summary"].innerHTML.toLowerCase().includes("authentic")) {
+            throw new Error("artifact-bound checking was not explained plainly and precisely");
           }
 
           state.data.proofline.findings.forEach(finding => {
             finding.report_assurance = "policy_replayed_against_current_evidence";
           });
           renderProofline();
-          if (nodes["#proofline-eyebrow"].textContent !==
-                "PROOFLINE / REPLAY-VERIFIED REPORT" ||
-              !nodes["#proofline-summary"].innerHTML.includes("REPLAYED REPORT") ||
-              !nodes["#proofline-findings"].innerHTML.includes("Replayed expected") ||
-              !nodes["#proofline-findings"].innerHTML.includes("Replayed observed") ||
-              !nodes["#proofline-findings"].innerHTML.includes("Replayed fact") ||
-              !nodes["#proofline-findings"].innerHTML.includes(
-                "Policy and result replayed against current runpacks",
+          if (!nodes["#proofline-summary"].innerHTML.includes(
+                "saved rules were run again against the current execution files",
               )) {
-            throw new Error("replayed report assurance was not visible");
+            throw new Error("replayed checking was not explained plainly");
           }
 
           state.data.proofline.findings.forEach(finding => {
             finding.report_assurance = "report_authored_policy_runtime_consistent";
           });
           renderProofline();
-          if (nodes["#proofline-eyebrow"].textContent !==
-                "PROOFLINE / CONSISTENCY-CHECKED REPORT" ||
-              nodes["#proofline-heading"].textContent !==
-                "Retained regression verdict" ||
-              !nodes["#proofline-summary"].innerHTML.includes("CHECKED REPORT") ||
-              !nodes["#proofline-summary"].innerHTML.includes("3 report results") ||
-              !nodes["#proofline-findings"].innerHTML.includes("Reported expected") ||
-              !nodes["#proofline-findings"].innerHTML.includes("Reported observed") ||
-              !nodes["#proofline-findings"].innerHTML.includes(
-                "Report-authored policy/result · runtime values consistent",
-              ) ||
-              !nodes["#proofline-findings"].innerHTML.includes("Reported fact")) {
-            throw new Error("retained report content was presented as authenticated verification");
+          if (nodes["#proofline-heading"].textContent !==
+                "Why this version is blocked" ||
+              !nodes["#proofline-summary"].innerHTML.includes(
+                "saved results are consistent with the current execution files",
+              )) {
+            throw new Error("consistency checking was not explained plainly");
           }
         `, { filename: process.argv[1] });
         """

@@ -19,6 +19,8 @@ const fmtNumber = value => !finiteNumber(value) ? "unknown" : new Intl.NumberFor
 const fmtRate = value => !finiteNumber(value) ? "unknown" : `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)}/s`;
 const fmtEquivalence = value => value == null ? "unknown" : value ? "equivalent" : "different";
 const fmtExitStatus = value => value == null ? "No exit evidence" : value < 0 ? `Signal ${-value}` : `Exit ${value}`;
+const fmtRunResult = value => value == null ? "Unknown" : value === 0 ? "Completed" : value < 0 ? "Stopped unexpectedly" : "Failed";
+const fmtActivityDuration = nanoseconds => nanoseconds == null ? "Timing unavailable" : nanoseconds === 0 ? "Instant" : fmtDuration(nsToSeconds(nanoseconds));
 const nsToSeconds = value => value == null ? null : value / 1e9;
 const escapeDisplayControls = value => Array.from(String(value), char => {
   if (char === "\n" || char === "\t" || !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(char)) return char;
@@ -37,6 +39,10 @@ const displayValue = value => {
   } catch (_) {
     return String(value);
   }
+};
+const humanizeLabel = value => {
+  const text = displayValue(value).replaceAll("_", " ").replaceAll("-", " ").replace(/\s+/g, " ").trim();
+  return text ? text[0].toUpperCase() + text.slice(1) : "Unnamed safeguard";
 };
 
 function currentRun() { return state.data.runs[state.runIndex]; }
@@ -69,7 +75,7 @@ function fmtPercentChange(baseline, candidate) {
 function comparisonMetric(label, values, formatter) {
   const baseline = values ? values.baseline : null;
   const candidate = values ? values.candidate : null;
-  return `<div class="comparison-metric"><span>${escapeHtml(label)}</span><div class="metric-pair"><span><small>Baseline</small><strong>${escapeHtml(formatter(baseline))}</strong></span><span class="metric-arrow" aria-hidden="true">→</span><span><small>Candidate</small><strong>${escapeHtml(formatter(candidate))}</strong></span></div><p>${escapeHtml(fmtPercentChange(baseline, candidate))}</p></div>`;
+  return `<div class="comparison-metric"><span>${escapeHtml(label)}</span><div class="metric-pair"><span><small>Earlier version</small><strong>${escapeHtml(formatter(baseline))}</strong></span><span class="metric-arrow" aria-hidden="true">→</span><span><small>New version</small><strong>${escapeHtml(formatter(candidate))}</strong></span></div><p>${escapeHtml(fmtPercentChange(baseline, candidate))}</p></div>`;
 }
 
 function renderOverview() {
@@ -80,11 +86,11 @@ function renderOverview() {
   const counts = findingCounts();
   const problemCount = counts.fail + counts.unverifiable;
   const hasProofline = state.data.proofline && typeof state.data.proofline === "object";
-  const title = counts.fail > 0 ? `${counts.fail} regression${counts.fail === 1 ? "" : "s"} detected` : counts.unverifiable > 0 ? `${counts.unverifiable} check${counts.unverifiable === 1 ? "" : "s"} need evidence` : hasProofline ? "Candidate satisfies the contract" : diff.outcome === "equivalent" ? "Executions are behaviorally equivalent" : "Candidate behavior changed";
+  const title = counts.fail > 0 ? "Do not ship yet" : counts.unverifiable > 0 ? "Review missing evidence" : hasProofline ? "Safe to ship" : diff.outcome === "equivalent" ? "No meaningful change found" : "Review the changes";
   const tone = counts.fail > 0 ? "danger" : counts.unverifiable > 0 || diff.outcome !== "equivalent" ? "attention" : "success";
-  const message = problemCount > 0 ? "Start with the failed checks below, then follow a finding to its exact candidate evidence." : hasProofline ? `${counts.pass} check${counts.pass === 1 ? "" : "s"} passed. Review observed deltas below for context.` : "No policy was supplied, so changes are shown as observations rather than regressions.";
-  const outputStatus = `<div class="comparison-metric"><span>Business result</span><div class="metric-pair"><span><small>Baseline</small><strong>${escapeHtml(fmtExitStatus(diff.baseline.exit_code))}</strong></span><span class="metric-arrow" aria-hidden="true">→</span><span><small>Candidate</small><strong>${escapeHtml(fmtExitStatus(diff.candidate.exit_code))}</strong></span></div><p>stdout ${escapeHtml(fmtEquivalence(diff.output_equivalent))}</p></div>`;
-  document.querySelector("#comparison-overview").innerHTML = `<div class="verdict-card ${tone}"><p class="eyebrow">COMPARISON VERDICT</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><div class="verdict-counts"><span><strong>${counts.fail}</strong> failed</span><span><strong>${counts.unverifiable}</strong> unverifiable</span><span><strong>${counts.pass}</strong> passed</span></div></div><div class="overview-metrics">${outputStatus}${comparisonMetric("Runtime", diff.wall_time, fmtDuration)}${comparisonMetric("CPU time", diff.cpu_time, fmtDuration)}${comparisonMetric("Critical path", diff.critical_path, fmtDuration)}</div>`;
+  const message = counts.fail > 0 ? `${counts.fail} safeguard${counts.fail === 1 ? "" : "s"} failed. Review the problems below before releasing this version.` : counts.unverifiable > 0 ? `${counts.unverifiable} safeguard${counts.unverifiable === 1 ? "" : "s"} could not be checked with the available data.` : hasProofline ? `All ${counts.pass} safeguards passed.` : "No safeguards were provided, so the page can show changes but cannot decide whether they are safe.";
+  const outputStatus = `<div class="comparison-metric"><span>Application result</span><div class="metric-pair"><span><small>Earlier version</small><strong>${escapeHtml(fmtRunResult(diff.baseline.exit_code))}</strong></span><span class="metric-arrow" aria-hidden="true">→</span><span><small>New version</small><strong>${escapeHtml(fmtRunResult(diff.candidate.exit_code))}</strong></span></div><p>${diff.output_equivalent === true ? "Same user-visible output" : diff.output_equivalent === false ? "Output changed" : "Output could not be compared"}</p></div>`;
+  document.querySelector("#comparison-overview").innerHTML = `<div class="verdict-card ${tone}"><p class="eyebrow">RELEASE GUIDANCE</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><div class="verdict-counts"><span><strong>${counts.fail}</strong> failed</span><span><strong>${counts.unverifiable}</strong> not checked</span><span><strong>${counts.pass}</strong> passed</span></div></div><div class="overview-metrics">${outputStatus}${comparisonMetric("Overall runtime", diff.wall_time, fmtDuration)}</div>`;
 }
 
 function resetFilters() {
@@ -104,7 +110,7 @@ function syncTimelineSelection() {
 
 function resetDetail() {
   state.selectedEventId = null;
-  document.querySelector("#detail").innerHTML = '<p class="eyebrow">SELECTED EVIDENCE</p><h2>Choose an interval</h2><p>Click a bar to inspect its normalized attributes and timing.</p>';
+  document.querySelector("#detail").innerHTML = '<p class="eyebrow">ACTIVITY DETAILS</p><h2>Choose an activity</h2><p>Select a failed safeguard or an activity in the timeline to see what happened.</p>';
 }
 
 function clearFindingNavigation() {
@@ -128,7 +134,7 @@ function renderSwitcher() {
   node.innerHTML = state.data.runs.map((run, index) => {
     const active = index === state.runIndex;
     const name = displayValue(run.summary.name);
-    const role = state.data.comparison ? index === 0 ? "Baseline" : index === candidateIndex ? "Candidate" : "Execution" : "Execution";
+    const role = state.data.comparison ? index === 0 ? "Earlier version" : index === candidateIndex ? "New version" : "Other run" : "Run";
     return `<button class="${active ? "active" : ""}" data-run="${index}" aria-pressed="${active}" aria-label="Show ${escapeHtml(role.toLowerCase())} execution ${escapeHtml(name)}"><span>${escapeHtml(role)}</span>${escapeHtml(name)}</button>`;
   }).join("");
   node.querySelectorAll("button").forEach(button => button.addEventListener("click", () => {
@@ -159,13 +165,40 @@ function reportAssurance(finding) {
   return "Report-authored policy/result · runtime values consistent";
 }
 
+function findingExplanation(finding) {
+  const explanations = {
+    candidate_exit_success: "The new version completed successfully.",
+    exit_code_equivalent: "Both versions completed in the same way.",
+    output_equivalent: "Both versions produced the same application result.",
+    forbid_new_dependency: "The new version contacted a service that the earlier version did not use.",
+    max_operation_count: "An activity ran more often than this safeguard allows.",
+    max_operation_error_count: "An activity that previously succeeded started failing in the new version.",
+    max_runtime_regression: "The new version took longer than this safeguard allows.",
+  };
+  if (explanations[finding.type]) return explanations[finding.type];
+  return finding.status === "pass" ? "The new version stayed within this safeguard." : finding.status === "unverifiable" ? "There is not enough evidence to check this safeguard." : "The new version did not meet this safeguard.";
+}
+
+function renderFindingComparison(finding) {
+  const evidence = Array.isArray(finding.evidence) ? finding.evidence[0] : null;
+  const fact = evidence && evidence.fact && typeof evidence.fact === "object" ? evidence.fact : null;
+  if (!fact || !finiteNumber(fact.baseline) || !finiteNumber(fact.candidate)) {
+    return `<span class="finding-comparison"><span><small>Safeguard</small><strong>${escapeHtml(displayValue(finding.expected))}</strong></span><span><small>New version</small><strong>${escapeHtml(displayValue(finding.observed))}</strong></span></span>`;
+  }
+  const format = value => {
+    if (finding.type === "forbid_new_dependency") return value === 0 ? "Not contacted" : `${fmtNumber(value)} ${value === 1 ? "contact" : "contacts"}`;
+    if (finding.type === "max_operation_error_count") return `${fmtNumber(value)} ${value === 1 ? "error" : "errors"}`;
+    return value === 1 ? "Once" : `${fmtNumber(value)} times`;
+  };
+  const limit = finiteNumber(fact.limit) ? `<span><small>Allowed</small><strong>${escapeHtml(format(fact.limit))}</strong></span>` : "";
+  return `<span class="finding-comparison"><span><small>Earlier version</small><strong>${escapeHtml(format(fact.baseline))}</strong></span><span><small>New version</small><strong>${escapeHtml(format(fact.candidate))}</strong></span>${limit}</span>`;
+}
+
 function renderFindingAction(proofline, finding) {
   const selection = prooflineSelection(proofline, finding);
-  if (finding.focus !== "candidate_events" || !selection) return "Inspect candidate summary";
-  const count = displayValue(selection.matched_event_count);
-  const relationship = displayValue(selection.relationship);
-  const truncation = selection.truncated === true ? " · selection truncated" : "";
-  return `Inspect ${count} candidate event(s) · ${relationship}${truncation}`;
+  if (finding.focus !== "candidate_events" || !selection) return "View the new version overview";
+  const count = finiteNumber(selection.matched_event_count) ? selection.matched_event_count : 0;
+  return count === 1 ? "View the related activity" : `View ${fmtNumber(count)} related activities`;
 }
 
 function renderProofline() {
@@ -179,39 +212,39 @@ function renderProofline() {
   }
   section.classList.remove("hidden");
   const retainedReport = proofline.source === "report";
-  document.querySelector("#proofline-heading").textContent = retainedReport ? "Retained regression verdict" : "Regression verdict";
   const verification = proofline.verification && typeof proofline.verification === "object" ? proofline.verification : {};
   const passed = verification.passed === true;
   const findings = Array.isArray(proofline.findings) ? proofline.findings : [];
   const counts = findingCounts();
+  document.querySelector("#proofline-heading").textContent = counts.fail > 0 ? "Why this version is blocked" : counts.unverifiable > 0 ? "What still needs evidence" : "All safeguards passed";
   const artifactBoundReport = retainedReport && findings.length > 0 && findings.every(finding => finding.report_assurance === "artifact_bound_policy_replayed");
   const replayedReport = retainedReport && findings.length > 0 && findings.every(finding => finding.report_assurance === "policy_replayed_against_current_evidence");
-  document.querySelector("#proofline-eyebrow").textContent = artifactBoundReport ? "PROOFLINE / ARTIFACT-BOUND REPORT" : replayedReport ? "PROOFLINE / REPLAY-VERIFIED REPORT" : retainedReport ? "PROOFLINE / CONSISTENCY-CHECKED REPORT" : "PROOFLINE / VERIFIED";
+  document.querySelector("#proofline-eyebrow").textContent = "RELEASE SAFEGUARDS";
   const verdictClass = counts.fail > 0 ? "fail" : counts.unverifiable > 0 ? "report" : "pass";
-  const verdictText = counts.fail > 0 ? `${counts.fail} FAILED` : counts.unverifiable > 0 ? `${counts.unverifiable} UNVERIFIABLE` : passed ? "ALL PASSED" : "ATTENTION";
-  const assuranceText = artifactBoundReport ? "ARTIFACT-BOUND REPORT" : replayedReport ? "REPLAYED REPORT" : retainedReport ? "CHECKED REPORT" : "LIVE CONTRACT";
-  const resultLabel = retainedReport ? `${findings.length} report results` : `${findings.length} findings`;
-  document.querySelector("#proofline-summary").innerHTML = `<span class="proofline-verdict ${verdictClass}">${verdictText}</span><span>${resultLabel} · ${escapeHtml(displayValue(verification.claim_count))} claims</span><span class="assurance-chip">${assuranceText}</span><span title="${escapeHtml(displayValue(proofline.source))}">${escapeHtml(displayValue(proofline.source))}</span>`;
+  const verdictText = counts.fail > 0 ? `${counts.fail} failed` : counts.unverifiable > 0 ? `${counts.unverifiable} not checked` : passed ? "All passed" : "Review needed";
+  const assuranceExplanation = artifactBoundReport ? "The saved review was rechecked against these exact execution files." : replayedReport ? "The saved rules were run again against the current execution files." : retainedReport ? "The saved results are consistent with the current execution files." : "The safeguards were checked directly against these executions.";
+  document.querySelector("#proofline-summary").innerHTML = `<span class="proofline-verdict ${verdictClass}">${verdictText}</span><span>${counts.pass} passed</span><details class="report-details"><summary>How this was checked</summary><p>${escapeHtml(assuranceExplanation)}</p><p>Source: ${escapeHtml(displayValue(proofline.source))} · ${escapeHtml(displayValue(verification.claim_count))} checks</p></details>`;
   const findingsNode = document.querySelector("#proofline-findings");
   const renderFinding = (finding, index) => {
     const status = displayValue(finding.status);
     const statusClass = status === "pass" ? "pass" : status === "fail" ? "fail" : status === "unverifiable" ? "unverifiable" : "unknown";
     const contract = displayValue(finding.contract);
-    const name = displayValue(finding.name);
+    const name = humanizeLabel(finding.name);
     const active = index === state.activeFindingIndex;
-    const artifactBound = finding.report_assurance === "artifact_bound_policy_replayed";
-    const replayed = finding.report_assurance === "policy_replayed_against_current_evidence";
-    const shownStatus = retainedReport ? `${artifactBound ? "artifact-bound" : replayed ? "replayed" : "reported"} ${status}` : status;
-    const expectedLabel = artifactBound ? "Artifact-bound expected" : replayed ? "Replayed expected" : retainedReport ? "Reported expected" : "Expected";
-    const observedLabel = artifactBound ? "Artifact-bound observed" : replayed ? "Replayed observed" : retainedReport ? "Reported observed" : "Observed";
+    const shownStatus = status === "fail" ? "Failed" : status === "pass" ? "Passed" : status === "unverifiable" ? "Not checked" : "Review";
     const assurance = retainedReport ? `<span class="finding-assurance">${escapeHtml(reportAssurance(finding))}</span>` : "";
-    return `<button type="button" class="proofline-finding status-${statusClass}${active ? " active" : ""}" data-finding="${index}" aria-pressed="${active}" aria-label="Inspect ${escapeHtml(shownStatus)} finding ${escapeHtml(contract)}: ${escapeHtml(name)}"><span class="finding-heading"><span class="finding-status">${escapeHtml(shownStatus)}</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(contract)} · ${escapeHtml(displayValue(finding.type))} · claim ${escapeHtml(displayValue(finding.result_index))}</small></span>${assurance}<span class="finding-expectation"><span>${expectedLabel}</span><code>${escapeHtml(displayValue(finding.expected))}</code><span>${observedLabel}</span><code>${escapeHtml(displayValue(finding.observed))}</code></span>${renderEvidenceReferences(finding, retainedReport)}<span class="finding-action">${escapeHtml(renderFindingAction(proofline, finding))} →</span></button>`;
+    return `<button type="button" class="proofline-finding status-${statusClass}${active ? " active" : ""}" data-finding="${index}" aria-pressed="${active}" aria-label="Inspect ${escapeHtml(shownStatus)} safeguard ${escapeHtml(name)}"><span class="finding-heading"><span class="finding-status">${escapeHtml(shownStatus)}</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(contract)} · ${escapeHtml(displayValue(finding.type))} · check ${escapeHtml(displayValue(finding.result_index))}</small></span><span class="finding-explanation">${escapeHtml(findingExplanation(finding))}</span>${renderFindingComparison(finding)}${assurance}${renderEvidenceReferences(finding, retainedReport)}<span class="finding-action">${escapeHtml(renderFindingAction(proofline, finding))} →</span></button>`;
+  };
+  const renderPass = (finding, index) => {
+    const name = humanizeLabel(finding.name);
+    const active = index === state.activeFindingIndex;
+    return `<button type="button" class="proofline-finding compact-pass${active ? " active" : ""}" data-finding="${index}" aria-pressed="${active}" aria-label="View passed safeguard ${escapeHtml(name)}"><span class="pass-check" aria-hidden="true">✓</span><span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(findingExplanation(finding))}</small></span></button>`;
   };
   const entries = findings.map((finding, index) => ({ finding, index }));
   const problems = entries.filter(({ finding }) => finding.status !== "pass");
   const passes = entries.filter(({ finding }) => finding.status === "pass");
   const problemGroup = problems.length ? `<div class="finding-group problem-findings"><div class="finding-group-heading"><h3>Needs attention</h3><span>${problems.length} check${problems.length === 1 ? "" : "s"}</span></div><div class="finding-grid">${problems.map(({ finding, index }) => renderFinding(finding, index)).join("")}</div></div>` : "";
-  const passGroup = passes.length ? `<div class="finding-group passed-findings"><div class="finding-group-heading"><h3>Passed checks</h3><span>${passes.length} safeguard${passes.length === 1 ? "" : "s"}</span></div><div class="finding-grid">${passes.map(({ finding, index }) => renderFinding(finding, index)).join("")}</div></div>` : "";
+  const passGroup = passes.length ? `<div class="finding-group passed-findings"><div class="finding-group-heading"><h3>What stayed safe</h3><span>${passes.length} safeguard${passes.length === 1 ? "" : "s"}</span></div><div class="passed-summary">${passes.map(({ finding, index }) => renderPass(finding, index)).join("")}</div></div>` : "";
   findingsNode.innerHTML = findings.length ? problemGroup + passGroup : '<p class="empty proofline-empty">No contract results were available</p>';
   findingsNode.querySelectorAll("button").forEach(button => button.addEventListener("click", () => {
     activateFinding(Number(button.dataset.finding));
@@ -270,24 +303,27 @@ function activateFinding(findingIndex) {
 function renderSummary() {
   const run = currentRun();
   const candidateIndex = candidateRunIndex();
-  const role = state.data.comparison ? state.runIndex === 0 ? "Baseline" : state.runIndex === candidateIndex ? "Candidate" : "Selected execution" : "Execution";
-  document.querySelector("#selected-run-heading").textContent = `${role} evidence`;
-  document.querySelector("#selected-run-description").textContent = `Inspect the ${role.toLowerCase()} summary, lifecycle, and exact intervals supporting the comparison.`;
+  const role = state.data.comparison ? state.runIndex === 0 ? "Earlier version" : state.runIndex === candidateIndex ? "New version" : "Selected run" : "Run overview";
+  document.querySelector("#selected-run-heading").textContent = role;
+  document.querySelector("#selected-run-description").textContent = "A concise summary of the version currently selected above.";
   const critical = run.analysis.critical_path;
   const rawCpuTime = run.summary.cpu_user_seconds == null || run.summary.cpu_system_seconds == null
     ? null
     : run.summary.cpu_user_seconds + run.summary.cpu_system_seconds;
   const cpuTime = finiteNumber(rawCpuTime) ? rawCpuTime : null;
   const values = [
-    ["Outcome", fmtExitStatus(run.summary.exit_code)],
-    ["Wall time", fmtDuration(run.summary.wall_time_seconds)],
-    ["CPU time", fmtDuration(cpuTime)],
+    ["Status", fmtRunResult(run.summary.exit_code)],
+    ["Run time", fmtDuration(run.summary.wall_time_seconds)],
+    ["Recorded activities", fmtNumber(run.events.length)],
     ["Peak memory", fmtBytes(run.summary.peak_memory_bytes)],
+  ];
+  const technicalValues = [
+    ["CPU time", fmtDuration(cpuTime)],
     ["Critical path", critical ? fmtDuration(critical.duration_seconds) : "unavailable"],
     ["Path certainty", critical ? critical.certainty : "unavailable"],
-    ["Path active", critical ? fmtDuration(critical.active_seconds) : "unavailable"],
-    ["Path waiting", critical ? fmtDuration(critical.waiting_seconds) : "unavailable"],
-    ["Untimed events", fmtNumber(run.events.filter(event => event.start_offset_ns == null).length)],
+    ["Active on critical path", critical ? fmtDuration(critical.active_seconds) : "unavailable"],
+    ["Waiting on critical path", critical ? fmtDuration(critical.waiting_seconds) : "unavailable"],
+    ["Activities without timing", fmtNumber(run.events.filter(event => event.start_offset_ns == null).length)],
     ["Attachments", fmtNumber(run.summary.record_counts.attachments)],
   ];
   const warningMessages = [];
@@ -304,16 +340,27 @@ function renderSummary() {
   const incompleteStreams = ["stdout", "stderr"].filter(stream => run.summary[`${stream}_complete`] === false);
   if (incompleteStreams.length) warningMessages.push(`Incomplete output identity: ${incompleteStreams.join(", ")}`);
   const warning = warningMessages.map(message => `<div class="metric warning"><span>Evidence warning</span><strong>${message}</strong></div>`).join("");
-  document.querySelector("#summary").innerHTML = warning + values.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+  const technical = `<details class="summary-technical"><summary>More performance details</summary><dl>${technicalValues.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl></details>`;
+  document.querySelector("#summary").innerHTML = warning + values.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("") + technical;
 }
 
 function renderAnalysis() {
   const analysis = currentRun().analysis;
-  const lifecycle = analysis.lifecycle.length
-    ? analysis.lifecycle.map(phase => `<li><span>${escapeHtml(phase.name)}</span><strong>${fmtDuration(phase.duration_seconds)}</strong><small>${escapeHtml(phase.source)}</small></li>`).join("")
-    : '<li class="empty">No lifecycle evidence</li>';
+  const groupedLifecycle = analysis.lifecycle.reduce((groups, phase) => {
+    const previous = groups[groups.length - 1];
+    if (previous && previous.name === phase.name && previous.source === phase.source) {
+      previous.count += 1;
+      previous.duration_seconds += phase.duration_seconds;
+    } else {
+      groups.push({ ...phase, count: 1 });
+    }
+    return groups;
+  }, []);
+  const lifecycle = groupedLifecycle.length
+    ? groupedLifecycle.map(phase => `<li><span>${escapeHtml(humanizeLabel(phase.name))}${phase.count > 1 ? ` <small>×${phase.count}</small>` : ""}</span><strong>${fmtDuration(phase.duration_seconds)}</strong><small>${phase.count > 1 ? `${phase.count} repeated steps` : "Recorded step"}</small></li>`).join("")
+    : '<li class="empty">No application steps were recorded</li>';
   const throughput = analysis.throughput;
-  let throughputBody = '<p class="empty">No progress evidence</p>';
+  let throughputBody = '<p class="empty">No progress updates were recorded</p>';
   if (throughput) {
     const percent = throughput.total > 0 ? Math.min(100, Math.max(0, throughput.completed / throughput.total * 100)) : 0;
     const drain = throughput.estimated_drain_seconds == null ? "unknown" : fmtDuration(throughput.estimated_drain_seconds);
@@ -324,12 +371,12 @@ function renderAnalysis() {
   }
   const bottlenecks = analysis.bottlenecks.length
     ? analysis.bottlenecks.map(item => `<li><span class="confidence">${Math.round(item.confidence * 100)}%</span><strong>${escapeHtml(item.classification.replaceAll("_", " "))}</strong><p>${escapeHtml(item.evidence)}</p></li>`).join("")
-    : '<li class="empty">No constraint classified from available evidence</li>';
-  document.querySelector("#analysis").innerHTML = `<article><h3>Lifecycle</h3><ol class="phase-list">${lifecycle}</ol></article><article><h3>Throughput &amp; drain</h3><div class="throughput">${throughputBody}</div></article><article><h3>Bottlenecks</h3><ul class="bottleneck-list">${bottlenecks}</ul></article>`;
+    : '<li class="empty">No likely slowdown was identified</li>';
+  document.querySelector("#analysis").innerHTML = `<article><h3>Steps</h3><ol class="phase-list">${lifecycle}</ol></article><article><h3>Work progress</h3><div class="throughput">${throughputBody}</div></article><article><h3>Performance clues</h3><ul class="bottleneck-list">${bottlenecks}</ul></article>`;
 }
 
 function deltaPair(baseline, candidate, formatter = fmtNumber) {
-  return `<span class="delta-pair"><span><small>Baseline</small><strong>${escapeHtml(formatter(baseline))}</strong></span><span class="metric-arrow" aria-hidden="true">→</span><span><small>Candidate</small><strong>${escapeHtml(formatter(candidate))}</strong></span></span>`;
+  return `<span class="delta-pair"><span><small>Earlier version</small><strong>${escapeHtml(formatter(baseline))}</strong></span><span class="metric-arrow" aria-hidden="true">→</span><span><small>New version</small><strong>${escapeHtml(formatter(candidate))}</strong></span></span>`;
 }
 
 function renderComparison() {
@@ -343,7 +390,7 @@ function renderComparison() {
   const concurrency = diff.operation_concurrency_changes.slice(0, 5).map(item => `<div class="change-row">${deltaPair(item.baseline, item.candidate)}<p><strong>${escapeHtml(item.operation_name)}</strong><span>${escapeHtml(item.entity_name)}</span></p></div>`).join("") || '<p class="empty-state">No concurrency changes</p>';
   const durations = diff.operation_duration_changes.filter(item => Math.abs(item.candidate_seconds - item.baseline_seconds) >= .001).slice(0, 5).map(item => `<div class="change-row">${deltaPair(item.baseline_seconds, item.candidate_seconds, fmtDuration)}<p><strong>${escapeHtml(item.operation_name)}</strong><span>${escapeHtml(item.entity_name)}</span></p></div>`).join("") || '<p class="empty-state">No duration changes of at least 1 ms</p>';
   const edges = diff.edge_count_changes.slice(0, 5).map(item => `<div class="change-row dependency"><span class="change-kind">${escapeHtml(item.change_kind)}</span><p><strong>${escapeHtml(item.source_name)} → ${escapeHtml(item.target_name)}</strong><span>${escapeHtml(item.relation || "dependency")}</span></p></div>`).join("") || '<p class="empty-state">No dependency changes</p>';
-  const environment = diff.environment_changes.slice(0, 5).map(item => `${escapeHtml(item.variable)} (${escapeHtml(item.change_kind)})`).join(", ") || "no selected drift";
+  const environment = diff.environment_changes.slice(0, 5).map(item => `<div class="change-row dependency"><span class="change-kind">${escapeHtml(item.change_kind)}</span><p><strong>${escapeHtml(item.variable)}</strong><span>Environment setting</span></p></div>`).join("");
   const annotationWarnings = [["Baseline", diff.baseline_annotation_error], ["Candidate", diff.candidate_annotation_error]].filter(([, error]) => error).map(([side, error]) => `<p class="evidence-warning">${side} annotations ignored: ${escapeHtml(error)}</p>`).join("");
   const relayWarnings = [
     ["Baseline", "stdout", diff.baseline_stdout_relay_error],
@@ -355,8 +402,17 @@ function renderComparison() {
   const causalWarnings = [["Baseline", diff.baseline_missing_causal_references], ["Candidate", diff.candidate_missing_causal_references]].filter(([, count]) => count == null || count > 0).map(([side, count]) => `<p class="evidence-warning">${side} ${count == null ? "causal completeness metadata invalid" : `${count} unresolved causal references`}</p>`).join("");
   const semanticWarnings = [["Baseline", diff.baseline_dropped_attribute_count], ["Candidate", diff.candidate_dropped_attribute_count]].filter(([, count]) => count == null || count > 0).map(([side, count]) => `<p class="evidence-warning">${side} ${count == null ? "dropped-attribute metadata invalid" : `${count} exporter-dropped OTLP attributes`}</p>`).join("");
   const warnings = annotationWarnings + relayWarnings + outputWarnings + causalWarnings + semanticWarnings;
-  const timing = `${warnings}<div class="outcome-row"><span>Comparison outcome</span><strong>${escapeHtml(diff.outcome)}</strong></div><div class="outcome-row"><span>Exit status</span><strong>${escapeHtml(fmtExitStatus(diff.baseline.exit_code))} → ${escapeHtml(fmtExitStatus(diff.candidate.exit_code))}</strong></div><div class="outcome-row"><span>Business output</span><strong>${escapeHtml(fmtEquivalence(diff.output_equivalent))}</strong></div><div class="outcome-row"><span>stderr</span><strong>${escapeHtml(fmtEquivalence(diff.stderr_equivalent))}</strong></div><div class="outcome-row"><span>Operation errors</span><strong>${escapeHtml(fmtEquivalence(diff.operation_errors_equivalent))}</strong></div><div class="outcome-row"><span>Environment</span><strong>${environment}</strong></div>`;
-  document.querySelector("#comparison-grid").innerHTML = `<div class="change-list outcome-list"><h3>Outcome</h3>${timing}</div><div class="change-list"><h3>Operation counts</h3>${operations}</div><div class="change-list"><h3>Failed operations</h3>${errors}</div><div class="change-list"><h3>Dependencies</h3>${edges}</div><div class="change-list"><h3>Duration shifts</h3>${durations}</div><div class="change-list"><h3>Concurrency</h3>${concurrency}</div><div class="change-list"><h3>Entities</h3>${entities}</div>`;
+  const failedTypes = new Set((state.data.proofline && Array.isArray(state.data.proofline.findings) ? state.data.proofline.findings : []).filter(finding => finding.status === "fail").map(finding => finding.type));
+  const sections = [];
+  if (diff.operation_count_changes.length && !failedTypes.has("max_operation_count")) sections.push(["Activity counts", operations]);
+  if (diff.operation_error_count_changes.length && !failedTypes.has("max_operation_error_count")) sections.push(["Activity errors", errors]);
+  if (diff.edge_count_changes.length && !failedTypes.has("forbid_new_dependency")) sections.push(["Service connections", edges]);
+  if (diff.operation_duration_changes.some(item => Math.abs(item.candidate_seconds - item.baseline_seconds) >= .001)) sections.push(["Time spent in activities", durations]);
+  if (diff.operation_concurrency_changes.length) sections.push(["Parallel work", concurrency]);
+  if (diff.entity_count_changes.length) sections.push(["Components", entities]);
+  if (diff.environment_changes.length) sections.push(["Environment settings", environment]);
+  const warningBlock = warnings ? `<div class="change-list comparison-warnings"><h3>Evidence notes</h3>${warnings}</div>` : "";
+  document.querySelector("#comparison-grid").innerHTML = warningBlock + (sections.length ? sections.map(([heading, body]) => `<div class="change-list"><h3>${heading}</h3>${body}</div>`).join("") : '<p class="comparison-empty">No additional changes beyond the safeguards above.</p>');
 }
 
 function renderFilters() {
@@ -471,14 +527,19 @@ function showDetail(event, entities) {
     const incoming = edge.target_event_id === event.id;
     const peerId = incoming ? edge.source_event_id : edge.target_event_id;
     const peer = eventNames.get(peerId) || peerId;
-    return `<li><span>${incoming ? "←" : "→"}</span><strong>${escapeHtml(peer)}</strong><small>${escapeHtml(edge.kind)} · ${Math.round(edge.confidence * 100)}%</small></li>`;
+    const relation = edge.kind === "parent" ? incoming ? `Started as part of ${peer}` : `${peer} started as part of this activity` : edge.kind === "calls" ? incoming ? `Called by ${peer}` : `Called ${peer}` : incoming ? `Triggered by ${peer}` : `Led to ${peer}`;
+    const certainty = edge.confidence >= .99 ? "Directly recorded" : `Likely relationship · ${Math.round(edge.confidence * 100)}% confidence`;
+    return `<li><strong>${escapeHtml(relation)}</strong><small>${escapeHtml(certainty)}</small></li>`;
   }).join("");
   const causalLinks = links ? `<ul class="causal-links">${links}</ul>` : "none observed";
   const eventFinish = event.start_offset_ns == null ? null : event.start_offset_ns + (event.duration_ns || 0);
   const measurements = run.measurements.filter(item => item.entity_id === event.entity_id && item.timestamp_offset_ns != null && event.start_offset_ns != null && item.timestamp_offset_ns >= event.start_offset_ns && item.timestamp_offset_ns <= eventFinish).slice(0, 20).map(item => `<li><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(fmtNumber(item.value))} ${escapeHtml(item.unit)}</span></li>`).join("");
   const resourceMeasurements = measurements ? `<ul class="resource-measurements">${measurements}</ul>` : "none in interval";
   const uncertainty = event.uncertainty_ns == null ? "unknown" : `${fmtNumber(event.uncertainty_ns)} ns`;
-  document.querySelector("#detail").innerHTML = `<p class="eyebrow">SELECTED EVIDENCE</p><h2>${escapeHtml(event.name)}</h2><dl><dt>Entity</dt><dd>${escapeHtml(entity ? `${entity.name} / ${entity.kind}` : "unowned")}</dd><dt>Kind</dt><dd>${escapeHtml(event.kind)}</dd><dt>Clock domain</dt><dd>${escapeHtml(event.clock_domain || "unknown")}</dd><dt>Clock uncertainty</dt><dd>${escapeHtml(uncertainty)}</dd><dt>Start offset</dt><dd>${fmtDuration(nsToSeconds(event.start_offset_ns))}</dd><dt>Finish offset</dt><dd>${fmtDuration(nsToSeconds(event.finish_offset_ns))}</dd><dt>Duration</dt><dd>${fmtDuration(nsToSeconds(event.duration_ns))}</dd><dt>Causal links</dt><dd>${causalLinks}</dd><dt>Resource measurements</dt><dd>${resourceMeasurements}</dd><dt>Normalized attributes</dt><dd class="attributes">${escapeHtml(JSON.stringify(event.attributes, null, 2))}</dd></dl>`;
+  const peerService = event.attributes && typeof event.attributes === "object" ? event.attributes["peer.service"] : null;
+  const activitySummary = event.attributes && event.attributes.error === true ? "This activity ended with an error." : typeof peerService === "string" ? `Contacted ${peerService}.` : `Recorded ${humanizeLabel(event.kind).toLowerCase()} activity.`;
+  const relationshipSection = links ? `<section class="detail-section"><h3>How it fits</h3><ul class="causal-links">${links}</ul></section>` : "";
+  document.querySelector("#detail").innerHTML = `<p class="eyebrow">ACTIVITY DETAILS</p><h2>${escapeHtml(event.name)}</h2><p class="activity-summary">${escapeHtml(activitySummary)}</p><dl class="detail-highlights"><dt>Component</dt><dd>${escapeHtml(entity ? entity.name : "Not assigned")}</dd><dt>Duration</dt><dd>${fmtActivityDuration(event.duration_ns)}</dd></dl>${relationshipSection}<details class="technical-details"><summary>Technical details</summary><dl><dt>Activity type</dt><dd>${escapeHtml(event.kind)}</dd><dt>Component type</dt><dd>${escapeHtml(entity ? entity.kind : "unknown")}</dd><dt>Clock source</dt><dd>${escapeHtml(event.clock_domain || "unknown")}</dd><dt>Clock uncertainty</dt><dd>${escapeHtml(uncertainty)}</dd><dt>Start after run began</dt><dd>${fmtDuration(nsToSeconds(event.start_offset_ns))}</dd><dt>Finish after run began</dt><dd>${fmtDuration(nsToSeconds(event.finish_offset_ns))}</dd><dt>Resource measurements</dt><dd>${resourceMeasurements}</dd><dt>Raw attributes</dt><dd class="attributes">${escapeHtml(JSON.stringify(event.attributes, null, 2))}</dd></dl></details>`;
   syncTimelineSelection();
 }
 
