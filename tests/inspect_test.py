@@ -172,3 +172,4 @@ def test_inspection_keeps_invalid_summary_evidence_unknown(tmp_path: Path) -> No
     assert summary.stdout_bytes is None
     assert summary.stdout_sha256 is None
     assert summary.stderr_bytes is None
+    assert summary.stderr_sha256 is None

@@ -85,10 +85,10 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             cpu_system_seconds=_nonnegative(measurements.get(("process.cpu.system", "s"))),
             peak_memory_bytes=int(peak_memory) if peak_memory is not None else None,
             stdout_bytes=_as_int(_nested_output(execution.metadata, "stdout", "bytes")),
-            stdout_sha256=_as_str(_nested_output(execution.metadata, "stdout", "sha256")),
+            stdout_sha256=_as_sha256(_nested_output(execution.metadata, "stdout", "sha256")),
             stdout_complete=_stream_complete(execution.metadata, "stdout"),
             stderr_bytes=_as_int(_nested_output(execution.metadata, "stderr", "bytes")),
-            stderr_sha256=_as_str(_nested_output(execution.metadata, "stderr", "sha256")),
+            stderr_sha256=_as_sha256(_nested_output(execution.metadata, "stderr", "sha256")),
             stderr_complete=_stream_complete(execution.metadata, "stderr"),
             annotation_error=_annotation_error(execution.metadata),
             missing_causal_references=_missing_causal_references(execution.metadata),
@@ -180,8 +180,16 @@ def _as_int(value: str | int | None) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
-def _as_str(value: str | int | None) -> str | None:
-    return value if isinstance(value, str) and value else None
+def _as_sha256(value: str | int | None) -> str | None:
+    if not isinstance(value, str) or len(value) != 64:
+        return None
+    try:
+        decoded = bytes.fromhex(value)
+    except ValueError:
+        return None
+    if len(decoded) != 32:
+        return None
+    return value.lower()
 
 
 def _nonnegative(value: float | None) -> float | None:

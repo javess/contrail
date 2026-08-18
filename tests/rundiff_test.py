@@ -13,6 +13,9 @@ from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.rundiff.report import render_diff
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
+_STDOUT_IDENTITY = "a" * 64
+_STDERR_IDENTITY = "b" * 64
+
 
 def _write_runpack(path: Path, *, candidate: bool) -> None:
     started_at_ns = 1_000_000
@@ -82,8 +85,8 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
                 None,
                 {
                     "output": {
-                        "stdout": {"bytes": 7, "sha256": "same-output"},
-                        "stderr": {"bytes": 0, "sha256": "empty"},
+                        "stdout": {"bytes": 7, "sha256": _STDOUT_IDENTITY},
+                        "stderr": {"bytes": 0, "sha256": _STDERR_IDENTITY},
                     }
                 },
             )
@@ -496,10 +499,10 @@ def test_compare_runpacks_keeps_incomplete_output_identity_unknown(tmp_path: Pat
                         "output": {
                             "stdout": {
                                 "bytes": 4,
-                                "sha256": "same",
+                                "sha256": _STDOUT_IDENTITY,
                                 "pipe_open_after_exit": pipe_open,
                             },
-                            "stderr": {"bytes": 0, "sha256": "empty"},
+                            "stderr": {"bytes": 0, "sha256": _STDERR_IDENTITY},
                         }
                     },
                 )
@@ -532,7 +535,7 @@ def test_compare_runpacks_keeps_outcome_unknown_when_stderr_evidence_is_missing(
                     str(tmp_path),
                     0,
                     None,
-                    {"output": {"stdout": {"bytes": 4, "sha256": "same"}}},
+                    {"output": {"stdout": {"bytes": 4, "sha256": _STDOUT_IDENTITY}}},
                 )
             )
 
@@ -541,6 +544,37 @@ def test_compare_runpacks_keeps_outcome_unknown_when_stderr_evidence_is_missing(
     assert diff.exit_code_equivalent is True
     assert diff.output_equivalent is True
     assert diff.stderr_equivalent is None
+    assert diff.outcome == "unknown"
+
+
+def test_compare_runpacks_does_not_accept_malformed_output_digests(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path in (baseline, candidate):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(
+                    path.stem,
+                    path.stem,
+                    0,
+                    1,
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    {
+                        "output": {
+                            "stdout": {"bytes": 4, "sha256": "same-but-not-a-sha256"},
+                            "stderr": {"bytes": 0, "sha256": _STDERR_IDENTITY},
+                        }
+                    },
+                )
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.output_equivalent is None
+    assert diff.stderr_equivalent is True
     assert diff.outcome == "unknown"
 
 

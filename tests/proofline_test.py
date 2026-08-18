@@ -13,6 +13,9 @@ from runtime_tools.model import Entity, Event, Execution, Measurement
 from runtime_tools.proofline import ContractError, verify_contracts
 from runtime_tools.storage import RunpackWriter
 
+_STDOUT_IDENTITY = "a" * 64
+_STDERR_IDENTITY = "b" * 64
+
 
 def _write_runpack(path: Path, *, candidate: bool) -> None:
     finished_at_ns = 200_000_000 if candidate else 100_000_000
@@ -73,8 +76,8 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
                 None,
                 {
                     "output": {
-                        "stdout": {"bytes": 4, "sha256": "same"},
-                        "stderr": {"bytes": 0, "sha256": "empty"},
+                        "stdout": {"bytes": 4, "sha256": _STDOUT_IDENTITY},
+                        "stderr": {"bytes": 0, "sha256": _STDERR_IDENTITY},
                     }
                 },
             )
