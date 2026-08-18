@@ -30,7 +30,11 @@ function renderSummary() {
     ["Path waiting", critical ? fmtDuration(critical.waiting_seconds) : "unavailable"],
     ["Attachments", fmtNumber(run.summary.record_counts.attachments)],
   ];
-  const warning = run.summary.annotation_error ? `<div class="metric warning"><span>Evidence warning</span><strong>Annotations ignored: ${escapeHtml(run.summary.annotation_error)}</strong></div>` : "";
+  const warningMessages = [];
+  if (run.summary.annotation_error) warningMessages.push(`Annotations ignored: ${escapeHtml(run.summary.annotation_error)}`);
+  const incompleteStreams = ["stdout", "stderr"].filter(stream => run.summary[`${stream}_complete`] === false);
+  if (incompleteStreams.length) warningMessages.push(`Incomplete output identity: ${incompleteStreams.join(", ")}`);
+  const warning = warningMessages.map(message => `<div class="metric warning"><span>Evidence warning</span><strong>${message}</strong></div>`).join("");
   document.querySelector("#summary").innerHTML = warning + values.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
 }
 
@@ -64,7 +68,9 @@ function renderComparison() {
   const durations = diff.operation_duration_changes.slice(0, 5).map(item => `<p><span class="positive">${fmtDuration(item.baseline_seconds)} → ${fmtDuration(item.candidate_seconds)}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No duration changes</p>";
   const edges = diff.edge_count_changes.slice(0, 5).map(item => `<p>${escapeHtml(item.change_kind.toUpperCase())} ${escapeHtml(item.source_name)} → ${escapeHtml(item.target_name)}</p>`).join("") || "<p>No dependency changes</p>";
   const environment = diff.environment_changes.slice(0, 5).map(item => `${escapeHtml(item.variable)} (${escapeHtml(item.change_kind)})`).join(", ") || "no selected drift";
-  const warnings = [["Baseline", diff.baseline_annotation_error], ["Candidate", diff.candidate_annotation_error]].filter(([, error]) => error).map(([side, error]) => `<p class="evidence-warning">${side} annotations ignored: ${escapeHtml(error)}</p>`).join("");
+  const annotationWarnings = [["Baseline", diff.baseline_annotation_error], ["Candidate", diff.candidate_annotation_error]].filter(([, error]) => error).map(([side, error]) => `<p class="evidence-warning">${side} annotations ignored: ${escapeHtml(error)}</p>`).join("");
+  const outputWarnings = [["Baseline", diff.baseline_incomplete_streams], ["Candidate", diff.candidate_incomplete_streams]].filter(([, streams]) => streams.length).map(([side, streams]) => `<p class="evidence-warning">${side} output identity incomplete: ${escapeHtml(streams.join(", "))}</p>`).join("");
+  const warnings = annotationWarnings + outputWarnings;
   const timing = `${warnings}<p>Outcome: ${escapeHtml(diff.outcome)}</p><p>Stdout: ${fmtEquivalence(diff.output_equivalent)} · stderr: ${fmtEquivalence(diff.stderr_equivalent)}</p><p>Runtime: ${fmtDuration(diff.wall_time.baseline)} → <span class="positive">${fmtDuration(diff.wall_time.candidate)}</span></p><p>Critical path: ${fmtDuration(diff.critical_path.baseline)} → <span class="positive">${fmtDuration(diff.critical_path.candidate)}</span></p><p>Environment: ${environment}</p>`;
   document.querySelector("#comparison-grid").innerHTML = `<div class="change-list"><h3>Outcome & timing</h3>${timing}</div><div class="change-list"><h3>Operation counts</h3>${operations}</div><div class="change-list"><h3>Duration shifts</h3>${durations}</div><div class="change-list"><h3>Dependencies</h3>${edges}</div>`;
 }

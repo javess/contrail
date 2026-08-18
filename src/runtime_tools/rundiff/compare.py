@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from runtime_tools.batchscope import analyze_runpack
-from runtime_tools.inspect import inspect_runpack
+from runtime_tools.inspect import ExecutionSummary, inspect_runpack
 from runtime_tools.model import JsonValue
 from runtime_tools.storage import RunpackReader
 
@@ -135,6 +135,8 @@ class ExecutionDiff:
     match_level: Literal["aggregate"]
     baseline_annotation_error: str | None
     candidate_annotation_error: str | None
+    baseline_incomplete_streams: tuple[str, ...]
+    candidate_incomplete_streams: tuple[str, ...]
     outcome: Outcome
     exit_code_equivalent: bool | None
     output_equivalent: bool | None
@@ -156,6 +158,8 @@ class ExecutionDiff:
             "match_level": self.match_level,
             "baseline_annotation_error": self.baseline_annotation_error,
             "candidate_annotation_error": self.candidate_annotation_error,
+            "baseline_incomplete_streams": list(self.baseline_incomplete_streams),
+            "candidate_incomplete_streams": list(self.candidate_incomplete_streams),
             "outcome": self.outcome,
             "exit_code_equivalent": self.exit_code_equivalent,
             "output_equivalent": self.output_equivalent,
@@ -194,6 +198,23 @@ def _known_equivalence(baseline: object | None, candidate: object | None) -> boo
     if baseline is None or candidate is None:
         return None
     return baseline == candidate
+
+
+def _output_equivalence(
+    baseline: str | None,
+    candidate: str | None,
+    baseline_complete: bool | None,
+    candidate_complete: bool | None,
+) -> bool | None:
+    if baseline_complete is False or candidate_complete is False:
+        return None
+    return _known_equivalence(baseline, candidate)
+
+
+def _incomplete_streams(summary: ExecutionSummary) -> tuple[str, ...]:
+    return tuple(
+        stream for stream in ("stdout", "stderr") if getattr(summary, f"{stream}_complete") is False
+    )
 
 
 def _outcome(*equivalences: bool | None) -> Outcome:
@@ -323,11 +344,17 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         candidate_edges = _all_edge_counts(candidate_reader)
 
     exit_equivalent = _known_equivalence(baseline_summary.exit_code, candidate_summary.exit_code)
-    output_equivalent = _known_equivalence(
-        baseline_summary.stdout_sha256, candidate_summary.stdout_sha256
+    output_equivalent = _output_equivalence(
+        baseline_summary.stdout_sha256,
+        candidate_summary.stdout_sha256,
+        baseline_summary.stdout_complete,
+        candidate_summary.stdout_complete,
     )
-    stderr_equivalent = _known_equivalence(
-        baseline_summary.stderr_sha256, candidate_summary.stderr_sha256
+    stderr_equivalent = _output_equivalence(
+        baseline_summary.stderr_sha256,
+        candidate_summary.stderr_sha256,
+        baseline_summary.stderr_complete,
+        candidate_summary.stderr_complete,
     )
     return ExecutionDiff(
         baseline_id=baseline_summary.id,
@@ -337,6 +364,8 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         match_level="aggregate",
         baseline_annotation_error=baseline_summary.annotation_error,
         candidate_annotation_error=candidate_summary.annotation_error,
+        baseline_incomplete_streams=_incomplete_streams(baseline_summary),
+        candidate_incomplete_streams=_incomplete_streams(candidate_summary),
         outcome=_outcome(exit_equivalent, output_equivalent, stderr_equivalent),
         exit_code_equivalent=exit_equivalent,
         output_equivalent=output_equivalent,

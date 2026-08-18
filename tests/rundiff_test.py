@@ -349,6 +349,44 @@ def test_compare_runpacks_reports_selected_environment_drift_without_hashes(
     }
 
 
+def test_compare_runpacks_keeps_incomplete_output_identity_unknown(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, pipe_open in ((baseline, True), (candidate, False)):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(
+                    path.stem,
+                    path.stem,
+                    0,
+                    1,
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    {
+                        "output": {
+                            "stdout": {
+                                "bytes": 4,
+                                "sha256": "same",
+                                "pipe_open_after_exit": pipe_open,
+                            },
+                            "stderr": {"bytes": 0, "sha256": "empty"},
+                        }
+                    },
+                )
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.output_equivalent is None
+    assert diff.stderr_equivalent is True
+    assert diff.outcome == "unknown"
+    assert diff.baseline_incomplete_streams == ("stdout",)
+    assert diff.candidate_incomplete_streams == ()
+    assert "baseline: incomplete stdout identity" in render_diff(diff, "text")
+
+
 def test_compare_runpacks_keeps_outcome_unknown_when_stderr_evidence_is_missing(
     tmp_path: Path,
 ) -> None:

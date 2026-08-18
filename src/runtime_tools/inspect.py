@@ -31,8 +31,10 @@ class ExecutionSummary:
     peak_memory_bytes: int | None
     stdout_bytes: int | None
     stdout_sha256: str | None
+    stdout_complete: bool | None
     stderr_bytes: int | None
     stderr_sha256: str | None
+    stderr_complete: bool | None
     annotation_error: str | None
     record_counts: dict[str, int]
 
@@ -81,8 +83,10 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             peak_memory_bytes=int(peak_memory) if peak_memory is not None else None,
             stdout_bytes=_as_int(_nested_output(execution.metadata, "stdout", "bytes")),
             stdout_sha256=_as_str(_nested_output(execution.metadata, "stdout", "sha256")),
+            stdout_complete=_stream_complete(execution.metadata, "stdout"),
             stderr_bytes=_as_int(_nested_output(execution.metadata, "stderr", "bytes")),
             stderr_sha256=_as_str(_nested_output(execution.metadata, "stderr", "sha256")),
+            stderr_complete=_stream_complete(execution.metadata, "stderr"),
             annotation_error=_annotation_error(execution.metadata),
             record_counts=reader.counts(),
         )
@@ -188,6 +192,21 @@ def _annotation_error(metadata: dict[str, JsonValue]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _stream_complete(metadata: dict[str, JsonValue], stream: str) -> bool | None:
+    output = metadata.get("output")
+    if not isinstance(output, dict):
+        return None
+    stream_data = output.get(stream)
+    if not isinstance(stream_data, dict):
+        return None
+    inherited = stream_data.get("pipe_open_after_exit")
+    if inherited is True:
+        return False
+    if inherited in (None, False):
+        return True
+    return None
+
+
 def render_summary(summary: ExecutionSummary, output_format: str) -> str:
     if output_format == "json":
         return json.dumps(summary.as_json_value(), indent=2, sort_keys=True)
@@ -197,6 +216,8 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
     peak = (
         "unknown" if summary.peak_memory_bytes is None else _format_bytes(summary.peak_memory_bytes)
     )
+    stdout = _format_output(summary.stdout_bytes, summary.stdout_sha256, summary.stdout_complete)
+    stderr = _format_output(summary.stderr_bytes, summary.stderr_sha256, summary.stderr_complete)
     revision = summary.revision or "unknown"
     command = shlex.join(summary.command) if summary.command else "(telemetry import)"
     lines = [
@@ -209,8 +230,8 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
         f"runtime:  {duration}",
         f"cpu:      {_format_cpu(summary)}",
         f"memory:   {peak} peak",
-        f"stdout:   {_format_output(summary.stdout_bytes, summary.stdout_sha256)}",
-        f"stderr:   {_format_output(summary.stderr_bytes, summary.stderr_sha256)}",
+        f"stdout:   {stdout}",
+        f"stderr:   {stderr}",
         f"annotations: ignored ({summary.annotation_error})" if summary.annotation_error else None,
         (
             "records:  "
@@ -236,10 +257,11 @@ def _format_cpu(summary: ExecutionSummary) -> str:
     return f"{summary.cpu_user_seconds:.3f}s user, {summary.cpu_system_seconds:.3f}s system"
 
 
-def _format_output(byte_count: int | None, digest: str | None) -> str:
+def _format_output(byte_count: int | None, digest: str | None, complete: bool | None) -> str:
     if byte_count is None or digest is None:
         return "unknown"
-    return f"{byte_count} B, sha256:{digest[:12]}"
+    suffix = " (incomplete: pipe remained open after exit)" if complete is False else ""
+    return f"{byte_count} B, sha256:{digest[:12]}{suffix}"
 
 
 def _format_bytes(value: int) -> str:

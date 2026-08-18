@@ -13,6 +13,7 @@ from typing import Any, cast
 import pytest
 
 from runtime_tools import CaptureError, capture, inspect_runpack, record_process
+from runtime_tools.inspect import render_summary
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter, UnsupportedSchemaError
 
@@ -181,6 +182,11 @@ def test_record_process_does_not_wait_for_descendants_holding_output_pipes(
     assert stdout_metadata["bytes"] == len(b"parent complete\n")
     assert stdout_metadata["pipe_open_after_exit"] is True
     assert stderr_metadata["pipe_open_after_exit"] is True
+    summary = inspect_runpack(output)
+    assert summary.stdout_complete is False
+    assert summary.stderr_complete is False
+    assert "stdout:   16 B, sha256:" in render_summary(summary, "text")
+    assert "incomplete: pipe remained open after exit" in render_summary(summary, "text")
 
 
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:

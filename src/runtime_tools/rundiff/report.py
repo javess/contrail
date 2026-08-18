@@ -28,6 +28,18 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
             for side, error in annotation_errors
             if error is not None
         )
+    incomplete_streams = (
+        ("baseline", diff.baseline_incomplete_streams),
+        ("candidate", diff.candidate_incomplete_streams),
+    )
+    if any(streams for _, streams in incomplete_streams):
+        if not any(error is not None for _, error in annotation_errors):
+            lines.extend(("", "Evidence warnings"))
+        lines.extend(
+            f"  {side}: incomplete {', '.join(streams)} identity"
+            for side, streams in incomplete_streams
+            if streams
+        )
     lines.extend(
         (
             "",
