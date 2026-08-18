@@ -7,8 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools import record_process
-from runtime_tools.query import MAX_QUERY_VM_STEPS, QueryError, query_runpack, render_query
+from runtime_tools import query, record_process
+from runtime_tools.query import (
+    MAX_QUERY_CELL_BYTES,
+    MAX_QUERY_VM_STEPS,
+    QueryError,
+    query_runpack,
+    render_query,
+)
 
 
 def test_runpack_query_returns_bounded_structured_rows(tmp_path: Path) -> None:
@@ -109,3 +115,23 @@ def test_runpack_query_cannot_attach_or_create_another_database(tmp_path: Path) 
         query_runpack(runpack, f"ATTACH DATABASE '{attached}' AS side_effect")
 
     assert not attached.exists()
+
+
+def test_runpack_query_bounds_aggregate_result_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runpack = tmp_path / "query.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="query")
+    monkeypatch.setattr(query, "MAX_QUERY_RESULT_BYTES", 16)
+
+    with pytest.raises(QueryError, match="query result exceeded the byte limit of 16"):
+        query_runpack(runpack, "SELECT '0123456789abcdefg' AS value")
+
+
+def test_runpack_query_bounds_individual_values(tmp_path: Path) -> None:
+    runpack = tmp_path / "query.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="query")
+
+    with pytest.raises(QueryError, match="string or blob too big"):
+        query_runpack(runpack, f"SELECT zeroblob({MAX_QUERY_CELL_BYTES + 1})")

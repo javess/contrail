@@ -18,6 +18,8 @@ class QueryError(ValueError):
 
 MAX_QUERY_ROWS = 100_000
 MAX_QUERY_VM_STEPS = 25_000_000
+MAX_QUERY_CELL_BYTES = 4 * 1024 * 1024
+MAX_QUERY_RESULT_BYTES = 16 * 1024 * 1024
 _QUERY_PROGRESS_INTERVAL = 1_000
 
 
@@ -67,6 +69,14 @@ def _value(value: object) -> JsonValue:
     return str(value)
 
 
+def _encoded_size(value: JsonValue) -> int:
+    return len(
+        json.dumps(value, allow_nan=False, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    )
+
+
 def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
     if not sql.strip():
         raise QueryError("SQL query cannot be empty")
@@ -90,22 +100,37 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
 
     try:
         with sqlite3.connect(uri, uri=True) as connection:
+            connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_QUERY_CELL_BYTES)
             connection.set_authorizer(_authorize_read)
             connection.set_progress_handler(enforce_work_limit, _QUERY_PROGRESS_INTERVAL)
             cursor = connection.execute(sql)
             if cursor.description is None:
                 raise QueryError("query must return rows")
             columns = tuple(str(item[0]) for item in cursor.description)
-            raw_rows = cursor.fetchmany(limit + 1)
+            rows: list[tuple[JsonValue, ...]] = []
+            result_bytes = 0
+            truncated = False
+            while True:
+                raw_row = cursor.fetchone()
+                if raw_row is None:
+                    break
+                if len(rows) == limit:
+                    truncated = True
+                    break
+                row = tuple(_value(value) for value in raw_row)
+                result_bytes += sum(_encoded_size(value) for value in row)
+                if result_bytes > MAX_QUERY_RESULT_BYTES:
+                    raise QueryError(
+                        f"query result exceeded the byte limit of {MAX_QUERY_RESULT_BYTES}"
+                    )
+                rows.append(row)
     except sqlite3.Error as exc:
         if work_limit_reached:
             raise QueryError(
                 f"query exceeded the work limit of {MAX_QUERY_VM_STEPS} SQLite steps"
             ) from exc
         raise QueryError(f"query failed: {exc}") from exc
-    truncated = len(raw_rows) > limit
-    rows = tuple(tuple(_value(value) for value in row) for row in raw_rows[:limit])
-    return QueryResult(columns, rows, truncated)
+    return QueryResult(columns, tuple(rows), truncated)
 
 
 def render_query(result: QueryResult, output_format: str) -> str:
