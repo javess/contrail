@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import runtime_tools.proofline.contracts as contracts_module
 from runtime_tools.model import Entity, Event, Execution, Measurement
 from runtime_tools.proofline import ContractError, verify_contracts
 from runtime_tools.storage import RunpackWriter
@@ -228,6 +229,26 @@ assertions:
     )
 
     with pytest.raises(ContractError, match="found duplicate key 'percent'"):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
+def test_proofline_rejects_oversized_contracts_before_yaml_parsing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = tmp_path / "oversized.yaml"
+    contract.write_bytes(b"{" + b" " * 32 + b"}")
+    monkeypatch.setattr(contracts_module, "MAX_CONTRACT_BYTES", 32)
+
+    with pytest.raises(ContractError, match="contract file exceeds the 32-byte input limit"):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
+def test_proofline_rejects_non_utf8_contracts(tmp_path: Path) -> None:
+    contract = tmp_path / "non-utf8.yaml"
+    contract.write_bytes(b"\xff")
+
+    with pytest.raises(ContractError, match="contract file must be UTF-8"):
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 

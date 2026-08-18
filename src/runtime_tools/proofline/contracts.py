@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 from runtime_tools.model import JsonValue
-from runtime_tools.yaml_support import load_yaml
+from runtime_tools.yaml_support import YamlInputError, load_yaml_file
 
 SUPPORTED_ASSERTIONS = {
     "output_equivalent",
@@ -19,6 +19,7 @@ SUPPORTED_ASSERTIONS = {
     "forbid_new_dependency",
     "max_operation_count",
 }
+MAX_CONTRACT_BYTES = 1024 * 1024
 
 
 class ContractError(ValueError):
@@ -97,9 +98,9 @@ def _parse_contract(value: object, default_name: str) -> Contract:
 
 def load_contracts(path: Path) -> tuple[Contract, ...]:
     try:
-        document = load_yaml(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise ContractError(f"could not read contract file: {path}") from exc
+        document = load_yaml_file(path, label="contract file", max_bytes=MAX_CONTRACT_BYTES)
+    except YamlInputError as exc:
+        raise ContractError(str(exc)) from exc
     except yaml.YAMLError as exc:
         raise ContractError(f"invalid contract YAML: {exc}") from exc
     try:

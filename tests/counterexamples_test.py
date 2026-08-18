@@ -152,6 +152,26 @@ def test_counterexample_search_caps_parameter_count(tmp_path: Path) -> None:
         )
 
 
+def test_counterexample_parameters_reject_oversized_yaml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parameters = tmp_path / "oversized.yaml"
+    parameters.write_bytes(b"{" + b" " * 32 + b"}")
+    monkeypatch.setattr(counterexamples, "MAX_PARAMETER_FILE_BYTES", 32)
+
+    with pytest.raises(ContractError, match="parameter file exceeds the 32-byte input limit"):
+        counterexamples.load_parameters(parameters)
+
+
+def test_counterexample_parameters_reject_non_utf8_yaml(tmp_path: Path) -> None:
+    parameters = tmp_path / "non-utf8.yaml"
+    parameters.write_bytes(b"\xff")
+
+    with pytest.raises(ContractError, match="parameter file must be UTF-8"):
+        counterexamples.load_parameters(parameters)
+
+
 def test_counterexample_search_caps_parameter_integer_bounds(tmp_path: Path) -> None:
     parameters = tmp_path / "parameters.yaml"
     parameters.write_text(

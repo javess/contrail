@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -12,6 +13,10 @@ from yaml.resolver import BaseResolver
 
 class _UniqueKeyLoader(yaml.SafeLoader):
     pass
+
+
+class YamlInputError(ValueError):
+    """Raised when a YAML source cannot be read within its input contract."""
 
 
 def _construct_unique_mapping(
@@ -50,3 +55,19 @@ _UniqueKeyLoader.add_constructor(
 def load_yaml(value: str) -> Any:
     """Load safe YAML while rejecting duplicate mapping keys."""
     return yaml.load(value, Loader=_UniqueKeyLoader)
+
+
+def load_yaml_file(path: Path, *, label: str, max_bytes: int) -> Any:
+    """Read and decode a bounded UTF-8 YAML document."""
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(max_bytes + 1)
+    except OSError as exc:
+        raise YamlInputError(f"could not read {label}: {path}") from exc
+    if len(raw) > max_bytes:
+        raise YamlInputError(f"{label} exceeds the {max_bytes}-byte input limit")
+    try:
+        value = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise YamlInputError(f"{label} must be UTF-8") from exc
+    return load_yaml(value)

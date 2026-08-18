@@ -13,10 +13,11 @@ from hypothesis.strategies import SearchStrategy, fixed_dictionaries, integers
 
 from runtime_tools.proofline.contracts import ContractError
 from runtime_tools.proofline.experiments import ExperimentError, ExperimentResult, run_experiment
-from runtime_tools.yaml_support import load_yaml
+from runtime_tools.yaml_support import YamlInputError, load_yaml_file
 
 MAX_COUNTEREXAMPLE_EXAMPLES = 1_000
 MAX_COUNTEREXAMPLE_PARAMETERS = 64
+MAX_PARAMETER_FILE_BYTES = 1024 * 1024
 _MIN_PARAMETER_INTEGER = -(1 << 63)
 _MAX_PARAMETER_INTEGER = (1 << 63) - 1
 
@@ -51,9 +52,13 @@ def _integer(value: object, label: str) -> int:
 
 def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
     try:
-        document = load_yaml(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise ContractError(f"could not read parameter file: {path}") from exc
+        document = load_yaml_file(
+            path,
+            label="parameter file",
+            max_bytes=MAX_PARAMETER_FILE_BYTES,
+        )
+    except YamlInputError as exc:
+        raise ContractError(str(exc)) from exc
     except yaml.YAMLError as exc:
         raise ContractError(f"invalid parameter YAML: {exc}") from exc
     root = _object(document, "parameter document")
