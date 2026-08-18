@@ -24,8 +24,8 @@ def enrich_copy[T](
         raise EnrichmentError(f"refusing to overwrite existing runpack: {output}")
     if not output.parent.is_dir():
         raise EnrichmentError(f"output directory does not exist: {output.parent}")
-    with RunpackReader(source):
-        pass
+    with RunpackReader(source) as reader:
+        reader.execution()
     temporary = output.with_name(f".{output.name}.tmp-{uuid.uuid4().hex}")
     try:
         shutil.copyfile(source, temporary)
