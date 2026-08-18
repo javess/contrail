@@ -889,6 +889,42 @@ def test_kubernetes_snapshot_rejects_too_many_items_before_normalization(
         )
 
 
+def test_kubernetes_snapshot_rejects_too_many_containers_before_enrichment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = tmp_path / "too-many-containers.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("worker", "pod"),
+                        "spec": {
+                            "containers": [
+                                {"name": "one", "resources": {}},
+                                {"name": "two", "resources": {}},
+                            ]
+                        },
+                        "status": {},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(kubernetes, "MAX_KUBERNETES_CONTAINERS", 1)
+
+    with pytest.raises(
+        KubernetesImportError,
+        match="Kubernetes snapshot exceeds the 1-container input limit",
+    ):
+        import_kubernetes_snapshot(
+            tmp_path / "missing.runpack", snapshot, tmp_path / "output.runpack"
+        )
+
+
 def test_kubernetes_snapshot_normalizes_invalid_utf8(tmp_path: Path) -> None:
     snapshot = tmp_path / "invalid-utf8.json"
     snapshot.write_bytes(b"\xff")

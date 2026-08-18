@@ -37,6 +37,7 @@ _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
 _WORKLOAD_KINDS = {"Node", "Deployment", "ReplicaSet", "Job", "Pod"}
 MAX_KUBERNETES_SNAPSHOT_BYTES = 64 * 1024 * 1024
 MAX_KUBERNETES_ITEMS = 200_000
+MAX_KUBERNETES_CONTAINERS = 1_000_000
 
 
 def _object(value: object, label: str) -> dict[str, object]:
@@ -324,6 +325,7 @@ def import_kubernetes_snapshot(
     entity_by_uid: dict[str, str] = {}
     lifecycle_by_uid: dict[str, str] = {}
     node_uid_by_name: dict[str, str] = {}
+    container_count = 0
 
     for item in items:
         kind = _kind(item)
@@ -435,6 +437,11 @@ def import_kubernetes_snapshot(
         pod_status = _object(item.get("status", {}), "Pod status")
         statuses = _container_statuses(pod_status)
         containers = _list(spec.get("containers", []), "Pod containers")
+        container_count += len(containers)
+        if container_count > MAX_KUBERNETES_CONTAINERS:
+            raise KubernetesImportError(
+                f"Kubernetes snapshot exceeds the {MAX_KUBERNETES_CONTAINERS}-container input limit"
+            )
         if pod_entity:
             container_names: set[str] = set()
             for raw_container in containers:
