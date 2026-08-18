@@ -168,6 +168,18 @@ CREATE INDEX measurements_entity_idx ON measurements(entity_id);
 CREATE INDEX attachments_kind_name_idx ON attachments(kind, name);
 """
 
+_ATTACHMENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    content BLOB NOT NULL,
+    attributes_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS attachments_kind_name_idx ON attachments(kind, name);
+"""
+
 
 class RunpackError(ValueError):
     """Raised when a runpack cannot be read or written safely."""
@@ -684,15 +696,16 @@ class RunpackWriter:
             content = value[4]
             assert isinstance(content, bytes)
             added_bytes += len(content)
-        existing_bytes = self._connection.execute(
-            "SELECT COALESCE(sum(length(content)), 0) FROM attachments"
-        ).fetchone()[0]
-        if existing_bytes + added_bytes > MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES:
-            raise RunpackError(
-                "attachment content exceeds the "
-                f"{MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES}-byte aggregate runpack limit"
-            )
         with self._writing(), self._connection:
+            self._connection.executescript(_ATTACHMENTS_SCHEMA)
+            existing_bytes = self._connection.execute(
+                "SELECT COALESCE(sum(length(content)), 0) FROM attachments"
+            ).fetchone()[0]
+            if existing_bytes + added_bytes > MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES:
+                raise RunpackError(
+                    "attachment content exceeds the "
+                    f"{MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES}-byte aggregate runpack limit"
+                )
             self._connection.executemany(
                 """
                 INSERT INTO attachments(id, kind, name, media_type, content, attributes_json)

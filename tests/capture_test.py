@@ -351,6 +351,23 @@ def test_reader_accepts_schema_one_without_optional_attachments(tmp_path: Path) 
     assert summary.record_counts["attachments"] == 0
 
 
+def test_writer_adds_optional_attachments_to_legacy_runpacks(tmp_path: Path) -> None:
+    output = tmp_path / "legacy-attachment.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    with sqlite3.connect(output) as connection:
+        connection.execute("DROP TABLE attachments")
+        connection.execute("UPDATE manifest SET value = '1.0' WHERE key = 'schema_version'")
+
+    with RunpackWriter.open_existing(output) as writer:
+        writer.add_attachments(
+            (Attachment("raw", "raw", "evidence", "text/plain", b"evidence", {}),)
+        )
+
+    with RunpackReader(output) as reader:
+        assert reader.attachments()[0].content == b"evidence"
+
+
 def test_reader_rejects_runpacks_missing_required_columns(tmp_path: Path) -> None:
     output = tmp_path / "missing-column.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="missing-column")
