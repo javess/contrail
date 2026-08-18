@@ -146,6 +146,8 @@ def _timestamp(value: object) -> int | None:
 def _integer(value: object, label: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise KubernetesImportError(f"{label} must be a non-negative integer")
+    if value > _MAX_RUNPACK_TIMESTAMP_NS:
+        raise KubernetesImportError(f"{label} exceeds the runpack integer range")
     return value
 
 
@@ -418,10 +420,16 @@ def import_kubernetes_snapshot(
         status = _object(item.get("status", {}), f"{kind} status")
         node_name = ""
         if kind == "Pod":
-            restart_count = sum(
-                _integer(container_status.get("restartCount", 0), "container restart count")
-                for container_status in _container_statuses(status).values()
-            )
+            restart_count = 0
+            for container_status in _container_statuses(status).values():
+                restart_count += _integer(
+                    container_status.get("restartCount", 0),
+                    "container restart count",
+                )
+                if restart_count > _MAX_RUNPACK_TIMESTAMP_NS:
+                    raise KubernetesImportError(
+                        "total container restart count exceeds the runpack integer range"
+                    )
             node_name = _optional_string(
                 _object(item.get("spec", {}), "Pod spec").get("nodeName"),
                 "Pod spec.nodeName",

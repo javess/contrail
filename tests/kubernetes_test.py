@@ -597,6 +597,12 @@ def test_kubernetes_snapshot_rejects_timezone_ambiguous_timestamps(tmp_path: Pat
             {},
             "k8s.replicas.desired must be a non-negative integer",
         ),
+        (
+            {"name": "deployment", "uid": "deployment"},
+            {"replicas": 1 << 63},
+            {},
+            "k8s.replicas.desired exceeds the runpack integer range",
+        ),
     ),
 )
 def test_kubernetes_snapshot_rejects_malformed_lifecycle_scalars(
@@ -904,6 +910,44 @@ def test_kubernetes_snapshot_rejects_invalid_container_state_unions(
     )
 
     with pytest.raises(KubernetesImportError, match=message):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()
+
+
+def test_kubernetes_snapshot_bounds_aggregate_restart_counts(tmp_path: Path) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "restart-overflow.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("worker", "pod"),
+                        "spec": {
+                            "containers": [
+                                {"name": "first", "resources": {}},
+                                {"name": "second", "resources": {}},
+                            ]
+                        },
+                        "status": {
+                            "containerStatuses": [
+                                {"name": "first", "restartCount": (1 << 63) - 1},
+                                {"name": "second", "restartCount": 1},
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KubernetesImportError, match="total container restart count exceeds"):
         import_kubernetes_snapshot(base, snapshot, output)
 
     assert not output.exists()
