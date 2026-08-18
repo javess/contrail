@@ -110,6 +110,8 @@ def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
         document = json.loads(text, parse_constant=_reject_json_constant)
     except json.JSONDecodeError as exc:
         raise PrometheusImportError(f"invalid Prometheus JSON at line {exc.lineno}") from exc
+    except RecursionError as exc:
+        raise PrometheusImportError("Prometheus JSON nesting is too deep") from exc
     except ValueError as exc:
         raise PrometheusImportError(f"invalid Prometheus JSON: {exc}") from exc
     root = _object(document, "Prometheus response")

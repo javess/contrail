@@ -272,3 +272,13 @@ def test_prometheus_response_normalizes_invalid_utf8(tmp_path: Path) -> None:
         import_prometheus_response(
             tmp_path / "missing.runpack", response, tmp_path / "output.runpack"
         )
+
+
+def test_prometheus_response_normalizes_excessive_document_nesting(tmp_path: Path) -> None:
+    response = tmp_path / "nested.json"
+    response.write_text("[" * 10_000 + "0" + "]" * 10_000, encoding="utf-8")
+
+    with pytest.raises(PrometheusImportError, match="Prometheus JSON nesting is too deep"):
+        import_prometheus_response(
+            tmp_path / "missing.runpack", response, tmp_path / "output.runpack"
+        )

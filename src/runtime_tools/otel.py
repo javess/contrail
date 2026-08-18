@@ -202,6 +202,8 @@ def _load_document(source: Path) -> tuple[dict[str, object], bytes]:
         raise OtelImportError(
             f"invalid OTLP JSON at line {exc.lineno}, column {exc.colno}"
         ) from exc
+    except RecursionError as exc:
+        raise OtelImportError("OTLP JSON nesting is too deep") from exc
     except ValueError as exc:
         raise OtelImportError(f"invalid OTLP JSON: {exc}") from exc
     return _as_object(value, "OTLP document"), raw

@@ -630,3 +630,14 @@ def test_otlp_json_import_rejects_oversized_sources_before_decoding(
         import_otlp_json(source, output, name="oversized")
 
     assert not output.exists()
+
+
+def test_otlp_json_import_normalizes_excessive_document_nesting(tmp_path: Path) -> None:
+    source = tmp_path / "nested.json"
+    output = tmp_path / "nested.runpack"
+    source.write_text("[" * 10_000 + "0" + "]" * 10_000, encoding="utf-8")
+
+    with pytest.raises(OtelImportError, match="OTLP JSON nesting is too deep"):
+        import_otlp_json(source, output, name="nested")
+
+    assert not output.exists()

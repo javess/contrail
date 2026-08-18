@@ -680,3 +680,13 @@ def test_kubernetes_snapshot_normalizes_invalid_utf8(tmp_path: Path) -> None:
         import_kubernetes_snapshot(
             tmp_path / "missing.runpack", snapshot, tmp_path / "output.runpack"
         )
+
+
+def test_kubernetes_snapshot_normalizes_excessive_document_nesting(tmp_path: Path) -> None:
+    snapshot = tmp_path / "nested.json"
+    snapshot.write_text("[" * 10_000 + "0" + "]" * 10_000, encoding="utf-8")
+
+    with pytest.raises(KubernetesImportError, match="Kubernetes JSON nesting is too deep"):
+        import_kubernetes_snapshot(
+            tmp_path / "missing.runpack", snapshot, tmp_path / "output.runpack"
+        )

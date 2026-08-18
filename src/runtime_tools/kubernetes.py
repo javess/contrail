@@ -165,6 +165,8 @@ def _load(source: Path) -> list[dict[str, object]]:
         document = json.loads(text, parse_constant=_reject_json_constant)
     except json.JSONDecodeError as exc:
         raise KubernetesImportError(f"invalid Kubernetes JSON at line {exc.lineno}") from exc
+    except RecursionError as exc:
+        raise KubernetesImportError("Kubernetes JSON nesting is too deep") from exc
     except ValueError as exc:
         raise KubernetesImportError(f"invalid Kubernetes JSON: {exc}") from exc
     root = _object(document, "Kubernetes snapshot")
