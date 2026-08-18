@@ -224,6 +224,49 @@ def test_runtime_cli_enriches_a_runpack_with_otlp_logs(tmp_path: Path) -> None:
     assert output.is_file()
 
 
+def test_runtime_cli_warns_when_jsonl_query_output_is_truncated(tmp_path: Path) -> None:
+    output = tmp_path / "query.runpack"
+    record_process = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "record",
+            "--output",
+            str(output),
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    queried = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "query",
+            str(output),
+            "SELECT name FROM measurements ORDER BY id",
+            "--limit",
+            "1",
+            "--format",
+            "jsonl",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert record_process.returncode == 0
+    assert queried.returncode == 0
+    assert len(queried.stdout.splitlines()) == 1
+    assert queried.stderr == "runtime: query result truncated at the requested row limit\n"
+
+
 def test_runtime_cli_reports_corrupt_runpack_without_traceback(tmp_path: Path) -> None:
     runpack = tmp_path / "corrupt.runpack"
     runpack.write_bytes(b"not sqlite")

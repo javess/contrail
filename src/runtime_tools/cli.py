@@ -182,9 +182,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if args.subcommand == "query":
-            print(
-                render_query(query_runpack(args.runpack, args.sql, limit=args.limit), args.format)
-            )
+            result = query_runpack(args.runpack, args.sql, limit=args.limit)
+            print(render_query(result, args.format))
+            if args.format == "jsonl" and result.truncated:
+                print("runtime: query result truncated at the requested row limit", file=sys.stderr)
             return 0
         if args.tree and args.format != "text":
             raise RunpackError("--tree is only available with text output")

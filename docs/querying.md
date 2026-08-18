@@ -20,7 +20,8 @@ small row count cannot create unbounded output.
 Machine-readable formats preserve column order and JSON-safe values. Repeated
 SQL column labels receive deterministic `_2`, `_3`, and later suffixes so JSONL
 objects do not discard cells. BLOBs and non-finite SQLite floats use tagged
-objects rather than non-standard JSON:
+objects rather than non-standard JSON. Because JSONL contains only result rows,
+the CLI writes a truncation warning to stderr when its row limit is reached:
 
 ```bash
 runtime query run.runpack \
