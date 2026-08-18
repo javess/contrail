@@ -331,6 +331,7 @@ def record_process(
                 raise CaptureError(f"could not start command {command[0]!r}: {exc}") from exc
 
             if process.stdout is None or process.stderr is None:
+                _terminate_and_reap(process)
                 raise CaptureError("failed to capture process output")
             stdout_pipe = cast(BinaryIO, process.stdout)
             stderr_pipe = cast(BinaryIO, process.stderr)

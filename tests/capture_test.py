@@ -515,6 +515,35 @@ def test_record_process_terminates_child_when_output_pump_submission_fails(
     assert not tuple(tmp_path.glob(".pump-failure.runpack.tmp-*"))
 
 
+def test_record_process_terminates_child_when_output_pipe_setup_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "pipe-failure.runpack"
+    children: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+
+    def incomplete_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        child: subprocess.Popen[bytes] = real_popen(*args, **kwargs)
+        children.append(child)
+        assert child.stdout is not None
+        child.stdout.close()
+        child.stdout = None
+        return child
+
+    monkeypatch.setattr(subprocess, "Popen", incomplete_popen)
+
+    with pytest.raises(CaptureError, match="failed to capture process output"):
+        record_process(
+            (sys.executable, "-c", "import time; time.sleep(30)"),
+            output,
+            name="pipe-failure",
+        )
+
+    assert children[-1].poll() is not None
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".pipe-failure.runpack.tmp-*"))
+
+
 def test_reader_closes_connection_when_validation_is_interrupted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
