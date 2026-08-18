@@ -39,12 +39,14 @@ function renderSummary() {
     ["CPU time", fmtDuration(cpuTime)],
     ["Peak memory", fmtBytes(run.summary.peak_memory_bytes)],
     ["Critical path", critical ? fmtDuration(critical.duration_seconds) : "unavailable"],
+    ["Path certainty", critical ? critical.certainty : "unavailable"],
     ["Path active", critical ? fmtDuration(critical.active_seconds) : "unavailable"],
     ["Path waiting", critical ? fmtDuration(critical.waiting_seconds) : "unavailable"],
     ["Untimed events", fmtNumber(run.events.filter(event => event.start_offset_ns == null).length)],
     ["Attachments", fmtNumber(run.summary.record_counts.attachments)],
   ];
   const warningMessages = [];
+  if (critical && critical.cycle_detected) warningMessages.push("Causal cycle detected; critical path is inferred");
   if (run.summary.annotation_error) warningMessages.push(`Annotations ignored: ${escapeHtml(run.summary.annotation_error)}`);
   if (run.summary.missing_causal_references == null) warningMessages.push("Causal completeness metadata invalid");
   else if (run.summary.missing_causal_references > 0) warningMessages.push(`${run.summary.missing_causal_references} unresolved causal references`);

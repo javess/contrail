@@ -189,6 +189,8 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert 'id="analysis"' in html
     assert "renderAnalysis()" in javascript
     assert "Path waiting" in javascript
+    assert "Path certainty" in javascript
+    assert "Causal cycle detected; critical path is inferred" in javascript
     assert "diff.cpu_time.baseline" in javascript
     assert "run.summary.cpu_user_seconds + run.summary.cpu_system_seconds" in javascript
     assert "const cpuTime = finiteNumber(rawCpuTime) ? rawCpuTime : null" in javascript
