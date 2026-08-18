@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Python Architecture"
+  short_description: "Keep Contrail modules coherent and typed"
+  default_prompt: "Use $maintain-python-architecture to make this Python change without breaking module boundaries."

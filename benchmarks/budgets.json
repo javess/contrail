@@ -1,0 +1,20 @@
+{
+  "profiles": {
+    "pr": {
+      "otel_import": {"count": 10000, "max_seconds": 5.0, "max_rss_mib": 512},
+      "prometheus_import": {"count": 20000, "max_seconds": 5.0, "max_rss_mib": 512},
+      "kubernetes_import": {"count": 5000, "max_seconds": 5.0, "max_rss_mib": 512},
+      "batchscope_analyze": {"count": 10000, "max_seconds": 5.0, "max_rss_mib": 512},
+      "ui_payload": {"count": 10000, "max_seconds": 8.0, "max_rss_mib": 768},
+      "retained_report": {"count": 10000, "max_seconds": 12.0, "max_rss_mib": 1024}
+    },
+    "release": {
+      "otel_import": {"count": 100000, "max_seconds": 20.0, "max_rss_mib": 1536},
+      "prometheus_import": {"count": 100000, "max_seconds": 15.0, "max_rss_mib": 1536},
+      "kubernetes_import": {"count": 25000, "max_seconds": 20.0, "max_rss_mib": 1536},
+      "batchscope_analyze": {"count": 50000, "max_seconds": 15.0, "max_rss_mib": 1536},
+      "ui_payload": {"count": 50000, "max_seconds": 25.0, "max_rss_mib": 2048},
+      "retained_report": {"count": 50000, "max_seconds": 40.0, "max_rss_mib": 2560}
+    }
+  }
+}

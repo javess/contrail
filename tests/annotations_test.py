@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import os
@@ -61,6 +62,257 @@ with runtime.run("pipeline", total_work=10):
     assert (events["db.write"].id, events["db.flush"].id, "flushes") in relationships
 
 
+def test_inherited_fd_annotations_survive_workload_chdir(tmp_path: Path) -> None:
+    workload = tmp_path / "chdir-workload.py"
+    workload.write_text(
+        "import os\nfrom runtime_tools import runtime\n"
+        "os.chdir('/')\n"
+        "runtime.event('after-chdir')\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "chdir.runpack"
+    descriptor = os.open(os.devnull, os.O_RDONLY)
+    try:
+        record_process(
+            (sys.executable, str(workload)),
+            output,
+            name="after-chdir",
+            _annotation_fd=descriptor,
+        )
+        os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+
+    with RunpackReader(output) as reader:
+        event_names = {event.name for event in reader.events()}
+    assert "after-chdir" in event_names
+    assert not tuple(tmp_path.glob(".chdir.runpack.annotations-*"))
+
+
+def test_closed_inherited_annotation_fd_uses_the_private_fallback(
+    tmp_path: Path,
+) -> None:
+    workload = tmp_path / "closed-fd-workload.py"
+    workload.write_text(
+        "import os\nfrom runtime_tools import runtime\n"
+        "os.close(int(os.environ['_CONTRAIL_ANNOTATIONS_FD']))\n"
+        "try:\n"
+        "    runtime.event('should-not-exist')\n"
+        "except OSError:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "closed-fd.runpack"
+    descriptor = os.open(os.devnull, os.O_RDONLY)
+    try:
+        exit_code = record_process(
+            (sys.executable, str(workload)),
+            output,
+            name="closed-fd",
+            _annotation_fd=descriptor,
+        )
+    finally:
+        os.close(descriptor)
+
+    with RunpackReader(output) as reader:
+        event_names = {event.name for event in reader.events()}
+    assert exit_code == 0
+    assert "should-not-exist" in event_names
+
+
+def test_subprocess_without_inherited_fds_uses_the_private_fallback(tmp_path: Path) -> None:
+    workload = tmp_path / "child-workload.py"
+    child = "from runtime_tools import runtime; runtime.event('child-event')"
+    workload.write_text(
+        f"import subprocess, sys\nsubprocess.run((sys.executable, '-c', {child!r}), check=True)\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "child.runpack"
+    descriptor = os.open(os.devnull, os.O_RDONLY)
+    try:
+        record_process(
+            (sys.executable, str(workload)),
+            output,
+            name="child",
+            _annotation_fd=descriptor,
+        )
+    finally:
+        os.close(descriptor)
+
+    with RunpackReader(output) as reader:
+        event_names = {event.name for event in reader.events()}
+    assert "child-event" in event_names
+
+
+def test_reused_annotation_fd_does_not_receive_annotation_writes(tmp_path: Path) -> None:
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"preserved")
+    workload = tmp_path / "reused-fd-workload.py"
+    workload.write_text(
+        "import os, sys\n"
+        "from runtime_tools import runtime\n"
+        "transport = int(os.environ['_CONTRAIL_ANNOTATIONS_FD'])\n"
+        "os.close(transport)\n"
+        "victim = os.open(sys.argv[1], os.O_APPEND | os.O_WRONLY)\n"
+        "os.dup2(victim, transport)\n"
+        "runtime.event('reused-fd')\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "reused-fd.runpack"
+    descriptor = os.open(os.devnull, os.O_RDONLY)
+    try:
+        record_process(
+            (sys.executable, str(workload), str(victim)),
+            output,
+            name="reused-fd",
+            _annotation_fd=descriptor,
+        )
+    finally:
+        os.close(descriptor)
+
+    with RunpackReader(output) as reader:
+        event_names = {event.name for event in reader.events()}
+    assert "reused-fd" in event_names
+    assert victim.read_bytes() == b"preserved"
+
+
+def test_replaced_fallback_hard_link_does_not_receive_annotation_writes(
+    tmp_path: Path,
+) -> None:
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"preserved")
+    workload = tmp_path / "hard-link-workload.py"
+    workload.write_text(
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "from runtime_tools import runtime\n"
+        "os.close(int(os.environ['_CONTRAIL_ANNOTATIONS_FD']))\n"
+        "fallback = Path(os.environ['_CONTRAIL_ANNOTATIONS_FALLBACK'])\n"
+        "fallback.unlink()\n"
+        "os.link(sys.argv[1], fallback)\n"
+        "try:\n"
+        "    runtime.event('hard-link-event')\n"
+        "except OSError:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "hard-link.runpack"
+    descriptor = os.open(os.devnull, os.O_RDONLY)
+    try:
+        exit_code = record_process(
+            (sys.executable, str(workload), str(victim)),
+            output,
+            name="hard-link",
+            _annotation_fd=descriptor,
+        )
+    finally:
+        os.close(descriptor)
+
+    summary = inspect_runpack(output)
+    with RunpackReader(output) as reader:
+        event_names = {event.name for event in reader.events()}
+    assert exit_code == 0
+    assert summary.annotation_error == "invalid annotation JSON on line 1"
+    assert "hard-link-event" not in event_names
+    assert victim.read_bytes() == b"preserved"
+    assert not tuple(tmp_path.glob(".hard-link.runpack.annotations-*"))
+
+
+@pytest.mark.parametrize(
+    ("descriptor", "target", "message"),
+    (
+        (" 3", "/dev/fd/3", "canonical decimal integer"),
+        ("03", "/dev/fd/3", "canonical descriptor above 2"),
+        ("2", "/dev/fd/2", "canonical descriptor above 2"),
+        ("3", "/dev/fd/4", "does not match"),
+    ),
+)
+def test_annotation_writer_rejects_invalid_inherited_fd_environments(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    descriptor: str,
+    target: str,
+    message: str,
+) -> None:
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", target)
+    monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_FD", descriptor)
+    monkeypatch.setenv(
+        "_CONTRAIL_ANNOTATIONS_FALLBACK",
+        str(tmp_path / f".capture.runpack.annotations-{'a' * 32}"),
+    )
+    monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_IDENTITY", "1:1")
+
+    with pytest.raises(ValueError, match=message):
+        runtime.event("invalid-fd")
+
+
+@pytest.mark.parametrize(
+    "fallback",
+    (
+        None,
+        "relative.annotations",
+        "/private/tmp/annotations",
+        "/dev/fd/3",
+    ),
+)
+def test_annotation_writer_rejects_invalid_inherited_fd_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+    fallback: str | None,
+) -> None:
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", "/dev/fd/3")
+    monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_FD", "3")
+    monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_IDENTITY", "1:1")
+    monkeypatch.delenv("_CONTRAIL_ANNOTATIONS_FALLBACK", raising=False)
+    if fallback is not None:
+        monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_FALLBACK", fallback)
+
+    with pytest.raises(ValueError, match="private fallback|canonical capture path"):
+        runtime.event("invalid-fallback")
+
+
+@pytest.mark.parametrize(
+    "identity",
+    (None, "", "1", "1:2:3", "01:2", "1:02", "-1:2", "a:2"),
+)
+def test_annotation_writer_rejects_invalid_inherited_fd_identities(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    identity: str | None,
+) -> None:
+    fallback = tmp_path / f".capture.runpack.annotations-{'a' * 32}"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", "/dev/fd/3")
+    monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_FD", "3")
+    monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_FALLBACK", str(fallback))
+    monkeypatch.delenv("_CONTRAIL_ANNOTATIONS_IDENTITY", raising=False)
+    if identity is not None:
+        monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_IDENTITY", identity)
+
+    with pytest.raises(ValueError, match="private file identity|canonical device:inode"):
+        runtime.event("invalid-identity")
+
+
+def test_annotation_writer_does_not_mask_non_bad_fd_duplication_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fallback = tmp_path / f".capture.runpack.annotations-{'a' * 32}"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", "/dev/fd/3")
+    monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_FD", "3")
+    monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_FALLBACK", str(fallback))
+    monkeypatch.setenv("_CONTRAIL_ANNOTATIONS_IDENTITY", "1:1")
+
+    def fail(descriptor: int) -> int:
+        raise OSError(errno.EMFILE, "too many open files")
+
+    monkeypatch.setattr(os, "dup", fail)
+
+    with pytest.raises(OSError) as error:
+        runtime.event("duplication-failed")
+
+    assert error.value.errno == errno.EMFILE
+    assert not fallback.exists()
+
+
 def test_record_process_preserves_an_incomplete_stage_after_abrupt_exit(tmp_path: Path) -> None:
     workload = tmp_path / "crash.py"
     workload.write_text(
@@ -83,6 +335,98 @@ with runtime.stage("before-crash"):
     assert event.started_at_ns is not None
     assert event.finished_at_ns is None
     assert not tuple(tmp_path.glob("*.annotations-*"))
+
+
+@pytest.mark.parametrize("release_during_capture", (True, False))
+def test_record_process_bounds_a_descendant_annotation_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    release_during_capture: bool,
+) -> None:
+    descendant = tmp_path / "descendant.py"
+    descendant.write_text(
+        """
+import os
+import time
+from pathlib import Path
+
+from runtime_tools import runtime
+
+real_write = os.write
+partial_write = True
+
+
+def pause_mid_record(descriptor, data):
+    global partial_write
+    if partial_write:
+        partial_write = False
+        written = real_write(descriptor, data[: len(data) // 2])
+        Path(os.environ["CONTRAIL_PARTIAL_ANNOTATION"]).touch()
+        release = Path(os.environ["CONTRAIL_RELEASE_ANNOTATION"])
+        while not release.exists():
+            time.sleep(0.001)
+        return written
+    return real_write(descriptor, data)
+
+
+os.write = pause_mid_record
+runtime.event("descendant-event")
+""".strip(),
+        encoding="utf-8",
+    )
+    partial = tmp_path / "partial-annotation"
+    release = tmp_path / "release-annotation"
+    monkeypatch.setenv("CONTRAIL_PARTIAL_ANNOTATION", str(partial))
+    monkeypatch.setenv("CONTRAIL_RELEASE_ANNOTATION", str(release))
+    workload = tmp_path / "descendant-workload.py"
+    workload.write_text(
+        f"""
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from runtime_tools import runtime
+
+runtime.event("root-event")
+subprocess.Popen(
+    (sys.executable, {str(descendant)!r}),
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+partial = Path({str(partial)!r})
+while not partial.exists():
+    time.sleep(0.001)
+""".strip(),
+        encoding="utf-8",
+    )
+    output = tmp_path / "descendant.runpack"
+    flock = fcntl.flock
+
+    def release_on_shared_lock(descriptor: int, operation: int) -> None:
+        if release_during_capture and operation == fcntl.LOCK_SH | fcntl.LOCK_NB:
+            release.touch()
+        flock(descriptor, operation)
+
+    monkeypatch.setattr(fcntl, "flock", release_on_shared_lock)
+    if not release_during_capture:
+        monkeypatch.setattr(annotations_module, "ANNOTATION_LOCK_TIMEOUT_SECONDS", 0.0)
+
+    try:
+        exit_code = record_process((sys.executable, str(workload)), output, name="descendant")
+    finally:
+        release.touch()
+
+    summary = inspect_runpack(output)
+    with RunpackReader(output) as reader:
+        event_names = {event.name for event in reader.events()}
+    assert exit_code == 0
+    if release_during_capture:
+        assert summary.annotation_error is None
+        assert event_names == {Path(sys.executable).name, "root-event", "descendant-event"}
+    else:
+        assert summary.annotation_error == "timed out waiting for captured annotations"
+        assert event_names == {Path(sys.executable).name}
 
 
 def test_record_process_preserves_core_capture_when_annotations_are_malformed(
@@ -419,6 +763,59 @@ def test_annotation_writer_rejects_self_links_without_poisoning_the_stream(
         runtime.link(event, event)
 
     assert annotations.read_bytes() == valid_content
+
+
+@pytest.mark.parametrize(
+    ("completed", "total"),
+    (
+        (True, 1),
+        (0, False),
+        (-1, 1),
+        (2, 1),
+        (float("nan"), 1),
+        (0, float("inf")),
+        (10**400, 10**400),
+        (0, 2**53 + 1),
+    ),
+)
+def test_progress_rejects_invalid_values_without_poisoning_the_stream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    completed: int | float,
+    total: int | float,
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", str(annotations))
+    runtime.event("valid")
+    valid_content = annotations.read_bytes()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "annotation progress completed and total must be finite numbers with "
+            "0 <= completed <= total"
+        ),
+    ):
+        runtime.progress(completed=completed, total=total)
+
+    assert annotations.read_bytes() == valid_content
+
+
+@pytest.mark.parametrize(("completed", "total"), ((0, 0), (0.5, 1.0), (2**60, 2**60)))
+def test_progress_writes_valid_boundary_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    completed: int | float,
+    total: int | float,
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", str(annotations))
+
+    runtime.progress(completed=completed, total=total)
+
+    record = json.loads(annotations.read_text(encoding="utf-8"))
+    assert record["kind"] == "progress"
+    assert record["attributes"] == {"completed": completed, "total": total}
 
 
 def test_annotation_writer_keeps_concurrent_short_writes_as_complete_records(

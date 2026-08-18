@@ -11,11 +11,11 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Never
+from typing import Never, cast
 from urllib.parse import quote
 
-from runtime_tools.artifacts import publish_without_overwrite, remove_best_effort
-from runtime_tools.enrichment import enrich_copy
+from runtime_tools.artifacts import artifact_exists, publish_without_overwrite, remove_best_effort
+from runtime_tools.enrichment import enrich_copy, validate_enrichment_destination
 from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, JsonValue
 from runtime_tools.storage import RunpackReader, RunpackWriter
@@ -62,6 +62,17 @@ class OtelLogImportResult:
     missing_span_count: int
     ambiguous_service_count: int
     dropped_attribute_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _OtelLogEnrichmentPlan:
+    execution_id: str
+    execution_metadata: dict[str, JsonValue] | None
+    entities: tuple[Entity, ...]
+    events: tuple[Event, ...]
+    edges: tuple[CausalEdge, ...]
+    attachments: tuple[Attachment, ...]
+    result: OtelLogImportResult
 
 
 def _validate_utf8(value: str, label: str) -> str:
@@ -168,13 +179,13 @@ def _attributes(raw: object, *, depth: int = 0) -> dict[str, JsonValue]:
 def _as_object(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise OtelImportError(f"{label} must be an object")
-    return value
+    return cast(dict[str, object], value)
 
 
 def _as_list(value: object, label: str) -> list[object]:
     if not isinstance(value, list):
         raise OtelImportError(f"{label} must be a list")
-    return value
+    return cast(list[object], value)
 
 
 def _identifier(value: object, label: str, *, optional: bool = False) -> str:
@@ -183,6 +194,34 @@ def _identifier(value: object, label: str, *, optional: bool = False) -> str:
     if not isinstance(value, str) or not value:
         raise OtelImportError(f"{label} must be a non-empty string")
     return _validate_utf8(value, label)
+
+
+def _hex_identifier(
+    value: object,
+    label: str,
+    *,
+    length: int,
+    optional: bool = False,
+) -> str:
+    if value in (None, "") and optional:
+        return ""
+    identifier = _identifier(value, label)
+    normalized = identifier.lower()
+    if len(identifier) != length or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        raise OtelImportError(f"{label} must be a {length}-character hexadecimal string")
+    if normalized == "0" * length:
+        raise OtelImportError(f"{label} must not be all zero")
+    return normalized
+
+
+def _trace_id(value: object, label: str, *, optional: bool = False) -> str:
+    return _hex_identifier(value, label, length=32, optional=optional)
+
+
+def _span_id(value: object, label: str, *, optional: bool = False) -> str:
+    return _hex_identifier(value, label, length=16, optional=optional)
 
 
 def _semantic_name(value: object, label: str, *, default: str) -> str:
@@ -240,6 +279,14 @@ def _enum_integer(value: object) -> int | None:
         return None
     if isinstance(value, int):
         return value
+    if isinstance(value, Decimal):
+        if (
+            not value.is_finite()
+            or value != value.to_integral_value()
+            or not _MIN_OTLP_INT <= value <= _MAX_OTLP_INT
+        ):
+            return None
+        return int(value)
     if isinstance(value, float):
         return int(value) if math.isfinite(value) and value.is_integer() else None
     if isinstance(value, str):
@@ -355,6 +402,7 @@ def _load_document(source: Path) -> tuple[dict[str, object], bytes]:
     try:
         value = json.loads(
             raw.decode("utf-8"),
+            parse_float=Decimal,
             parse_constant=_reject_json_constant,
             object_pairs_hook=reject_duplicate_object,
         )
@@ -385,7 +433,7 @@ def import_otlp_json(
         name.encode("utf-8")
     except UnicodeEncodeError as exc:
         raise OtelImportError("OTLP execution name must be valid UTF-8") from exc
-    if output.exists():
+    if artifact_exists(output):
         raise OtelImportError(f"refusing to overwrite existing runpack: {output}")
     if not output.parent.is_dir():
         raise OtelImportError(f"output directory does not exist: {output.parent}")
@@ -450,14 +498,14 @@ def import_otlp_json(
                     span.get("droppedAttributesCount"),
                     "dropped OTLP attributes",
                 )
-                trace_id = _identifier(span.get("traceId"), "span traceId")
-                span_id = _identifier(span.get("spanId"), "span spanId")
+                trace_id = _trace_id(span.get("traceId"), "span traceId")
+                span_id = _span_id(span.get("spanId"), "span spanId")
                 event_id = _event_id(trace_id, span_id)
                 if event_id in known_events:
                     raise OtelImportError(f"duplicate span identity: {trace_id}/{span_id}")
                 known_events.add(event_id)
                 trace_ids.add(trace_id)
-                parent_span_id = _identifier(
+                parent_span_id = _span_id(
                     span.get("parentSpanId"), "span parentSpanId", optional=True
                 )
                 attributes = _attributes(span.get("attributes", []))
@@ -492,8 +540,8 @@ def import_otlp_json(
                         link.get("droppedAttributesCount"),
                         "dropped OTLP attributes",
                     )
-                    linked_trace_id = _identifier(link.get("traceId"), "span link traceId")
-                    linked_span_id = _identifier(link.get("spanId"), "span link spanId")
+                    linked_trace_id = _trace_id(link.get("traceId"), "span link traceId")
+                    linked_span_id = _span_id(link.get("spanId"), "span link spanId")
                     link_references.append(
                         (
                             linked_trace_id,
@@ -659,6 +707,13 @@ def _matching_service(
     candidates = tuple(
         entity for entity in entities if entity.kind == "service" and entity.name == service_name
     )
+    namespace = resource_attributes.get("service.namespace")
+    if isinstance(namespace, str) and namespace:
+        candidates = tuple(
+            entity
+            for entity in candidates
+            if entity.attributes.get("service.namespace") == namespace
+        )
     instance_id = resource_attributes.get("service.instance.id")
     if isinstance(instance_id, str) and instance_id:
         exact = tuple(
@@ -670,25 +725,21 @@ def _matching_service(
     return (candidates[0].id if len(candidates) == 1 else None), len(candidates) > 1
 
 
-def import_otlp_logs(
-    runpack: Path,
-    source: Path,
-    output: Path,
+def _plan_otlp_logs(
+    execution: Execution,
+    existing_entities: tuple[Entity, ...],
+    existing_events: tuple[Event, ...],
+    resource_logs: list[object],
     *,
-    include_raw: bool = False,
-) -> OtelLogImportResult:
-    """Add bounded OTLP/JSON log records to an existing execution."""
-    source_name = _source_name(source)
-    document, raw_document = _load_document(source)
-    source_identity = hashlib.sha256(raw_document).hexdigest()
-    resource_logs = _as_list(document.get("resourceLogs"), "resourceLogs")
-    with RunpackReader(runpack) as reader:
-        execution = reader.execution()
-        existing_entities = reader.entities()
-        existing_events = reader.events()
-
+    source_identity: str,
+    source_name: str,
+    raw_document: bytes,
+    include_raw: bool,
+) -> _OtelLogEnrichmentPlan:
     spans: dict[tuple[str, str], list[Event]] = {}
     for event in existing_events:
+        if event.kind == "log.record":
+            continue
         trace_id = event.attributes.get("otel.trace_id")
         span_id = event.attributes.get("otel.span_id")
         if isinstance(trace_id, str) and isinstance(span_id, str):
@@ -711,23 +762,35 @@ def import_otlp_logs(
             "resource droppedAttributesCount",
         )
         resource_attributes = _attributes(resource.get("attributes", []))
+        raw_service_name = resource_attributes.get("service.name")
         service_name = _semantic_name(
-            resource_attributes.get("service.name"),
+            raw_service_name,
             "service.name",
             default="unknown-service",
         )
-        matched_service, ambiguous_service = _matching_service(
-            service_name, resource_attributes, existing_entities
+        fallback_entity = Entity(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                (f"{execution.id}:otel-log-source:{source_identity}:resource:{resource_index}"),
+            ).hex,
+            "service",
+            service_name,
+            None,
+            resource_attributes,
         )
+        if raw_service_name in (None, ""):
+            matched_service = fallback_entity.id if fallback_entity in existing_entities else None
+            ambiguous_service = False
+        else:
+            matched_service, ambiguous_service = _matching_service(
+                service_name, resource_attributes, existing_entities
+            )
         new_entity: Entity | None = None
         if matched_service is not None:
             entity_id = matched_service
         else:
-            entity_id = uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                f"{execution.id}:otel-log-resource:{resource_index}:{service_name}",
-            ).hex
-            new_entity = Entity(entity_id, "service", service_name, None, resource_attributes)
+            entity_id = fallback_entity.id
+            new_entity = fallback_entity
 
         resource_event_count = 0
         resource_entity_used = False
@@ -759,8 +822,8 @@ def import_otlp_logs(
                     record.get("droppedAttributesCount"),
                     "log droppedAttributesCount",
                 )
-                trace_id = _identifier(record.get("traceId"), "log traceId", optional=True)
-                span_id = _identifier(record.get("spanId"), "log spanId", optional=True)
+                trace_id = _trace_id(record.get("traceId"), "log traceId", optional=True)
+                span_id = _span_id(record.get("spanId"), "log spanId", optional=True)
                 if bool(trace_id) != bool(span_id):
                     raise OtelImportError("log records must contain traceId and spanId together")
 
@@ -867,60 +930,102 @@ def import_otlp_logs(
                 "resource droppedAttributesCount",
             )
 
-    def append(writer: RunpackWriter) -> OtelLogImportResult:
-        if dropped_attribute_count or missing_spans:
-            metadata = execution.metadata.copy()
-            raw_otel_metadata = metadata.get("otel")
-            if raw_otel_metadata is None:
-                otel_metadata: dict[str, JsonValue] = {}
-            elif isinstance(raw_otel_metadata, dict):
-                otel_metadata = raw_otel_metadata.copy()
-            else:
-                raise OtelImportError("existing execution otel metadata must be an object")
-            if dropped_attribute_count:
-                otel_metadata["dropped_attribute_count"] = _bounded_count_total(
-                    _nonnegative_count(
-                        otel_metadata.get("dropped_attribute_count"),
-                        "existing dropped OTLP attributes",
-                    ),
-                    dropped_attribute_count,
-                    "dropped OTLP attributes",
-                )
-            if missing_spans:
-                otel_metadata["missing_log_span_count"] = _bounded_count_total(
-                    _nonnegative_count(
-                        otel_metadata.get("missing_log_span_count"),
-                        "existing missing OTLP log span references",
-                    ),
-                    missing_spans,
-                    "missing OTLP log span references",
-                )
-            metadata["otel"] = otel_metadata
-            writer.set_execution_metadata(execution.id, metadata)
-        writer.add_entities(entities)
-        writer.add_events(events)
-        writer.add_causal_edges(edges)
-        if include_raw:
-            writer.add_attachments(
-                (
-                    Attachment(
-                        id="raw:otlp-logs:" + source_identity,
-                        kind="raw",
-                        name=source_name,
-                        media_type="application/json",
-                        content=raw_document,
-                        attributes={"adapter": "otlp-logs"},
-                    ),
-                )
+    execution_metadata: dict[str, JsonValue] | None = None
+    if dropped_attribute_count or missing_spans:
+        execution_metadata = execution.metadata.copy()
+        raw_otel_metadata = execution_metadata.get("otel")
+        if raw_otel_metadata is None:
+            otel_metadata: dict[str, JsonValue] = {}
+        elif isinstance(raw_otel_metadata, dict):
+            otel_metadata = raw_otel_metadata.copy()
+        else:
+            raise OtelImportError("existing execution otel metadata must be an object")
+        if dropped_attribute_count:
+            otel_metadata["dropped_attribute_count"] = _bounded_count_total(
+                _nonnegative_count(
+                    otel_metadata.get("dropped_attribute_count"),
+                    "existing dropped OTLP attributes",
+                ),
+                dropped_attribute_count,
+                "dropped OTLP attributes",
             )
-        return OtelLogImportResult(
-            len(events),
-            len(edges),
-            len(entities),
-            dropped,
-            missing_spans,
-            ambiguous_services,
-            dropped_attribute_count,
+        if missing_spans:
+            otel_metadata["missing_log_span_count"] = _bounded_count_total(
+                _nonnegative_count(
+                    otel_metadata.get("missing_log_span_count"),
+                    "existing missing OTLP log span references",
+                ),
+                missing_spans,
+                "missing OTLP log span references",
+            )
+        execution_metadata["otel"] = otel_metadata
+    attachments = (
+        (
+            Attachment(
+                id="raw:otlp-logs:" + source_identity,
+                kind="raw",
+                name=source_name,
+                media_type="application/json",
+                content=raw_document,
+                attributes={"adapter": "otlp-logs"},
+            ),
         )
+        if include_raw
+        else ()
+    )
+    result = OtelLogImportResult(
+        len(events),
+        len(edges),
+        len(entities),
+        dropped,
+        missing_spans,
+        ambiguous_services,
+        dropped_attribute_count,
+    )
+    return _OtelLogEnrichmentPlan(
+        execution.id,
+        execution_metadata,
+        tuple(entities),
+        tuple(events),
+        tuple(edges),
+        attachments,
+        result,
+    )
+
+
+def import_otlp_logs(
+    runpack: Path,
+    source: Path,
+    output: Path,
+    *,
+    include_raw: bool = False,
+) -> OtelLogImportResult:
+    """Add bounded OTLP/JSON log records to an existing execution."""
+    validate_enrichment_destination(output)
+    source_name = _source_name(source)
+    document, raw_document = _load_document(source)
+    source_identity = hashlib.sha256(raw_document).hexdigest()
+    resource_logs = _as_list(document.get("resourceLogs"), "resourceLogs")
+
+    def append(writer: RunpackWriter) -> OtelLogImportResult:
+        with RunpackReader(writer.path) as reader:
+            plan = _plan_otlp_logs(
+                reader.execution(),
+                reader.entities(),
+                reader.events(),
+                resource_logs,
+                source_identity=source_identity,
+                source_name=source_name,
+                raw_document=raw_document,
+                include_raw=include_raw,
+            )
+        if plan.execution_metadata is not None:
+            writer.set_execution_metadata(plan.execution_id, plan.execution_metadata)
+        writer.add_entities(plan.entities)
+        writer.add_events(plan.events)
+        writer.add_causal_edges(plan.edges)
+        if plan.attachments:
+            writer.add_attachments(plan.attachments)
+        return plan.result
 
     return enrich_copy(runpack, output, append)

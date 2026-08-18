@@ -1,6 +1,8 @@
 name: local-pipeline-regression
 description: Preserve results without amplifying persistence or adding metadata access.
 assertions:
+  - type: candidate_exit_success
+  - type: exit_code_equivalent
   - type: output_equivalent
   - type: max_runtime_regression
     percent: 25

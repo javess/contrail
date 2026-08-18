@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,49 @@ import runtime_tools.inspect as inspect_module
 from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import RunpackWriter
+
+
+def test_text_inspection_labels_signaled_process_outcomes(tmp_path: Path) -> None:
+    runpack = tmp_path / "signaled.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("signaled", "signaled", 0, 1, (), str(tmp_path), -15, None, {})
+        )
+
+    summary = render_summary(inspect_runpack(runpack), "text")
+
+    assert "outcome:  failed (signal 15)" in summary
+
+
+def test_text_inspection_keeps_unknown_runtime_distinct_from_open_execution(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "unknown-runtime.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("completed", "completed", 0, None, (), str(tmp_path), 0, None, {})
+        )
+
+    summary = inspect_runpack(runpack)
+    rendered = render_summary(summary, "text")
+    structured = json.loads(render_summary(summary, "json"))
+
+    assert "outcome:  success (exit 0)" in rendered
+    assert "runtime:  unknown" in rendered
+    assert structured["finished_at_ns"] is None
+    assert structured["exit_code"] == 0
+    assert structured["wall_time_seconds"] is None
+
+
+def test_text_inspection_reports_a_true_open_execution_in_progress(tmp_path: Path) -> None:
+    runpack = tmp_path / "open.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("open", "open", 0, None, (), str(tmp_path), None, None, {}))
+
+    rendered = render_summary(inspect_runpack(runpack), "text")
+
+    assert "outcome:  in progress" in rendered
+    assert "runtime:  in progress" in rendered
 
 
 def test_causal_tree_handles_graphs_beyond_python_recursion_limit(tmp_path: Path) -> None:
@@ -355,3 +399,35 @@ def test_text_inspection_reports_invalid_output_completeness(tmp_path: Path) -> 
 
     assert summary.stdout_complete is None
     assert f"stdout:   5 B, sha256:{digest[:12]} (completeness unknown)" in rendered
+
+
+def test_inspection_safely_reports_only_text_output_relay_errors(tmp_path: Path) -> None:
+    runpack = tmp_path / "relay-errors.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution(
+                "run",
+                "run",
+                0,
+                10,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {
+                    "output": {
+                        "stdout": {"relay_error": True},
+                        "stderr": {"relay_error": "bad\x1b[31m relay"},
+                    }
+                },
+            )
+        )
+
+    summary = inspect_runpack(runpack)
+    rendered = render_summary(summary, "text")
+
+    assert summary.stdout_relay_error is None
+    assert summary.stderr_relay_error == "bad\x1b[31m relay"
+    assert "stdout relay:" not in rendered
+    assert "\x1b" not in rendered
+    assert r"stderr relay: failed (bad\x1b[31m relay)" in rendered

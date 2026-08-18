@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from runtime_tools import prometheus
+from runtime_tools.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.model import Entity, Execution
-from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
+from runtime_tools.prometheus import (
+    PrometheusImportError,
+    PrometheusImportResult,
+    import_prometheus_response,
+)
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 
@@ -78,6 +84,91 @@ def test_prometheus_response_imports_only_windowed_samples_and_matches_pod(
     assert source.is_file()
 
 
+def test_prometheus_admission_and_matching_use_the_copied_runpack_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.runpack"
+    replacement = tmp_path / "replacement.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    for path, execution_name, bounds, matched_entity_id in (
+        (source, "snapshot-a", (0, 10_000_000_000), "pod-a"),
+        (
+            replacement,
+            "snapshot-b",
+            (100_000_000_000, 200_000_000_000),
+            "pod-b",
+        ),
+    ):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(
+                    execution_name,
+                    execution_name,
+                    bounds[0],
+                    bounds[1],
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    {},
+                )
+            )
+            writer.add_entities(
+                tuple(
+                    Entity(
+                        entity_id,
+                        "pod",
+                        entity_id,
+                        None,
+                        {"k8s.uid": "pod-race"}
+                        if entity_id == matched_entity_id
+                        else {"k8s.uid": "other"},
+                    )
+                    for entity_id in ("pod-a", "pod-b")
+                )
+            )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "matrix",
+                    "result": [
+                        {
+                            "metric": {"__name__": "queue_depth", "pod_uid": "pod-race"},
+                            "values": [[5, "1"], [150, "2"]],
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def replace_source_then_enrich(
+        source_path: Path,
+        output_path: Path,
+        operation: Callable[[RunpackWriter], PrometheusImportResult],
+    ) -> PrometheusImportResult:
+        replacement.replace(source_path)
+        return real_enrich_copy(source_path, output_path, operation)
+
+    monkeypatch.setattr(prometheus, "enrich_copy", replace_source_then_enrich)
+
+    result = import_prometheus_response(source, response, output)
+
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+        measurements = reader.measurements()
+    assert execution.id == "snapshot-b"
+    assert result == PrometheusImportResult(1, 1, 1)
+    assert [(item.timestamp_ns, item.entity_id) for item in measurements] == [
+        (150_000_000_000, "pod-b")
+    ]
+
+
 def test_prometheus_response_normalizes_an_empty_unit_as_dimensionless(tmp_path: Path) -> None:
     source = tmp_path / "source.runpack"
     response = tmp_path / "metrics.json"
@@ -110,6 +201,41 @@ def test_prometheus_response_normalizes_an_empty_unit_as_dimensionless(tmp_path:
         measurement = reader.measurements()[0]
     assert measurement.unit == "1"
     assert measurement.attributes["unit"] == ""
+
+
+@pytest.mark.parametrize("metric", ({"job": "api"}, {"__name__": "", "job": "api"}))
+def test_prometheus_response_normalizes_nameless_expression_results(
+    tmp_path: Path,
+    metric: dict[str, str],
+) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [{"metric": metric, "value": [1, "3"]}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_prometheus_response(source, response, output)
+
+    assert result.sample_count == 1
+    with RunpackReader(output) as reader:
+        measurement = reader.measurements()[0]
+    assert measurement.name == "prometheus.result"
+    assert measurement.value == 3
+    assert measurement.attributes == {"job": "api"}
 
 
 def test_prometheus_response_rejects_non_finite_timestamps(tmp_path: Path) -> None:
@@ -192,6 +318,214 @@ def test_prometheus_response_rejects_lossy_subnanosecond_timestamps(tmp_path: Pa
                 },
             }
         ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match="has sub-nanosecond precision"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()
+
+
+def test_prometheus_response_preserves_numeric_nanosecond_timestamps(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    timestamp_ns = 1_700_000_000_123_456_789
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution(
+                "run",
+                "run",
+                timestamp_ns,
+                timestamp_ns,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {},
+            )
+        )
+    response.write_text(
+        """{
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [{
+                    "metric": {"__name__": "queue_depth"},
+                    "value": [1700000000.123456789, "1"]
+                }]
+            }
+        }""",
+        encoding="utf-8",
+    )
+
+    result = import_prometheus_response(source, response, output)
+
+    assert result.sample_count == 1
+    with RunpackReader(output) as reader:
+        assert reader.measurements()[0].timestamp_ns == timestamp_ns
+
+
+@pytest.mark.parametrize("second_value", ("3", "4"))
+def test_prometheus_response_rejects_duplicate_sample_identities(
+    tmp_path: Path,
+    second_value: str,
+) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [
+                        {
+                            "metric": {"__name__": "queue_depth", "service": "api"},
+                            "value": [1, "3"],
+                        },
+                        {
+                            "metric": {"service": "api", "__name__": "queue_depth"},
+                            "value": [1, second_value],
+                        },
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match="duplicate Prometheus sample identity"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()
+    with RunpackReader(source) as reader:
+        assert reader.measurements() == ()
+
+
+@pytest.mark.parametrize(
+    ("first_metric", "second_metric"),
+    (
+        ({"job": "api"}, {"__name__": "", "job": "api"}),
+        ({"job": "api"}, {"__name__": "prometheus.result", "job": "api"}),
+    ),
+)
+def test_prometheus_response_rejects_normalized_sample_identity_collisions(
+    tmp_path: Path,
+    first_metric: dict[str, str],
+    second_metric: dict[str, str],
+) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [
+                        {"metric": first_metric, "value": [1, "3"]},
+                        {"metric": second_metric, "value": [1, "4"]},
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match="duplicate Prometheus sample identity"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()
+    with RunpackReader(source) as reader:
+        assert reader.measurements() == ()
+
+
+def test_prometheus_response_keeps_same_timestamp_samples_with_distinct_labels(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [
+                        {
+                            "metric": {"__name__": "queue_depth", "service": "api"},
+                            "value": [1, "3"],
+                        },
+                        {
+                            "metric": {"__name__": "queue_depth", "service": "worker"},
+                            "value": [1, "4"],
+                        },
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_prometheus_response(source, response, output)
+
+    assert result.sample_count == 2
+    with RunpackReader(output) as reader:
+        measurements = reader.measurements()
+    assert {(sample.attributes["service"], sample.value) for sample in measurements} == {
+        ("api", 3.0),
+        ("worker", 4.0),
+    }
+
+
+def test_prometheus_response_rejects_numeric_subnanosecond_timestamps(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution(
+                "run",
+                "run",
+                1_700_000_000_000_000_000,
+                1_700_000_001_000_000_000,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {},
+            )
+        )
+    response.write_text(
+        """{
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [{
+                    "metric": {"__name__": "queue_depth"},
+                    "value": [1700000000.1234567891, "1"]
+                }]
+            }
+        }""",
         encoding="utf-8",
     )
 

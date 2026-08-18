@@ -5,14 +5,22 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import yaml
 from hypothesis import find, settings
 from hypothesis.errors import NoSuchExample
 from hypothesis.strategies import SearchStrategy, fixed_dictionaries, integers
 
-from runtime_tools.proofline.contracts import ContractError
-from runtime_tools.proofline.experiments import ExperimentError, ExperimentResult, run_experiment
+from runtime_tools.artifacts import artifact_exists
+from runtime_tools.model import JsonValue
+from runtime_tools.proofline.contracts import ContractError, load_contracts
+from runtime_tools.proofline.experiments import (
+    ExperimentError,
+    ExperimentResult,
+    _run_experiment,
+    _validate_python_executable,
+)
 from runtime_tools.yaml_support import YamlInputError, load_yaml_file
 
 MAX_COUNTEREXAMPLE_EXAMPLES = 1_000
@@ -34,12 +42,20 @@ class IntegerParameter:
 class CounterexampleResult:
     parameters: dict[str, int]
     experiment: ExperimentResult
+    shrink_budget_exhausted: bool = False
+
+    def as_json_value(self) -> dict[str, JsonValue]:
+        return {
+            "parameters": dict(sorted(self.parameters.items())),
+            "experiment": self.experiment.as_json_value(),
+            "shrink_budget_exhausted": self.shrink_budget_exhausted,
+        }
 
 
 def _object(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise ContractError(f"{label} must be an object with string keys")
-    return value
+    return cast(dict[str, object], value)
 
 
 def _integer(value: object, label: str) -> int:
@@ -151,6 +167,7 @@ def search_counterexample(
     output_dir: Path,
     max_examples: int = 25,
     cwd: Path | None = None,
+    python_executable: Path | None = None,
 ) -> CounterexampleResult | None:
     if not isinstance(max_examples, int) or isinstance(max_examples, bool):
         raise ContractError("max_examples must be an integer")
@@ -158,29 +175,35 @@ def search_counterexample(
         raise ContractError("max_examples must be positive")
     if max_examples > MAX_COUNTEREXAMPLE_EXAMPLES:
         raise ContractError(f"max_examples cannot exceed {MAX_COUNTEREXAMPLE_EXAMPLES}")
-    if output_dir.exists():
+    if artifact_exists(output_dir):
         raise ExperimentError(f"refusing to reuse output directory: {output_dir}")
+    python_executable = _validate_python_executable(python_executable)
     if not output_dir.parent.is_dir():
         raise ExperimentError(f"output parent directory does not exist: {output_dir.parent}")
     parameters = load_parameters(parameters_path)
     repo = _search_repository(cwd)
+    contracts = load_contracts(contract)
     cache: dict[tuple[tuple[str, int], ...], bool] = {}
+    shrink_budget_exhausted = False
 
     def violates(values: dict[str, int]) -> bool:
+        nonlocal shrink_budget_exhausted
         key = tuple(sorted(values.items()))
         if key in cache:
             return cache[key]
         if len(cache) >= max_examples:
+            shrink_budget_exhausted = True
             return False
         with _temporary_search_directory() as directory:
-            experiment = run_experiment(
-                contract,
+            experiment = _run_experiment(
+                contracts,
                 baseline_ref=baseline_ref,
                 candidate_ref=candidate_ref,
                 workload=workload,
                 workload_args=_arguments(parameters, values),
                 output_dir=Path(directory) / "artifacts",
                 cwd=repo,
+                python_executable=python_executable,
             )
             result = _has_violation(experiment)
             cache[key] = result
@@ -199,15 +222,16 @@ def search_counterexample(
         )
     except NoSuchExample:
         return None
-    experiment = run_experiment(
-        contract,
+    experiment = _run_experiment(
+        contracts,
         baseline_ref=baseline_ref,
         candidate_ref=candidate_ref,
         workload=workload,
         workload_args=_arguments(parameters, values),
         output_dir=output_dir,
         cwd=repo,
+        python_executable=python_executable,
     )
     if not _has_violation(experiment):
-        raise ExperimentError("minimized counterexample did not reproduce on the preserved run")
-    return CounterexampleResult(values, experiment)
+        raise ExperimentError("selected counterexample did not reproduce on the preserved run")
+    return CounterexampleResult(values, experiment, shrink_budget_exhausted)

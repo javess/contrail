@@ -1,21 +1,42 @@
 [build-system]
-requires = ["hatchling>=1.26"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "contrail-runtime-tools"
-version = "0.1.0"
-description = "Local-first execution capture, comparison, analysis, and contract verification"
+version = "0.9.0"
+description = "Trace runtime contract failures to exact execution evidence"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.15"
 license = "MIT"
 authors = [{ name = "Contrail contributors" }]
+keywords = ["debugging", "observability", "performance", "regression-testing", "runtime-analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
 dependencies = [
     "hypothesis>=6.140",
     "pyyaml>=6.0.2",
 ]
 
+[project.urls]
+Homepage = "https://github.com/javess/contrail"
+Repository = "https://github.com/javess/contrail"
+Issues = "https://github.com/javess/contrail/issues"
+Changelog = "https://github.com/javess/contrail/blob/main/CHANGELOG.md"
+Security = "https://github.com/javess/contrail/security/policy"
+
 [project.scripts]
+contrail = "runtime_tools.contrail_cli:main"
 runtime = "runtime_tools.cli:main"
 rundiff = "runtime_tools.rundiff.cli:main"
 batchscope = "runtime_tools.batchscope.cli:main"
@@ -25,7 +46,7 @@ proofline = "runtime_tools.proofline.cli:main"
 packages = ["src/runtime_tools"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/.agent"]
+exclude = ["/.agent", "/.hypothesis"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
@@ -36,17 +57,24 @@ target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["B", "E", "F", "I", "UP"]
+select = ["ANN", "B", "E", "F", "I", "UP"]
+ignore = ["ANN401"]
 
-[tool.mypy]
-python_version = "3.12"
-strict = true
-files = ["src", "tests"]
+[tool.ty.src]
+include = ["src", "tests", "tools", "benchmarks"]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.rules]
+missing-type-argument = "error"
+possibly-unresolved-reference = "warn"
+unsound-return-statement = "error"
 
 [dependency-groups]
 dev = [
-    "mypy>=1.14",
     "pytest>=8.3",
     "ruff>=0.9",
+    "ty>=0.0.72",
     "types-pyyaml>=6.0.12.20250516",
 ]

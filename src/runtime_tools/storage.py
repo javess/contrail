@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import sqlite3
+import stat
 from collections import deque
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
-from runtime_tools import __version__
+from runtime_tools._version import __version__
 from runtime_tools.artifacts import remove_best_effort
 from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import (
@@ -24,14 +27,31 @@ from runtime_tools.model import (
     JsonValue,
     Measurement,
 )
+from runtime_tools.semantics import is_operation_error
 
 SCHEMA_VERSION = "1.1"
 SCHEMA_MAJOR_VERSION = "1"
+_WRITABLE_SCHEMA_VERSIONS = ("1", "1.0", SCHEMA_VERSION)
 APPLICATION_ID = 0x4354524C  # CTRL
 MAX_RUNPACK_JSON_BYTES = 4 * 1024 * 1024
 MAX_RUNPACK_TEXT_BYTES = 4 * 1024 * 1024
 MAX_RUNPACK_ATTACHMENT_BYTES = 64 * 1024 * 1024
 MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES = 256 * 1024 * 1024
+MAX_RUNPACK_FILE_BYTES = 2 * 1024**3
+# These whole-artifact limits keep normalized reads within a 4 GiB host envelope while
+# admitting the supported million-record OTLP and Prometheus inputs.
+MAX_RUNPACK_NORMALIZED_JSON_BYTES = 256 * 1024 * 1024
+MAX_RUNPACK_NORMALIZED_TEXT_BYTES = 256 * 1024 * 1024
+MAX_RUNPACK_MANIFEST_RECORDS = 1_024
+MAX_RUNPACK_EXECUTION_RECORDS = 1
+MAX_RUNPACK_ENTITY_RECORDS = 1_000_000
+MAX_RUNPACK_EVENT_RECORDS = 1_000_000
+MAX_RUNPACK_CAUSAL_EDGE_RECORDS = 2_000_000
+MAX_RUNPACK_MEASUREMENT_RECORDS = 1_000_000
+MAX_RUNPACK_ATTACHMENT_RECORDS = 100_000
+# SQLite applies SQLITE_LIMIT_LENGTH to both individual values and encoded rows. Leave
+# enough row headroom for a maximum attachment plus its bounded normalized metadata.
+MAX_RUNPACK_SQLITE_LENGTH_BYTES = 128 * 1024 * 1024
 _MIN_INTEGER = -(1 << 63)
 _MAX_INTEGER = (1 << 63) - 1
 _REQUIRED_TABLES = {
@@ -97,6 +117,7 @@ _PRIMARY_KEYS = {
     "measurements": ("id",),
     "attachments": ("id",),
 }
+_BINARY_PRIMARY_KEY_TABLES = frozenset(_PRIMARY_KEYS) - {"measurements"}
 _FOREIGN_KEYS = {
     "entities": {("parent_entity_id", "entities", "id")},
     "events": {("entity_id", "entities", "id")},
@@ -105,6 +126,51 @@ _FOREIGN_KEYS = {
         ("target_event_id", "events", "id"),
     },
     "measurements": {("entity_id", "entities", "id")},
+}
+_TEXT_COLUMNS = {
+    "manifest": ("key", "value"),
+    "executions": ("id", "name", "working_directory", "revision"),
+    "entities": ("id", "kind", "name", "parent_entity_id"),
+    "events": ("id", "kind", "name", "entity_id", "clock_domain"),
+    "causal_edges": ("source_event_id", "target_event_id", "kind"),
+    "measurements": ("name", "unit", "entity_id"),
+    "attachments": ("id", "kind", "name", "media_type"),
+}
+_JSON_COLUMNS = {
+    "manifest": (),
+    "executions": ("command_json", "metadata_json"),
+    "entities": ("attributes_json",),
+    "events": ("attributes_json",),
+    "causal_edges": ("attributes_json",),
+    "measurements": ("attributes_json",),
+    "attachments": ("attributes_json",),
+}
+_TEXT_COLUMN_LABELS = {
+    ("manifest", "key"): "manifest key",
+    ("manifest", "value"): "manifest value",
+    ("executions", "id"): "execution id",
+    ("executions", "name"): "execution name",
+    ("executions", "working_directory"): "execution working directory",
+    ("executions", "revision"): "execution revision",
+    ("entities", "id"): "entity id",
+    ("entities", "kind"): "entity kind",
+    ("entities", "name"): "entity name",
+    ("entities", "parent_entity_id"): "entity parent id",
+    ("events", "id"): "event id",
+    ("events", "kind"): "event kind",
+    ("events", "name"): "event name",
+    ("events", "entity_id"): "event entity id",
+    ("events", "clock_domain"): "event clock domain",
+    ("causal_edges", "source_event_id"): "causal edge source event id",
+    ("causal_edges", "target_event_id"): "causal edge target event id",
+    ("causal_edges", "kind"): "causal edge kind",
+    ("measurements", "name"): "measurement name",
+    ("measurements", "unit"): "measurement unit",
+    ("measurements", "entity_id"): "measurement entity id",
+    ("attachments", "id"): "attachment id",
+    ("attachments", "kind"): "attachment kind",
+    ("attachments", "name"): "attachment name",
+    ("attachments", "media_type"): "attachment media type",
 }
 
 _SCHEMA = """
@@ -188,7 +254,7 @@ CREATE INDEX measurements_entity_idx ON measurements(entity_id);
 CREATE INDEX attachments_kind_name_idx ON attachments(kind, name);
 """
 
-_ATTACHMENTS_SCHEMA = """
+_ATTACHMENTS_TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS attachments (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -196,9 +262,11 @@ CREATE TABLE IF NOT EXISTS attachments (
     media_type TEXT NOT NULL,
     content BLOB NOT NULL,
     attributes_json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS attachments_kind_name_idx ON attachments(kind, name);
+)
 """
+_ATTACHMENTS_INDEX_SCHEMA = (
+    "CREATE INDEX IF NOT EXISTS attachments_kind_name_idx ON attachments(kind, name)"
+)
 
 
 class RunpackError(ValueError):
@@ -206,7 +274,18 @@ class RunpackError(ValueError):
 
 
 class UnsupportedSchemaError(RunpackError):
-    """Raised when a runpack uses an unsupported schema major version."""
+    """Raised when a runpack schema cannot be read or safely modified."""
+
+
+@dataclass(frozen=True, slots=True)
+class RunpackArtifactIdentity:
+    """Byte identity of the exact runpack backing a validated read snapshot."""
+
+    size_bytes: int
+    sha256: str
+
+    def as_json_value(self) -> dict[str, JsonValue]:
+        return {"size_bytes": self.size_bytes, "sha256": self.sha256}
 
 
 def _json(value: JsonValue) -> str:
@@ -494,7 +573,112 @@ def _attachment_values(attachment: Attachment) -> tuple[object, ...]:
     )
 
 
-def _validate_connection(connection: sqlite3.Connection) -> None:
+def _set_runpack_connection_limits(connection: sqlite3.Connection) -> None:
+    connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_RUNPACK_SQLITE_LENGTH_BYTES)
+
+
+def _require_runpack_file_size(size_bytes: int) -> None:
+    if size_bytes > MAX_RUNPACK_FILE_BYTES:
+        raise RunpackError(
+            f"runpack is {size_bytes} bytes; file limit is {MAX_RUNPACK_FILE_BYTES} bytes"
+        )
+
+
+def _record_limits() -> dict[str, int]:
+    return {
+        "manifest": MAX_RUNPACK_MANIFEST_RECORDS,
+        "executions": MAX_RUNPACK_EXECUTION_RECORDS,
+        "entities": MAX_RUNPACK_ENTITY_RECORDS,
+        "events": MAX_RUNPACK_EVENT_RECORDS,
+        "causal_edges": MAX_RUNPACK_CAUSAL_EDGE_RECORDS,
+        "measurements": MAX_RUNPACK_MEASUREMENT_RECORDS,
+        "attachments": MAX_RUNPACK_ATTACHMENT_RECORDS,
+    }
+
+
+def _column_bytes(column: str) -> str:
+    return f"length(CAST({column} AS BLOB))"
+
+
+def _row_bytes(columns: tuple[str, ...]) -> str:
+    if not columns:
+        return "0"
+    return " + ".join(f"COALESCE({_column_bytes(column)}, 0)" for column in columns)
+
+
+def _preflight_normalized_content(connection: sqlite3.Connection, tables: set[str]) -> None:
+    total_text_bytes = 0
+    total_json_bytes = 0
+    for table, record_limit in _record_limits().items():
+        if table not in tables:
+            continue
+        record_overflow = connection.execute(
+            f"SELECT 1 FROM {table} LIMIT 1 OFFSET ?", (record_limit,)
+        ).fetchone()
+        if record_overflow is not None:
+            raise RunpackError(f"runpack table {table} exceeds the record limit of {record_limit}")
+        text_columns = _TEXT_COLUMNS[table]
+        json_columns = _JSON_COLUMNS[table]
+        text_maxima = tuple(f"COALESCE(max({_column_bytes(column)}), 0)" for column in text_columns)
+        json_maxima = tuple(f"COALESCE(max({_column_bytes(column)}), 0)" for column in json_columns)
+        content_maximum = (
+            f", COALESCE(max({_column_bytes('content')}), 0), "
+            f"COALESCE(sum({_column_bytes('content')}), 0)"
+            if table == "attachments"
+            else ", 0, 0"
+        )
+        row = connection.execute(
+            "SELECT count(*), " + ", ".join((*text_maxima, *json_maxima)) + ", "
+            f"COALESCE(sum({_row_bytes(text_columns)}), 0), "
+            f"COALESCE(sum({_row_bytes(json_columns)}), 0)"
+            f"{content_maximum} FROM (SELECT * FROM {table} LIMIT {record_limit})"
+        ).fetchone()
+        if row is None:
+            raise RunpackError(f"could not preflight runpack table {table}")
+        offset = 1
+        text_column_maxima = row[offset : offset + len(text_columns)]
+        for column, maximum in zip(text_columns, text_column_maxima, strict=True):
+            if int(maximum) > MAX_RUNPACK_TEXT_BYTES:
+                label = _TEXT_COLUMN_LABELS[(table, column)]
+                raise RunpackError(
+                    f"{label} exceeds the {MAX_RUNPACK_TEXT_BYTES}-byte runpack text field limit"
+                )
+        offset += len(text_columns)
+        json_column_maxima = row[offset : offset + len(json_columns)]
+        if any(int(maximum) > MAX_RUNPACK_JSON_BYTES for maximum in json_column_maxima):
+            raise RunpackError(
+                f"runpack JSON exceeds the {MAX_RUNPACK_JSON_BYTES}-byte field limit"
+            )
+        offset += len(json_columns)
+        text_bytes, json_bytes = map(int, row[offset : offset + 2])
+        offset += 2
+        total_text_bytes += text_bytes
+        total_json_bytes += json_bytes
+        if table == "attachments":
+            content_maximum_bytes, content_bytes = map(int, row[offset : offset + 2])
+            if content_maximum_bytes > MAX_RUNPACK_ATTACHMENT_BYTES:
+                raise RunpackError(
+                    "attachment content exceeds the "
+                    f"{MAX_RUNPACK_ATTACHMENT_BYTES}-byte runpack field limit"
+                )
+            if content_bytes > MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES:
+                raise RunpackError(
+                    "attachment content exceeds the "
+                    f"{MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES}-byte aggregate runpack limit"
+                )
+    if total_text_bytes > MAX_RUNPACK_NORMALIZED_TEXT_BYTES:
+        raise RunpackError(
+            f"runpack contains {total_text_bytes} normalized text bytes; aggregate limit is "
+            f"{MAX_RUNPACK_NORMALIZED_TEXT_BYTES}"
+        )
+    if total_json_bytes > MAX_RUNPACK_NORMALIZED_JSON_BYTES:
+        raise RunpackError(
+            f"runpack contains {total_json_bytes} normalized JSON bytes; aggregate limit is "
+            f"{MAX_RUNPACK_NORMALIZED_JSON_BYTES}"
+        )
+
+
+def _validate_connection(connection: sqlite3.Connection) -> str:
     application_id = connection.execute("PRAGMA application_id").fetchone()
     if application_id is None or application_id[0] != APPLICATION_ID:
         raise RunpackError("file is not a Contrail runpack")
@@ -537,6 +721,29 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
                 f"runpack table {table} does not enforce required primary key: "
                 f"{', '.join(expected_primary_key)}"
             )
+        primary_key_indexes = tuple(
+            str(row[1])
+            for row in connection.execute(f"PRAGMA index_list({table})").fetchall()
+            if row[3] == "pk"
+        )
+        if table == "measurements":
+            measurement_id = next(row for row in table_info if str(row[1]) == "id")
+            if str(measurement_id[2]).upper() != "INTEGER" or primary_key_indexes:
+                raise RunpackError("runpack table measurements must use id INTEGER PRIMARY KEY")
+        elif table in _BINARY_PRIMARY_KEY_TABLES:
+            indexed_primary_key: tuple[tuple[str, str], ...] = ()
+            if len(primary_key_indexes) == 1:
+                indexed_primary_key = tuple(
+                    (str(row[0]), str(row[1]).upper())
+                    for row in connection.execute(
+                        "SELECT name, coll FROM pragma_index_xinfo(?) "
+                        'WHERE "key" = 1 ORDER BY seqno',
+                        (primary_key_indexes[0],),
+                    ).fetchall()
+                )
+            expected_binary_key = tuple((column, "BINARY") for column in expected_primary_key)
+            if indexed_primary_key != expected_binary_key:
+                raise RunpackError(f"runpack table {table} primary key must use BINARY collation")
         foreign_keys = {
             (str(row[3]), str(row[2]), str(row[4]))
             for row in connection.execute(f"PRAGMA foreign_key_list({table})").fetchall()
@@ -548,6 +755,7 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
                 f"runpack table {table} does not enforce required relationship: "
                 f"{source} -> {target_table}.{target}"
             )
+    _preflight_normalized_content(connection, tables)
     row = connection.execute("SELECT value FROM manifest WHERE key = 'schema_version'").fetchone()
     if row is None:
         raise RunpackError("runpack has no schema version")
@@ -563,6 +771,16 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
     if relationship_error is not None:
         table, row_id = relationship_error[:2]
         raise RunpackError(f"runpack contains an invalid relationship in {table} row {row_id}")
+    return version
+
+
+def _require_writable_schema(schema_version: str) -> None:
+    if schema_version in _WRITABLE_SCHEMA_VERSIONS:
+        return
+    writable = ", ".join(_WRITABLE_SCHEMA_VERSIONS)
+    raise UnsupportedSchemaError(
+        f"cannot modify runpack schema {schema_version!r}; writable schemas: {writable}"
+    )
 
 
 class RunpackWriter:
@@ -581,6 +799,7 @@ class RunpackWriter:
         try:
             connection = sqlite3.connect(path)
             self._connection = connection
+            _set_runpack_connection_limits(self._connection)
             self._connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
             self._connection.execute("PRAGMA journal_mode = DELETE")
             self._connection.executescript(_SCHEMA)
@@ -605,12 +824,18 @@ class RunpackWriter:
         """Open a validated runpack for adapter enrichment."""
         if not path.is_file():
             raise RunpackError(f"runpack does not exist: {path}")
+        try:
+            _require_runpack_file_size(path.stat().st_size)
+        except OSError as exc:
+            raise RunpackError(f"could not inspect runpack size: {path}") from exc
         writer = cls.__new__(cls)
         writer.path = path
         try:
             writer._connection = sqlite3.connect(path)
+            _set_runpack_connection_limits(writer._connection)
             writer._connection.execute("PRAGMA foreign_keys = ON")
-            _validate_connection(writer._connection)
+            schema_version = _validate_connection(writer._connection)
+            _require_writable_schema(schema_version)
         except sqlite3.DatabaseError as exc:
             if hasattr(writer, "_connection"):
                 writer._connection.close()
@@ -795,10 +1020,26 @@ class RunpackWriter:
                 )
             values.append(value)
         with self._writing(), self._connection:
-            self._connection.executescript(_ATTACHMENTS_SCHEMA)
-            existing_bytes = self._connection.execute(
-                "SELECT COALESCE(sum(length(content)), 0) FROM attachments"
-            ).fetchone()[0]
+            # sqlite3 does not implicitly begin a transaction for DDL. Start one
+            # explicitly so table creation and the manifest upgrade roll back
+            # together if validation or insertion fails.
+            self._connection.execute("BEGIN")
+            self._connection.execute(_ATTACHMENTS_TABLE_SCHEMA)
+            self._connection.execute(_ATTACHMENTS_INDEX_SCHEMA)
+            self._connection.execute(
+                "UPDATE manifest SET value = ? "
+                "WHERE key = 'schema_version' AND value IN ('1', '1.0')",
+                (SCHEMA_VERSION,),
+            )
+            maximum_bytes, existing_bytes = self._connection.execute(
+                "SELECT COALESCE(max(length(CAST(content AS BLOB))), 0), "
+                "COALESCE(sum(length(CAST(content AS BLOB))), 0) FROM attachments"
+            ).fetchone()
+            if maximum_bytes > MAX_RUNPACK_ATTACHMENT_BYTES:
+                raise RunpackError(
+                    "attachment content exceeds the "
+                    f"{MAX_RUNPACK_ATTACHMENT_BYTES}-byte runpack field limit"
+                )
             if existing_bytes + added_bytes > MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES:
                 raise RunpackError(
                     "attachment content exceeds the "
@@ -814,7 +1055,7 @@ class RunpackWriter:
 
     def expand_execution_bounds(self, started_at_ns: int, finished_at_ns: int | None) -> None:
         normalized_start, normalized_finish = _execution_interval(started_at_ns, finished_at_ns)
-        with self._writing():
+        with self._writing(), self._connection:
             cursor = self._connection.execute(
                 """
             UPDATE executions
@@ -833,7 +1074,6 @@ class RunpackWriter:
             )
             if cursor.rowcount != 1:
                 raise RunpackError("runpack must contain exactly one execution to expand")
-            self._connection.commit()
 
     def set_execution_metadata(
         self,
@@ -863,21 +1103,26 @@ class RunpackWriter:
     ) -> None:
         normalized_execution_id = _text_value(execution_id, "execution id")
         row = self._connection.execute(
-            "SELECT started_at_ns FROM executions WHERE id = ?", (normalized_execution_id,)
+            "SELECT started_at_ns, finished_at_ns FROM executions WHERE id = ?",
+            (normalized_execution_id,),
         ).fetchone()
         if row is None:
             raise RunpackError(f"execution does not exist: {normalized_execution_id}")
+        if row[1] is not None:
+            raise RunpackError(f"execution is already finished: {normalized_execution_id}")
         _, normalized_finish = _execution_interval(row[0], finished_at_ns)
         normalized_exit_code = _integer_value(exit_code, "execution exit code")
         with self._writing(), self._connection:
-            self._connection.execute(
+            cursor = self._connection.execute(
                 """
                 UPDATE executions
                 SET finished_at_ns = ?, exit_code = ?, metadata_json = ?
-                WHERE id = ?
+                WHERE id = ? AND finished_at_ns IS NULL
                 """,
                 (normalized_finish, normalized_exit_code, _json(metadata), normalized_execution_id),
             )
+            if cursor.rowcount != 1:
+                raise RunpackError(f"execution is already finished: {normalized_execution_id}")
             self._connection.execute(
                 """
                 INSERT INTO events(
@@ -911,23 +1156,42 @@ class RunpackWriter:
         self.close()
 
 
+def resolve_runpack_path(path: Path) -> Path:
+    """Resolve a runpack path once so later analysis cannot retarget a symlink."""
+    try:
+        resolved_path = path.resolve()
+        is_file = resolved_path.is_file()
+        size_bytes = resolved_path.stat().st_size if is_file else 0
+    except (OSError, RuntimeError) as exc:
+        raise RunpackError(f"could not resolve runpack path: {path}") from exc
+    if not is_file:
+        raise RunpackError(f"runpack does not exist: {path}")
+    _require_runpack_file_size(size_bytes)
+    return resolved_path
+
+
 class RunpackReader:
     """Reads and validates one supported runpack."""
 
-    def __init__(self, path: Path) -> None:
-        try:
-            resolved_path = path.resolve()
-        except (OSError, RuntimeError) as exc:
-            raise RunpackError(f"could not resolve runpack path: {path}") from exc
-        if not resolved_path.is_file():
-            raise RunpackError(f"runpack does not exist: {path}")
+    def __init__(
+        self,
+        path: Path,
+        *,
+        prepare_connection: Callable[[sqlite3.Connection], None] | None = None,
+    ) -> None:
+        resolved_path = resolve_runpack_path(path)
+        self.path = resolved_path
         connection: sqlite3.Connection | None = None
         try:
             uri = f"{resolved_path.as_uri()}?mode=ro"
             connection = sqlite3.connect(uri, uri=True)
             self._connection = connection
             self._connection.row_factory = sqlite3.Row
-            _validate_connection(self._connection)
+            _set_runpack_connection_limits(self._connection)
+            if prepare_connection is not None:
+                prepare_connection(self._connection)
+            self._connection.execute("BEGIN")
+            self._schema_version = _validate_connection(self._connection)
         except sqlite3.DatabaseError as exc:
             if connection is not None:
                 connection.close()
@@ -947,10 +1211,22 @@ class RunpackReader:
         except sqlite3.DatabaseError as exc:
             raise RunpackError(f"could not read runpack: {exc}") from exc
 
+    def copy_snapshot_to(self, writer: RunpackWriter) -> None:
+        """Copy this validated snapshot into a writable runpack."""
+        _require_writable_schema(self._schema_version)
+        self.execution()
+        try:
+            self._connection.backup(writer._connection)
+            writer._connection.execute("PRAGMA foreign_keys = ON")
+        except sqlite3.Error as exc:
+            raise RunpackError(f"could not copy runpack snapshot: {exc}") from exc
+
     def execution(self) -> Execution:
-        rows = self._execute("SELECT * FROM executions").fetchall()
+        rows = self._execute("SELECT * FROM executions LIMIT 2").fetchall()
+        if not rows:
+            raise RunpackError("expected exactly one execution, found 0")
         if len(rows) != 1:
-            raise RunpackError(f"expected exactly one execution, found {len(rows)}")
+            raise RunpackError("expected exactly one execution, found more than one")
         row = rows[0]
         raw_command = row["command_json"]
         if not isinstance(raw_command, str):
@@ -1173,14 +1449,7 @@ class RunpackReader:
         for row in rows:
             key = _operation_identity(row)
             attributes = _object(row["attributes_json"])
-            status = attributes.get("otel.status.code")
-            error_type = attributes.get("error.type")
-            if not (
-                attributes.get("error") is True
-                or status in (2, "2", "STATUS_CODE_ERROR")
-                or isinstance(error_type, str)
-                and bool(error_type)
-            ):
+            if not is_operation_error(attributes):
                 continue
             counts[key] = counts.get(key, 0) + 1
         return counts
@@ -1314,9 +1583,33 @@ class RunpackReader:
         }
 
     def peer_service_edge_counts(self) -> dict[tuple[str, str, str, str, str], int]:
+        explicit_calls = {
+            (
+                _required_text(row["source_event_id"], "edge source event id"),
+                _required_text(row["target_kind"], "edge target entity kind"),
+                _required_text(row["target_name"], "edge target entity name"),
+            )
+            for row in self._execute(
+                """
+                SELECT
+                    edge.source_event_id,
+                    COALESCE(target_entity.kind, 'unowned') AS target_kind,
+                    COALESCE(target_entity.name, 'unowned') AS target_name
+                FROM causal_edges AS edge
+                JOIN events AS source_event ON source_event.id = edge.source_event_id
+                JOIN events AS target_event ON target_event.id = edge.target_event_id
+                LEFT JOIN entities AS target_entity ON target_entity.id = target_event.entity_id
+                WHERE edge.kind = 'calls'
+                  AND source_event.kind != 'log.record'
+                  AND target_event.kind != 'log.record'
+                  AND source_event.entity_id IS NOT target_event.entity_id
+                """
+            ).fetchall()
+        }
         rows = self._execute(
             """
             SELECT
+                event.id AS event_id,
                 COALESCE(entity.kind, 'unowned') AS source_kind,
                 COALESCE(entity.name, 'unowned') AS source_name,
                 event.attributes_json
@@ -1331,6 +1624,9 @@ class RunpackReader:
             source_name = _required_text(row["source_name"], "edge source entity name")
             peer = _object(row["attributes_json"]).get("peer.service")
             if not isinstance(peer, str) or not peer:
+                continue
+            event_id = _required_text(row["event_id"], "peer service event id")
+            if (event_id, "service", peer) in explicit_calls:
                 continue
             key = (source_kind, source_name, "service", peer, "calls")
             counts[key] = counts.get(key, 0) + 1
@@ -1380,14 +1676,16 @@ class RunpackReader:
 
     def counts(self) -> dict[str, int]:
         counts = {
-            table: self._execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            table: int(self._execute(f"SELECT count(*) FROM {table}").fetchone()[0])
             for table in ("entities", "events", "causal_edges", "measurements")
         }
-        attachment_count = self._execute(
-            "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'attachments'"
-        ).fetchone()[0]
+        attachment_count = int(
+            self._execute(
+                "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'attachments'"
+            ).fetchone()[0]
+        )
         counts["attachments"] = (
-            self._execute("SELECT count(*) FROM attachments").fetchone()[0]
+            int(self._execute("SELECT count(*) FROM attachments").fetchone()[0])
             if attachment_count
             else 0
         )
@@ -1463,3 +1761,183 @@ class RunpackReader:
         traceback: TracebackType | None,
     ) -> None:
         self.close()
+
+
+@contextmanager
+def validated_runpack_connection(
+    path: Path,
+    *,
+    prepare_connection: Callable[[sqlite3.Connection], None] | None = None,
+) -> Iterator[sqlite3.Connection]:
+    """Yield one validated connection so later reads use the same artifact."""
+    with RunpackReader(path, prepare_connection=prepare_connection) as reader:
+        reader.execution()
+        yield reader._connection
+
+
+def _read_only_descriptor_connection(descriptor: int) -> sqlite3.Connection:
+    last_error: sqlite3.OperationalError | None = None
+    for root in (Path("/dev/fd"), Path("/proc/self/fd")):
+        descriptor_path = root / str(descriptor)
+        if not descriptor_path.exists():
+            continue
+        try:
+            return sqlite3.connect(f"{descriptor_path.as_uri()}?mode=ro", uri=True)
+        except sqlite3.OperationalError as exc:
+            last_error = exc
+    raise RunpackError("could not open runpack through its file descriptor") from last_error
+
+
+@dataclass(frozen=True, slots=True)
+class _RunpackDescriptorState:
+    device: int
+    inode: int
+    size_bytes: int
+    modified_ns: int
+    changed_ns: int
+    link_count: int
+
+
+def _descriptor_state(descriptor: int) -> _RunpackDescriptorState:
+    try:
+        status = os.fstat(descriptor)
+    except OSError as exc:
+        raise RunpackError("could not inspect the open runpack snapshot") from exc
+    if not stat.S_ISREG(status.st_mode):
+        raise RunpackError("runpack snapshot must be a regular file")
+    _require_runpack_file_size(status.st_size)
+    return _RunpackDescriptorState(
+        status.st_dev,
+        status.st_ino,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        status.st_nlink,
+    )
+
+
+def _require_unchanged_descriptor(descriptor: int, expected: _RunpackDescriptorState) -> None:
+    current = _descriptor_state(descriptor)
+    same_content_generation = (
+        current.device == expected.device
+        and current.inode == expected.inode
+        and current.size_bytes == expected.size_bytes
+        and current.modified_ns == expected.modified_ns
+    )
+    metadata_unchanged = (
+        current.changed_ns == expected.changed_ns and current.link_count == expected.link_count
+    )
+    detached_by_path_replacement = current.link_count == 0
+    if not same_content_generation or not (metadata_unchanged or detached_by_path_replacement):
+        raise RunpackError("runpack changed while its read snapshot was open")
+
+
+def _hash_descriptor(descriptor: int, expected: _RunpackDescriptorState) -> RunpackArtifactIdentity:
+    digest = hashlib.sha256()
+    offset = 0
+    try:
+        while offset < expected.size_bytes:
+            chunk = os.pread(
+                descriptor,
+                min(1024 * 1024, expected.size_bytes - offset),
+                offset,
+            )
+            if not chunk:
+                break
+            digest.update(chunk)
+            offset += len(chunk)
+    except OSError as exc:
+        raise RunpackError("could not hash the open runpack snapshot") from exc
+    _require_unchanged_descriptor(descriptor, expected)
+    if offset != expected.size_bytes:
+        raise RunpackError("runpack changed while its read snapshot was open")
+    return RunpackArtifactIdentity(expected.size_bytes, digest.hexdigest())
+
+
+@contextmanager
+def _validated_descriptor_snapshot(
+    descriptor: int,
+    path: Path,
+    *,
+    require_writable: bool,
+) -> Iterator[RunpackReader]:
+    connection: sqlite3.Connection | None = None
+    reader: RunpackReader | None = None
+    try:
+        _descriptor_state(descriptor)
+        connection = _read_only_descriptor_connection(descriptor)
+        connection.row_factory = sqlite3.Row
+        _set_runpack_connection_limits(connection)
+        connection.execute("BEGIN")
+        schema_version = _validate_connection(connection)
+        if require_writable:
+            _require_writable_schema(schema_version)
+        reader = RunpackReader.__new__(RunpackReader)
+        reader.path = path
+        reader._connection = connection
+        reader._schema_version = schema_version
+        reader.execution()
+        yield reader
+    except sqlite3.DatabaseError as exc:
+        raise RunpackError("invalid runpack opened through its file descriptor") from exc
+    finally:
+        if reader is not None:
+            reader.close()
+        elif connection is not None:
+            connection.close()
+
+
+@contextmanager
+def validated_runpack_snapshot(descriptor: int) -> Iterator[RunpackReader]:
+    """Yield a validated, writable-schema snapshot bound to an open descriptor."""
+    with _validated_descriptor_snapshot(
+        descriptor,
+        Path(f"/dev/fd/{descriptor}"),
+        require_writable=True,
+    ) as reader:
+        yield reader
+
+
+@contextmanager
+def open_runpack_snapshot(
+    path: Path,
+) -> Iterator[tuple[RunpackReader, RunpackArtifactIdentity]]:
+    """Open one stable readable runpack generation and its streamed byte identity."""
+    resolved_path = resolve_runpack_path(path)
+    descriptor: int | None = None
+    stable_state: _RunpackDescriptorState | None = None
+    try:
+        descriptor = os.open(
+            resolved_path,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        opened_state = _descriptor_state(descriptor)
+        try:
+            path_status = resolved_path.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise RunpackError("runpack path changed while opening its read snapshot") from exc
+        if (path_status.st_dev, path_status.st_ino) != (
+            opened_state.device,
+            opened_state.inode,
+        ):
+            raise RunpackError("runpack path changed while opening its read snapshot")
+        try:
+            with _validated_descriptor_snapshot(
+                descriptor,
+                resolved_path,
+                require_writable=False,
+            ) as reader:
+                stable_state = _descriptor_state(descriptor)
+                identity = _hash_descriptor(descriptor, stable_state)
+                try:
+                    yield reader, identity
+                finally:
+                    _require_unchanged_descriptor(descriptor, stable_state)
+        finally:
+            if stable_state is not None:
+                _require_unchanged_descriptor(descriptor, stable_state)
+    except OSError as exc:
+        raise RunpackError(f"could not open runpack snapshot: {path}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)

@@ -1,0 +1,9 @@
+{
+  "columns": ["nothing", "enabled", "count", "ratio", "message", "blob"],
+  "document_type": "runtime.query",
+  "format_version": "1",
+  "rows": [
+    [null, true, 3, 1.25, "ok", {"encoding": "hex", "value": "ff"}]
+  ],
+  "truncated": false
+}

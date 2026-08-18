@@ -8,9 +8,13 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Never
+from typing import Never, cast
 
-from runtime_tools.enrichment import EnrichmentError, enrich_copy
+from runtime_tools.enrichment import (
+    EnrichmentError,
+    enrich_copy,
+    validate_enrichment_destination,
+)
 from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import Entity, JsonValue, Measurement
 from runtime_tools.storage import RunpackReader, RunpackWriter
@@ -39,7 +43,7 @@ class PrometheusImportResult:
 def _object(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise PrometheusImportError(f"{label} must be an object")
-    return value
+    return cast(dict[str, object], value)
 
 
 def _timestamp_ns(value: object) -> int:
@@ -138,6 +142,7 @@ def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
     try:
         document = json.loads(
             text,
+            parse_float=Decimal,
             parse_constant=_reject_json_constant,
             object_pairs_hook=reject_duplicate_object,
         )
@@ -203,36 +208,40 @@ def import_prometheus_response(
     source: Path,
     output: Path,
 ) -> PrometheusImportResult:
+    validate_enrichment_destination(output)
     raw_samples = _load(source)
-    with RunpackReader(runpack) as reader:
-        execution = reader.execution()
-        entities = reader.entities()
-    finished_at_ns = execution.finished_at_ns
-    if finished_at_ns is None:
-        raise PrometheusImportError("Prometheus import requires a finished execution window")
 
     def append(writer: RunpackWriter) -> PrometheusImportResult:
+        with RunpackReader(writer.path) as reader:
+            execution = reader.execution()
+            entities = reader.entities()
+        finished_at_ns = execution.finished_at_ns
+        if finished_at_ns is None:
+            raise PrometheusImportError("Prometheus import requires a finished execution window")
         sample_count = 0
         dropped = 0
         matched_entities: set[str] = set()
+        seen_sample_identities: set[tuple[str, tuple[tuple[str, JsonValue], ...], int]] = set()
 
         def measurements() -> Iterator[Measurement]:
             nonlocal sample_count, dropped
             for labels, raw_timestamp, raw_value in raw_samples:
-                name = labels.get("__name__")
-                if not name:
-                    raise PrometheusImportError("Prometheus series requires a __name__ label")
+                name = labels.get("__name__") or "prometheus.result"
                 timestamp_ns = _timestamp_ns(raw_timestamp)
                 sample_value = _sample_value(raw_value)
+                attributes: dict[str, JsonValue] = {
+                    key: value for key, value in labels.items() if key != "__name__"
+                }
+                sample_identity = (name, tuple(sorted(attributes.items())), timestamp_ns)
+                if sample_identity in seen_sample_identities:
+                    raise PrometheusImportError("duplicate Prometheus sample identity")
+                seen_sample_identities.add(sample_identity)
                 if timestamp_ns < execution.started_at_ns or timestamp_ns > finished_at_ns:
                     dropped += 1
                     continue
                 entity_id = _entity_for(labels, entities)
                 if entity_id is not None:
                     matched_entities.add(entity_id)
-                attributes: dict[str, JsonValue] = {
-                    key: value for key, value in labels.items() if key != "__name__"
-                }
                 sample_count += 1
                 yield Measurement(
                     name,

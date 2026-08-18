@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contrail.dev/schemas/contrail-output-v1.schema.json",
+  "title": "Contrail machine-readable output format version 1",
+  "oneOf": [
+    {"$ref": "#/$defs/runtime.inspect"},
+    {"$ref": "#/$defs/runtime.query"},
+    {"$ref": "#/$defs/rundiff.compare"},
+    {"$ref": "#/$defs/batchscope.inspect"},
+    {"$ref": "#/$defs/proofline.verification"},
+    {"$ref": "#/$defs/proofline.experiment"},
+    {"$ref": "#/$defs/proofline.search"},
+    {"$ref": "#/$defs/proofline.validation"}
+  ],
+  "$defs": {
+    "jsonValue": {
+      "anyOf": [
+        {"type": ["null", "boolean", "number", "string"]},
+        {"type": "array", "items": {"$ref": "#/$defs/jsonValue"}},
+        {"type": "object", "additionalProperties": {"$ref": "#/$defs/jsonValue"}}
+      ]
+    },
+    "valueChange": {
+      "type": "object", "required": ["baseline", "candidate", "percent"],
+      "properties": {
+        "baseline": {"type": ["number", "null"]},
+        "candidate": {"type": ["number", "null"]},
+        "percent": {"type": ["number", "null"]}
+      }, "additionalProperties": true
+    },
+    "executionReference": {
+      "type": "object", "required": ["id", "name", "exit_code"],
+      "properties": {
+        "id": {"type": "string"}, "name": {"type": "string"},
+        "exit_code": {"type": ["integer", "null"]}
+      }, "additionalProperties": true
+    },
+    "entityCountChange": {
+      "type": "object",
+      "required": ["entity_kind", "entity_name", "baseline", "candidate", "change_kind"],
+      "properties": {
+        "entity_kind": {"type": "string"}, "entity_name": {"type": "string"},
+        "baseline": {"type": "integer"}, "candidate": {"type": "integer"},
+        "change_kind": {"enum": ["added", "removed", "changed"]}
+      }, "additionalProperties": true
+    },
+    "operationCountChange": {
+      "type": "object",
+      "required": ["entity_kind", "entity_name", "operation_kind", "operation_name", "baseline", "candidate", "percent"],
+      "properties": {
+        "entity_kind": {"type": "string"}, "entity_name": {"type": "string"},
+        "operation_kind": {"type": "string"}, "operation_name": {"type": "string"},
+        "baseline": {"type": "integer"}, "candidate": {"type": "integer"},
+        "percent": {"type": ["number", "null"]}
+      }, "additionalProperties": true
+    },
+    "operationDurationChange": {
+      "type": "object",
+      "required": ["entity_kind", "entity_name", "operation_kind", "operation_name", "baseline_seconds", "candidate_seconds", "percent"],
+      "properties": {
+        "entity_kind": {"type": "string"}, "entity_name": {"type": "string"},
+        "operation_kind": {"type": "string"}, "operation_name": {"type": "string"},
+        "baseline_seconds": {"type": "number"}, "candidate_seconds": {"type": "number"},
+        "percent": {"type": ["number", "null"]}
+      }, "additionalProperties": true
+    },
+    "edgeCountChange": {
+      "type": "object",
+      "required": ["source_kind", "source_name", "target_kind", "target_name", "relation", "baseline", "candidate", "change_kind"],
+      "properties": {
+        "source_kind": {"type": "string"}, "source_name": {"type": "string"},
+        "target_kind": {"type": "string"}, "target_name": {"type": "string"},
+        "relation": {"type": "string"}, "baseline": {"type": "integer"},
+        "candidate": {"type": "integer"},
+        "change_kind": {"enum": ["new", "removed", "changed"]}
+      }, "additionalProperties": true
+    },
+    "environmentChange": {
+      "type": "object",
+      "required": ["variable", "baseline_present", "candidate_present", "change_kind"],
+      "properties": {
+        "variable": {"type": "string"}, "baseline_present": {"type": "boolean"},
+        "candidate_present": {"type": "boolean"},
+        "change_kind": {"enum": ["added", "removed", "changed"]}
+      }, "additionalProperties": true
+    },
+    "lifecyclePhase": {
+      "type": "object", "required": ["name", "duration_seconds", "source"],
+      "properties": {
+        "name": {"type": "string"}, "duration_seconds": {"type": "number"},
+        "source": {"enum": ["explicit", "derived"]}
+      }, "additionalProperties": true
+    },
+    "criticalPath": {
+      "type": "object",
+      "required": ["duration_seconds", "active_seconds", "waiting_seconds", "parallel_slack_seconds", "event_ids", "event_names", "certainty", "cycle_detected"],
+      "properties": {
+        "duration_seconds": {"type": "number"}, "active_seconds": {"type": "number"},
+        "waiting_seconds": {"type": "number"}, "parallel_slack_seconds": {"type": "number"},
+        "event_ids": {"type": "array", "items": {"type": "string"}},
+        "event_names": {"type": "array", "items": {"type": "string"}},
+        "certainty": {"enum": ["observed", "inferred"]}, "cycle_detected": {"type": "boolean"}
+      }, "additionalProperties": true
+    },
+    "throughput": {
+      "type": "object",
+      "required": ["completed", "total", "rate_per_second", "remaining", "estimated_drain_seconds", "compute_finished_at_ns", "remaining_at_compute_completion", "post_compute_seconds", "post_compute_rate_per_second"],
+      "properties": {
+        "completed": {"type": "number"}, "total": {"type": "number"},
+        "rate_per_second": {"type": ["number", "null"]}, "remaining": {"type": "number"},
+        "estimated_drain_seconds": {"type": ["number", "null"]},
+        "compute_finished_at_ns": {"type": ["integer", "null"]},
+        "remaining_at_compute_completion": {"type": ["number", "null"]},
+        "post_compute_seconds": {"type": ["number", "null"]},
+        "post_compute_rate_per_second": {"type": ["number", "null"]}
+      }, "additionalProperties": true
+    },
+    "bottleneck": {
+      "type": "object", "required": ["classification", "evidence", "confidence"],
+      "properties": {
+        "classification": {"type": "string"}, "evidence": {"type": "string"},
+        "confidence": {"type": "number"}
+      }, "additionalProperties": true
+    },
+    "diffEvidenceReference": {
+      "type": "object", "required": ["fact", "diff_path", "selector"],
+      "properties": {
+        "fact": {"type": "object", "additionalProperties": {"$ref": "#/$defs/jsonValue"}},
+        "diff_path": {
+          "enum": [
+            "/candidate/exit_code", "/exit_code_equivalent", "/output_equivalent",
+            "/wall_time", "/cpu_time", "/peak_memory", "/edge_count_changes",
+            "/operation_count_changes", "/operation_error_count_changes"
+          ]
+        },
+        "selector": {"type": "object", "additionalProperties": {"type": "string"}}
+      }, "additionalProperties": true
+    },
+    "runpackArtifactIdentity": {
+      "type": "object", "required": ["size_bytes", "sha256"],
+      "properties": {
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }, "additionalProperties": false
+    },
+    "runpackArtifactBindings": {
+      "type": "object", "required": ["baseline", "candidate"],
+      "properties": {
+        "baseline": {"$ref": "#/$defs/runpackArtifactIdentity"},
+        "candidate": {"$ref": "#/$defs/runpackArtifactIdentity"}
+      }, "additionalProperties": false
+    },
+    "prooflineAssertion": {
+      "oneOf": [
+        {
+          "type": "object", "required": ["type", "name"],
+          "properties": {"type": {"const": "candidate_exit_success"}, "name": {"type": "string", "minLength": 1}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["type", "name"],
+          "properties": {"type": {"const": "exit_code_equivalent"}, "name": {"type": "string", "minLength": 1}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["type", "name"],
+          "properties": {"type": {"const": "output_equivalent"}, "name": {"type": "string", "minLength": 1}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["type", "name"],
+          "properties": {"type": {"const": "result_equivalence"}, "name": {"type": "string", "minLength": 1}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["type", "name", "percent"],
+          "properties": {"type": {"const": "max_runtime_regression"}, "name": {"type": "string", "minLength": 1}, "percent": {"type": "number", "minimum": 0}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["type", "name", "percent"],
+          "properties": {"type": {"const": "max_cpu_time_regression"}, "name": {"type": "string", "minLength": 1}, "percent": {"type": "number", "minimum": 0}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["type", "name", "percent"],
+          "properties": {"type": {"const": "max_peak_memory_regression"}, "name": {"type": "string", "minLength": 1}, "percent": {"type": "number", "minimum": 0}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["type", "name", "from", "to"],
+          "properties": {"type": {"const": "forbid_new_dependency"}, "name": {"type": "string", "minLength": 1}, "from": {"type": "string", "minLength": 1}, "to": {"type": "string", "minLength": 1}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["type", "name", "operation", "relative_to", "factor"],
+          "properties": {"type": {"const": "max_operation_count"}, "name": {"type": "string", "minLength": 1}, "operation": {"type": "string", "minLength": 1}, "relative_to": {"const": "baseline"}, "factor": {"type": "number", "minimum": 0}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["type", "name", "operation", "relative_to", "factor"],
+          "properties": {"type": {"const": "max_operation_error_count"}, "name": {"type": "string", "minLength": 1}, "operation": {"type": "string", "minLength": 1}, "relative_to": {"const": "baseline"}, "factor": {"type": "number", "minimum": 0}},
+          "additionalProperties": false
+        }
+      ]
+    },
+    "claimResult": {
+      "type": "object", "required": ["contract", "name", "type", "status", "expected", "observed"],
+      "properties": {
+        "contract": {"type": "string"}, "name": {"type": "string"},
+        "type": {"type": "string"}, "status": {"enum": ["pass", "fail", "unverifiable"]},
+        "expected": {"type": "string"}, "observed": {"type": "string"},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/diffEvidenceReference"}},
+        "assertion": {"$ref": "#/$defs/prooflineAssertion"}
+      }, "additionalProperties": true
+    },
+    "counterexample": {
+      "type": "object", "required": ["parameters", "experiment", "shrink_budget_exhausted"],
+      "properties": {
+        "parameters": {"type": "object", "additionalProperties": {"type": "integer"}},
+        "experiment": {"$ref": "#/$defs/proofline.experiment"},
+        "shrink_budget_exhausted": {"type": "boolean"}
+      }, "additionalProperties": true
+    },
+    "runtime.inspect": {
+      "type": "object",
+      "required": ["document_type", "format_version", "schema_version", "producer_version", "id", "name", "command", "working_directory", "revision", "started_at_ns", "finished_at_ns", "exit_code", "wall_time_seconds", "cpu_user_seconds", "cpu_system_seconds", "peak_memory_bytes", "stdout_bytes", "stdout_sha256", "stdout_complete", "stdout_relay_error", "stderr_bytes", "stderr_sha256", "stderr_complete", "stderr_relay_error", "annotation_error", "missing_causal_references", "dropped_attribute_count", "record_counts"],
+      "properties": {
+        "document_type": {"const": "runtime.inspect"}, "format_version": {"const": "1"},
+        "schema_version": {"type": "string"}, "producer_version": {"type": "string"},
+        "id": {"type": "string"}, "name": {"type": "string"},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "working_directory": {"type": "string"}, "revision": {"type": ["string", "null"]},
+        "started_at_ns": {"type": "integer"}, "finished_at_ns": {"type": ["integer", "null"]},
+        "exit_code": {"type": ["integer", "null"]}, "wall_time_seconds": {"type": ["number", "null"]},
+        "cpu_user_seconds": {"type": ["number", "null"]}, "cpu_system_seconds": {"type": ["number", "null"]},
+        "peak_memory_bytes": {"type": ["integer", "null"]}, "stdout_bytes": {"type": ["integer", "null"]},
+        "stdout_sha256": {"type": ["string", "null"]}, "stdout_complete": {"type": ["boolean", "null"]},
+        "stdout_relay_error": {"type": ["string", "null"]}, "stderr_bytes": {"type": ["integer", "null"]},
+        "stderr_sha256": {"type": ["string", "null"]}, "stderr_complete": {"type": ["boolean", "null"]},
+        "stderr_relay_error": {"type": ["string", "null"]}, "annotation_error": {"type": ["string", "null"]},
+        "missing_causal_references": {"type": ["integer", "null"]},
+        "dropped_attribute_count": {"type": ["integer", "null"]},
+        "record_counts": {"type": "object", "additionalProperties": {"type": "integer"}}
+      }, "additionalProperties": true
+    },
+    "runtime.query": {
+      "type": "object", "required": ["document_type", "format_version", "columns", "rows", "truncated"],
+      "properties": {
+        "document_type": {"const": "runtime.query"}, "format_version": {"const": "1"},
+        "columns": {"type": "array", "items": {"type": "string"}},
+        "rows": {"type": "array", "items": {"type": "array", "items": {"$ref": "#/$defs/jsonValue"}}},
+        "truncated": {"type": "boolean"}
+      }, "additionalProperties": true
+    },
+    "rundiff.compare": {
+      "type": "object",
+      "required": ["document_type", "format_version", "baseline", "candidate", "match_level", "baseline_annotation_error", "candidate_annotation_error", "baseline_missing_causal_references", "candidate_missing_causal_references", "baseline_dropped_attribute_count", "candidate_dropped_attribute_count", "baseline_stdout_relay_error", "baseline_stderr_relay_error", "candidate_stdout_relay_error", "candidate_stderr_relay_error", "baseline_incomplete_streams", "candidate_incomplete_streams", "outcome", "exit_code_equivalent", "output_equivalent", "stderr_equivalent", "operation_errors_equivalent", "wall_time", "cpu_time", "critical_path", "baseline_critical_path_certainty", "candidate_critical_path_certainty", "peak_memory", "entity_count_changes", "operation_count_changes", "operation_error_count_changes", "operation_concurrency_changes", "operation_duration_changes", "edge_count_changes", "environment_changes"],
+      "properties": {
+        "document_type": {"const": "rundiff.compare"}, "format_version": {"const": "1"},
+        "baseline": {"$ref": "#/$defs/executionReference"}, "candidate": {"$ref": "#/$defs/executionReference"},
+        "match_level": {"enum": ["exact", "structural", "aggregate"]},
+        "baseline_annotation_error": {"type": ["string", "null"]}, "candidate_annotation_error": {"type": ["string", "null"]},
+        "baseline_missing_causal_references": {"type": ["integer", "null"]}, "candidate_missing_causal_references": {"type": ["integer", "null"]},
+        "baseline_dropped_attribute_count": {"type": ["integer", "null"]}, "candidate_dropped_attribute_count": {"type": ["integer", "null"]},
+        "baseline_stdout_relay_error": {"type": ["string", "null"]}, "baseline_stderr_relay_error": {"type": ["string", "null"]},
+        "candidate_stdout_relay_error": {"type": ["string", "null"]}, "candidate_stderr_relay_error": {"type": ["string", "null"]},
+        "baseline_incomplete_streams": {"type": "array", "items": {"type": "string"}},
+        "candidate_incomplete_streams": {"type": "array", "items": {"type": "string"}},
+        "outcome": {"enum": ["equivalent", "different", "unknown"]},
+        "exit_code_equivalent": {"type": ["boolean", "null"]}, "output_equivalent": {"type": ["boolean", "null"]},
+        "stderr_equivalent": {"type": ["boolean", "null"]}, "operation_errors_equivalent": {"type": ["boolean", "null"]},
+        "wall_time": {"$ref": "#/$defs/valueChange"}, "cpu_time": {"$ref": "#/$defs/valueChange"},
+        "critical_path": {"$ref": "#/$defs/valueChange"},
+        "baseline_critical_path_certainty": {"type": ["string", "null"]},
+        "candidate_critical_path_certainty": {"type": ["string", "null"]},
+        "peak_memory": {"$ref": "#/$defs/valueChange"},
+        "entity_count_changes": {"type": "array", "items": {"$ref": "#/$defs/entityCountChange"}},
+        "operation_count_changes": {"type": "array", "items": {"$ref": "#/$defs/operationCountChange"}},
+        "operation_error_count_changes": {"type": "array", "items": {"$ref": "#/$defs/operationCountChange"}},
+        "operation_concurrency_changes": {"type": "array", "items": {"$ref": "#/$defs/operationCountChange"}},
+        "operation_duration_changes": {"type": "array", "items": {"$ref": "#/$defs/operationDurationChange"}},
+        "edge_count_changes": {"type": "array", "items": {"$ref": "#/$defs/edgeCountChange"}},
+        "environment_changes": {"type": "array", "items": {"$ref": "#/$defs/environmentChange"}}
+      }, "additionalProperties": true
+    },
+    "batchscope.inspect": {
+      "type": "object", "required": ["document_type", "format_version", "execution_id", "name", "total_seconds", "lifecycle", "critical_path", "throughput", "bottlenecks"],
+      "properties": {
+        "document_type": {"const": "batchscope.inspect"}, "format_version": {"const": "1"},
+        "execution_id": {"type": "string"}, "name": {"type": "string"},
+        "total_seconds": {"type": ["number", "null"]},
+        "lifecycle": {"type": "array", "items": {"$ref": "#/$defs/lifecyclePhase"}},
+        "critical_path": {"anyOf": [{"$ref": "#/$defs/criticalPath"}, {"type": "null"}]},
+        "throughput": {"anyOf": [{"$ref": "#/$defs/throughput"}, {"type": "null"}]},
+        "bottlenecks": {"type": "array", "items": {"$ref": "#/$defs/bottleneck"}}
+      }, "additionalProperties": true
+    },
+    "proofline.verification": {
+      "type": "object", "required": ["document_type", "format_version", "baseline_id", "candidate_id", "passed", "claim_count", "results"],
+      "properties": {
+        "document_type": {"const": "proofline.verification"}, "format_version": {"const": "1"},
+        "baseline_id": {"type": "string"}, "candidate_id": {"type": "string"},
+        "passed": {"type": "boolean"}, "claim_count": {"type": "integer", "minimum": 0},
+        "results": {"type": "array", "items": {"$ref": "#/$defs/claimResult"}},
+        "artifact_bindings": {"$ref": "#/$defs/runpackArtifactBindings"},
+        "diff": {"$ref": "#/$defs/rundiff.compare"}
+      }, "additionalProperties": true
+    },
+    "proofline.experiment": {
+      "type": "object", "required": ["document_type", "format_version", "baseline_runpack", "candidate_runpack", "baseline_exit_code", "candidate_exit_code", "verification"],
+      "properties": {
+        "document_type": {"const": "proofline.experiment"}, "format_version": {"const": "1"},
+        "baseline_runpack": {"type": "string"}, "candidate_runpack": {"type": "string"},
+        "baseline_exit_code": {"type": "integer"}, "candidate_exit_code": {"type": "integer"},
+        "verification": {"$ref": "#/$defs/proofline.verification"},
+        "artifact_bindings": {"$ref": "#/$defs/runpackArtifactBindings"},
+        "diff": {"$ref": "#/$defs/rundiff.compare"}
+      }, "additionalProperties": true
+    },
+    "proofline.search": {
+      "type": "object", "required": ["document_type", "format_version", "counterexample", "max_examples"],
+      "properties": {
+        "document_type": {"const": "proofline.search"}, "format_version": {"const": "1"},
+        "counterexample": {"anyOf": [{"$ref": "#/$defs/counterexample"}, {"type": "null"}]},
+        "max_examples": {"type": "integer", "minimum": 1}
+      }, "additionalProperties": true
+    },
+    "proofline.validation": {
+      "type": "object", "required": ["document_type", "format_version", "contract_count", "assertion_count", "assertion_types", "parameter_count"],
+      "properties": {
+        "document_type": {"const": "proofline.validation"}, "format_version": {"const": "1"},
+        "contract_count": {"type": "integer", "minimum": 0}, "assertion_count": {"type": "integer", "minimum": 0},
+        "assertion_types": {"type": "array", "items": {"type": "string"}},
+        "parameter_count": {"type": ["integer", "null"], "minimum": 0}
+      }, "additionalProperties": true
+    }
+  }
+}

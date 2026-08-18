@@ -17,6 +17,7 @@ from runtime_tools.batchscope.analysis import (
     LifecyclePhase,
 )
 from runtime_tools.batchscope.report import render_analysis
+from runtime_tools.kubernetes import import_kubernetes_snapshot
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue
 from runtime_tools.storage import RunpackWriter
 
@@ -243,6 +244,106 @@ def test_kubernetes_lifecycle_does_not_borrow_unrelated_container_intervals(
     ]
 
 
+def test_kubernetes_lifecycle_does_not_close_phases_from_partial_container_timing(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "partial-containers.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("jobs", "jobs", 0, 100, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("job", "workload.job", "job", 0, 100),
+                Event(
+                    "pod",
+                    "workload.pod",
+                    "pod",
+                    "worker",
+                    10,
+                    None,
+                    "test",
+                    None,
+                    None,
+                    {},
+                ),
+                _event("finished", "workload.container", "finished", 20, 60),
+                Event(
+                    "open",
+                    "workload.container",
+                    "open",
+                    "worker",
+                    None,
+                    None,
+                    "test",
+                    None,
+                    None,
+                    {},
+                ),
+            )
+        )
+        writer.add_causal_edges(
+            (
+                CausalEdge("job", "pod", "owns", 1.0, {}),
+                CausalEdge("pod", "finished", "contains", 1.0, {}),
+                CausalEdge("pod", "open", "contains", 1.0, {}),
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert [(phase.name, phase.duration_seconds) for phase in analysis.lifecycle] == [
+        ("provisioning", 10 / 1_000_000_000)
+    ]
+
+
+def test_kubernetes_lifecycle_does_not_invent_executing_for_untimed_cohort(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "untimed-containers.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("jobs", "jobs", 0, 100, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("job", "workload.job", "job", 0, 100),
+                Event(
+                    "pod",
+                    "workload.pod",
+                    "pod",
+                    "worker",
+                    None,
+                    None,
+                    "test",
+                    None,
+                    None,
+                    {},
+                ),
+                Event(
+                    "container",
+                    "workload.container",
+                    "container",
+                    "worker",
+                    None,
+                    None,
+                    "test",
+                    None,
+                    None,
+                    {},
+                ),
+            )
+        )
+        writer.add_causal_edges(
+            (
+                CausalEdge("job", "pod", "owns", 1.0, {}),
+                CausalEdge("pod", "container", "contains", 1.0, {}),
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.lifecycle == ()
+
+
 def test_kubernetes_lifecycle_requires_job_to_pod_ownership(tmp_path: Path) -> None:
     runpack = tmp_path / "unowned-pod.runpack"
     with RunpackWriter(runpack) as writer:
@@ -289,6 +390,26 @@ def test_batchscope_cli_emits_structured_json(tmp_path: Path) -> None:
     assert payload["critical_path"]["certainty"] == "observed"
     assert payload["critical_path"]["event_ids"][:2] == ["process", "run"]
     assert payload["bottlenecks"][0]["classification"] == "serialized_stage"
+
+
+def test_batchscope_cli_normalizes_overlong_runpack_paths() -> None:
+    inspected = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.batchscope.cli",
+            "inspect",
+            "a" * 5000,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert inspected.returncode == 2
+    assert inspected.stdout == ""
+    assert inspected.stderr.startswith("batchscope: could not resolve runpack path: ")
+    assert "Traceback" not in inspected.stderr
 
 
 def test_batchscope_labels_a_single_process_path_as_observed(tmp_path: Path) -> None:
@@ -514,6 +635,123 @@ def test_batchscope_classifies_failed_scheduling_as_capacity_starvation(
     assert finding.confidence == 0.85
 
 
+def _analyze_kubernetes_scheduling_failure(tmp_path: Path, involved_pod_uid: str) -> BatchAnalysis:
+    source = tmp_path / "source.runpack"
+    snapshot = tmp_path / "snapshot.json"
+    output = tmp_path / "enriched.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 10_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "pod", "target", None, {"k8s.pod.uid": "target-pod"}))
+        writer.add_event(_event("root", "operation", "work", 2_000_000_000, 3_000_000_000))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Job",
+                        "metadata": {
+                            "uid": "target-job",
+                            "name": "target-job",
+                            "creationTimestamp": "1970-01-01T00:00:01Z",
+                        },
+                        "status": {},
+                    },
+                    {
+                        "kind": "Pod",
+                        "metadata": {
+                            "uid": "target-pod",
+                            "name": "target-pod",
+                            "creationTimestamp": "1970-01-01T00:00:01Z",
+                            "ownerReferences": [{"uid": "target-job"}],
+                        },
+                        "spec": {"containers": []},
+                        "status": {"phase": "Running"},
+                    },
+                    {
+                        "kind": "Pod",
+                        "metadata": {
+                            "uid": "unrelated-pod",
+                            "name": "unrelated-pod",
+                            "creationTimestamp": "1970-01-01T00:00:01Z",
+                        },
+                        "spec": {"containers": []},
+                        "status": {"phase": "Pending"},
+                    },
+                    {
+                        "kind": "Event",
+                        "metadata": {
+                            "uid": "failed-event",
+                            "name": "failed-event",
+                            "creationTimestamp": "1970-01-01T00:00:02Z",
+                        },
+                        "involvedObject": {"uid": involved_pod_uid},
+                        "reason": "FailedScheduling",
+                        "message": "pod has no capacity",
+                        "type": "Warning",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_kubernetes_snapshot(source, snapshot, output)
+
+    return analyze_runpack(output)
+
+
+def test_batchscope_ignores_failed_scheduling_from_an_unrelated_pod(tmp_path: Path) -> None:
+    analysis = _analyze_kubernetes_scheduling_failure(tmp_path, "unrelated-pod")
+
+    assert not any(item.classification == "capacity_starvation" for item in analysis.bottlenecks)
+
+
+def test_batchscope_keeps_failed_scheduling_from_the_correlated_pod(tmp_path: Path) -> None:
+    analysis = _analyze_kubernetes_scheduling_failure(tmp_path, "target-pod")
+
+    finding = next(
+        item for item in analysis.bottlenecks if item.classification == "capacity_starvation"
+    )
+    assert finding.evidence == "1 Kubernetes FailedScheduling event indicates placement failure"
+
+
+def test_batchscope_does_not_attribute_failed_scheduling_when_cohort_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "ambiguous-kubernetes-cohort.runpack"
+    events = (
+        _event("job-a", "workload.job", "job-a", 0, 1),
+        _event("pod-a", "workload.pod", "pod-a", 0, 1),
+        _event("local-a", "operation", "local-a", 0, 1),
+        _event("job-b", "workload.job", "job-b", 0, 1),
+        _event("pod-b", "workload.pod", "pod-b", 0, 1),
+        _event("local-b", "operation", "local-b", 0, 1),
+        _event("unrelated-job", "workload.job", "unrelated-job", 0, 1),
+        _event("unrelated-pod", "workload.pod", "unrelated-pod", 0, 1),
+        _event("unrelated-failure", "kubernetes.event", "FailedScheduling", 0, 1),
+    )
+    edges = (
+        CausalEdge("job-a", "pod-a", "owns", 1.0, {}),
+        CausalEdge("pod-a", "local-a", "correlates", 1.0, {}),
+        CausalEdge("job-b", "pod-b", "owns", 1.0, {}),
+        CausalEdge("pod-b", "local-b", "correlates", 1.0, {}),
+        CausalEdge("unrelated-job", "unrelated-pod", "owns", 1.0, {}),
+        CausalEdge("unrelated-pod", "unrelated-failure", "emits", 1.0, {}),
+    )
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 1_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event_graph(events, edges)
+
+    analysis = analyze_runpack(runpack)
+
+    assert not any(item.classification == "capacity_starvation" for item in analysis.bottlenecks)
+
+
 def test_batchscope_classifies_a_dominant_operation_straggler(tmp_path: Path) -> None:
     runpack = tmp_path / "straggler.runpack"
     with RunpackWriter(runpack) as writer:
@@ -564,6 +802,99 @@ def test_serialized_stage_uses_enclosing_logical_run_instead_of_process_startup(
     analysis = analyze_runpack(runpack)
 
     assert {item.classification for item in analysis.bottlenecks} == {"serialized_stage"}
+
+
+def test_serialized_stage_prefers_causal_run_over_shorter_unrelated_enclosure(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "causal-long-run.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("causal", "causal", 0, 1_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("owned-run", "run", "owned-run", 0, 1_000_000_000),
+                _event("unrelated-run", "run", "unrelated-run", 400_000_000, 600_000_000),
+                _event(
+                    "persist",
+                    "stage",
+                    "persist",
+                    450_000_000,
+                    550_000_000,
+                    {"concurrency": 1},
+                ),
+            )
+        )
+        writer.add_causal_edge(CausalEdge("owned-run", "persist", "parent", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert not any(item.classification == "serialized_stage" for item in analysis.bottlenecks)
+
+
+def test_serialized_stage_uses_short_causal_run_over_longer_unrelated_enclosure(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "causal-short-run.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("causal", "causal", 0, 1_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("unrelated-run", "run", "unrelated-run", 0, 1_000_000_000),
+                _event("owned-run", "run", "owned-run", 400_000_000, 600_000_000),
+                _event(
+                    "persist",
+                    "stage",
+                    "persist",
+                    450_000_000,
+                    550_000_000,
+                    {"concurrency": 1},
+                ),
+            )
+        )
+        writer.add_causal_edge(CausalEdge("owned-run", "persist", "parent", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert any(item.classification == "serialized_stage" for item in analysis.bottlenecks)
+
+
+def test_serialized_stage_does_not_guess_between_multiple_causal_runs(tmp_path: Path) -> None:
+    runpack = tmp_path / "ambiguous-causal-runs.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("causal", "causal", 0, 1_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("long-run", "run", "long-run", 0, 1_000_000_000),
+                _event("short-run", "run", "short-run", 400_000_000, 600_000_000),
+                _event(
+                    "persist",
+                    "stage",
+                    "persist",
+                    450_000_000,
+                    550_000_000,
+                    {"concurrency": 1},
+                ),
+            )
+        )
+        writer.add_causal_edges(
+            (
+                CausalEdge("long-run", "persist", "parent", 1.0, {}),
+                CausalEdge("short-run", "persist", "parent", 1.0, {}),
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert not any(item.classification == "serialized_stage" for item in analysis.bottlenecks)
 
 
 @pytest.mark.parametrize("concurrency", (True, 10**1000))
@@ -918,6 +1249,137 @@ def test_throughput_collapses_identical_samples_at_the_same_timestamp(tmp_path: 
     assert throughput.rate_per_second == 200
 
 
+def test_throughput_uses_source_sequence_when_uncertain_timestamps_are_reversed(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "sequenced-progress.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 200, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                Event(
+                    "first",
+                    "progress",
+                    "progress",
+                    "worker",
+                    100,
+                    100,
+                    "test",
+                    20,
+                    1,
+                    {"completed": 20, "total": 100},
+                ),
+                Event(
+                    "second",
+                    "progress",
+                    "progress",
+                    "worker",
+                    90,
+                    90,
+                    "test",
+                    20,
+                    2,
+                    {"completed": 40, "total": 100},
+                ),
+            )
+        )
+
+    throughput = analyze_runpack(runpack).throughput
+
+    assert throughput is not None
+    assert throughput.completed == 40
+    assert throughput.remaining == 60
+    assert throughput.rate_per_second is None
+    assert throughput.estimated_drain_seconds is None
+
+
+def test_throughput_does_not_order_shared_series_by_cross_entity_sequences(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "multiple-sequence-sources.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 200, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entities(
+            (
+                Entity("worker-a", "worker", "worker-a", None, {}),
+                Entity("worker-b", "worker", "worker-b", None, {}),
+            )
+        )
+        writer.add_events(
+            (
+                Event(
+                    "from-a",
+                    "progress",
+                    "progress",
+                    "worker-a",
+                    100,
+                    100,
+                    "test",
+                    20,
+                    1,
+                    {"series": "shared", "completed": 20, "total": 100},
+                ),
+                Event(
+                    "from-b",
+                    "progress",
+                    "progress",
+                    "worker-b",
+                    90,
+                    90,
+                    "test",
+                    20,
+                    2,
+                    {"series": "shared", "completed": 40, "total": 100},
+                ),
+            )
+        )
+
+    assert analyze_runpack(runpack).throughput is None
+
+
+def test_throughput_does_not_treat_unowned_sequences_as_one_source(tmp_path: Path) -> None:
+    runpack = tmp_path / "unowned-sequence-sources.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 200, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_events(
+            (
+                Event(
+                    "first",
+                    "progress",
+                    "progress",
+                    None,
+                    100,
+                    100,
+                    "test",
+                    20,
+                    1,
+                    {"completed": 20, "total": 100},
+                ),
+                Event(
+                    "second",
+                    "progress",
+                    "progress",
+                    None,
+                    90,
+                    90,
+                    "test",
+                    20,
+                    2,
+                    {"completed": 40, "total": 100},
+                ),
+            )
+        )
+
+    assert analyze_runpack(runpack).throughput is None
+
+
 def test_throughput_does_not_merge_progress_from_multiple_entities(tmp_path: Path) -> None:
     runpack = tmp_path / "multiple-progress-series.runpack"
     with RunpackWriter(runpack) as writer:
@@ -962,6 +1424,104 @@ def test_throughput_does_not_merge_progress_from_multiple_entities(tmp_path: Pat
     analysis = analyze_runpack(runpack)
 
     assert analysis.throughput is None
+
+
+def test_throughput_does_not_infer_across_clock_domains(tmp_path: Path) -> None:
+    runpack = tmp_path / "cross-clock-progress.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 1_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                Event(
+                    "progress-a",
+                    "progress",
+                    "progress",
+                    "worker",
+                    0,
+                    0,
+                    "clock-a",
+                    None,
+                    None,
+                    {"completed": 0, "total": 100},
+                ),
+                Event(
+                    "progress-b",
+                    "progress",
+                    "progress",
+                    "worker",
+                    1_000_000_000,
+                    1_000_000_000,
+                    "clock-b",
+                    None,
+                    None,
+                    {"completed": 100, "total": 100},
+                ),
+            )
+        )
+
+    assert analyze_runpack(runpack).throughput is None
+
+
+def test_throughput_does_not_apply_a_cross_clock_compute_boundary(tmp_path: Path) -> None:
+    runpack = tmp_path / "cross-clock-compute.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 1_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(
+            Event(
+                "compute",
+                "stage",
+                "compute",
+                "worker",
+                0,
+                500_000_000,
+                "compute-clock",
+                None,
+                None,
+                {},
+            )
+        )
+        writer.add_events(
+            Event(
+                f"progress-{index}",
+                "progress",
+                "progress",
+                "worker",
+                timestamp,
+                timestamp,
+                "progress-clock",
+                None,
+                index,
+                {"completed": completed, "total": 100},
+            )
+            for index, (timestamp, completed) in enumerate(
+                (
+                    (100_000_000, 10),
+                    (400_000_000, 40),
+                    (700_000_000, 70),
+                    (900_000_000, 90),
+                ),
+                1,
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.throughput is not None
+    assert analysis.throughput.completed == 90
+    assert analysis.throughput.remaining == 10
+    assert analysis.throughput.rate_per_second == 100
+    assert analysis.throughput.estimated_drain_seconds == 0.1
+    assert analysis.throughput.compute_finished_at_ns is None
+    assert analysis.throughput.remaining_at_compute_completion is None
+    assert analysis.throughput.post_compute_seconds is None
+    assert analysis.throughput.post_compute_rate_per_second is None
+    assert "remaining at compute completion" not in render_analysis(analysis, "text")
 
 
 def test_throughput_does_not_guess_between_multiple_parent_scopes(tmp_path: Path) -> None:
@@ -1117,6 +1677,7 @@ def test_causal_cycle_makes_critical_path_inferred(tmp_path: Path) -> None:
     assert analysis.critical_path is not None
     assert analysis.critical_path.cycle_detected is True
     assert analysis.critical_path.certainty == "inferred"
+    assert "causal cycle detected; critical path is inferred" in render_analysis(analysis, "text")
 
 
 def test_low_confidence_causal_edge_makes_critical_path_inferred(tmp_path: Path) -> None:

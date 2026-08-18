@@ -7,18 +7,20 @@ import os
 import platform
 import resource
 import select
+import signal
 import subprocess
 import sys
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
 
 from runtime_tools.annotations import AnnotationError, load_annotations
-from runtime_tools.artifacts import publish_without_overwrite, remove_best_effort
+from runtime_tools.artifacts import artifact_exists, publish_without_overwrite, remove_best_effort
 from runtime_tools.model import (
     Attachment,
     CausalEdge,
@@ -38,8 +40,13 @@ class CaptureError(ValueError):
 
 MAX_CAPTURE_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_POST_EXIT_DRAIN_BYTES = 1024 * 1024
+MAX_CUSTOM_ENVIRONMENT_IDENTITIES = 256
+MAX_ENVIRONMENT_NAME_BYTES = 1024
 PROCESS_TERMINATION_TIMEOUT_SECONDS = 1.0
 _STATUS_POLL_EVENT = threading.Event()
+_ANNOTATIONS_FD_ENV = "_CONTRAIL_ANNOTATIONS_FD"
+_ANNOTATIONS_FALLBACK_ENV = "_CONTRAIL_ANNOTATIONS_FALLBACK"
+_ANNOTATIONS_IDENTITY_ENV = "_CONTRAIL_ANNOTATIONS_IDENTITY"
 _IDENTIFIED_ENVIRONMENT_VARIABLES = (
     "CI",
     "CUDA_VISIBLE_DEVICES",
@@ -74,9 +81,14 @@ def _git_revision(cwd: Path) -> str | None:
             text=True,
             timeout=2,
         )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    except (OSError, UnicodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
-    return result.stdout.strip() or None
+    revision = result.stdout.strip()
+    if len(revision) not in (40, 64) or any(
+        character not in "0123456789abcdefABCDEF" for character in revision
+    ):
+        return None
+    return revision.lower()
 
 
 def _pump(
@@ -207,45 +219,122 @@ def _wait_with_usage(
     return exit_code, usage
 
 
-def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
-    """Best-effort cleanup for a child when capture itself is interrupted."""
+def _process_group_exists(process_group: int) -> bool:
     try:
-        already_finished = process.poll() is not None
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
     except OSError:
-        return
-    if already_finished:
-        return
+        return False
+    return True
+
+
+def _signal_process_group(process_group: int, signal_number: int) -> None:
     try:
-        process.terminate()
-        process.wait(timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS)
-        return
-    except subprocess.TimeoutExpired:
+        os.killpg(process_group, signal_number)
+    except ProcessLookupError:
         pass
-    except ProcessLookupError:
+    except OSError:
+        pass
+
+
+def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
+    """Best-effort cleanup for a captured process group after capture failure."""
+    process_group = process.pid
+    _signal_process_group(process_group, signal.SIGTERM)
+    deadline = time.monotonic() + PROCESS_TERMINATION_TIMEOUT_SECONDS
+    while _process_group_exists(process_group) and time.monotonic() < deadline:
         try:
-            process.wait()
+            process.poll()
         except OSError:
             pass
-        return
-    except OSError:
-        return
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            _STATUS_POLL_EVENT.wait(min(0.01, remaining))
+    if _process_group_exists(process_group):
+        _signal_process_group(process_group, signal.SIGKILL)
     try:
-        process.kill()
-        process.wait()
+        process.wait(timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        _signal_process_group(process_group, signal.SIGKILL)
+        try:
+            process.wait(timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS)
+        except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+            pass
     except ProcessLookupError:
         try:
             process.wait()
         except OSError:
             pass
     except OSError:
+        pass
+
+
+def _identified_environment_names(custom: tuple[str, ...]) -> tuple[str, ...]:
+    if not isinstance(custom, tuple) or not all(isinstance(name, str) for name in custom):
+        raise CaptureError("identified environment names must be a tuple of strings")
+    if len(custom) > MAX_CUSTOM_ENVIRONMENT_IDENTITIES:
+        raise CaptureError(
+            "cannot identify more than "
+            f"{MAX_CUSTOM_ENVIRONMENT_IDENTITIES} custom environment variables"
+        )
+    for name in custom:
+        if not name or "\0" in name or "=" in name:
+            raise CaptureError(
+                "identified environment names must be non-empty and cannot contain '=' or NUL"
+            )
+        try:
+            encoded = name.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise CaptureError("identified environment names must be valid UTF-8") from exc
+        if len(encoded) > MAX_ENVIRONMENT_NAME_BYTES:
+            raise CaptureError(
+                "identified environment names cannot exceed "
+                f"{MAX_ENVIRONMENT_NAME_BYTES} UTF-8 bytes"
+            )
+    return tuple(dict.fromkeys((*_IDENTIFIED_ENVIRONMENT_VARIABLES, *custom)))
+
+
+def _validate_annotation_fd(descriptor: int | None) -> None:
+    if descriptor is None:
         return
+    if (
+        os.name != "posix"
+        or not isinstance(descriptor, int)
+        or isinstance(descriptor, bool)
+        or descriptor < 3
+    ):
+        raise CaptureError("annotation transport fd must be an open POSIX descriptor above 2")
+    try:
+        descriptor_status = os.fstat(descriptor)
+        devnull_status = os.stat(os.devnull)
+        inheritable = os.get_inheritable(descriptor)
+    except OSError as exc:
+        raise CaptureError("annotation transport fd must be open") from exc
+    if inheritable or not os.path.samestat(descriptor_status, devnull_status):
+        raise CaptureError("annotation transport fd must be a reserved non-inheritable devnull fd")
 
 
-def _initial_metadata() -> dict[str, JsonValue]:
+def _restore_annotation_fd(descriptor: int) -> None:
+    placeholder = os.open(os.devnull, os.O_RDONLY)
+    try:
+        os.dup2(placeholder, descriptor, inheritable=False)
+    finally:
+        os.close(placeholder)
+
+
+def _initial_metadata(
+    environment_names: tuple[str, ...] = _IDENTIFIED_ENVIRONMENT_VARIABLES,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, JsonValue]:
+    actual_environment = os.environ if environment is None else environment
     environment_identities: dict[str, JsonValue] = {
-        name: hashlib.sha256(os.fsencode(os.environ[name])).hexdigest()
-        for name in _IDENTIFIED_ENVIRONMENT_VARIABLES
-        if name in os.environ
+        name: hashlib.sha256(os.fsencode(actual_environment[name])).hexdigest()
+        for name in environment_names
+        if name in actual_environment
     }
     return {
         "platform": {
@@ -271,6 +360,9 @@ def record_process(
     stdout: BinaryIO | None = None,
     stderr: BinaryIO | None = None,
     capture_output_limit: int | None = None,
+    identify_environment: tuple[str, ...] = (),
+    _annotation_fd: int | None = None,
+    _annotation_directory: Path | None = None,
 ) -> int:
     """Run ``command``, write ``output``, and return the process exit code."""
     if not isinstance(command, tuple) or not all(isinstance(item, str) for item in command):
@@ -302,7 +394,9 @@ def record_process(
         raise CaptureError(
             f"capture output limit cannot exceed {MAX_CAPTURE_OUTPUT_BYTES} bytes per stream"
         )
-    if output.exists():
+    environment_names = _identified_environment_names(identify_environment)
+    _validate_annotation_fd(_annotation_fd)
+    if artifact_exists(output):
         raise CaptureError(f"refusing to overwrite existing runpack: {output}")
     try:
         working_directory = (cwd or Path.cwd()).resolve()
@@ -312,22 +406,36 @@ def record_process(
         raise CaptureError(f"working directory does not exist: {working_directory}")
     if not output.parent.is_dir():
         raise CaptureError(f"output directory does not exist: {output.parent}")
+    if _annotation_directory is not None and _annotation_fd is None:
+        raise CaptureError("a private annotation directory requires an annotation transport fd")
+    if _annotation_directory is not None and (
+        not isinstance(_annotation_directory, Path) or not _annotation_directory.is_absolute()
+    ):
+        raise CaptureError("private annotation directory must be an absolute path")
+    try:
+        annotation_directory = (
+            output.parent if _annotation_directory is None else _annotation_directory.resolve()
+        )
+    except (OSError, RuntimeError) as exc:
+        raise CaptureError("could not resolve the private annotation directory") from exc
+    if not annotation_directory.is_dir():
+        raise CaptureError(f"private annotation directory does not exist: {annotation_directory}")
 
     execution_id = uuid.uuid4().hex
     entity_id = uuid.uuid4().hex
     event_id = uuid.uuid4().hex
     temporary = output.with_name(f".{output.name}.tmp-{uuid.uuid4().hex}")
-    annotation_path = output.with_name(f".{output.name}.annotations-{uuid.uuid4().hex}")
-    started_at_ns = time.time_ns()
-    started_monotonic_ns = time.perf_counter_ns()
-    metadata = _initial_metadata()
+    annotation_path = annotation_directory / f".{output.name}.annotations-{uuid.uuid4().hex}"
 
     temporary_created = False
     annotation_created = False
+    annotation_fd_installed = False
     try:
         try:
             annotation_descriptor = os.open(
-                annotation_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+                annotation_path,
+                os.O_APPEND | os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o600,
             )
         except FileExistsError as exc:
             raise CaptureError(
@@ -337,12 +445,53 @@ def record_process(
             raise CaptureError(f"could not create temporary annotation file: {exc}") from exc
         annotation_created = True
         try:
-            os.close(annotation_descriptor)
+            annotation_status = os.fstat(annotation_descriptor)
+            if _annotation_fd is not None:
+                os.dup2(annotation_descriptor, _annotation_fd, inheritable=False)
+                annotation_fd_installed = True
         except OSError as exc:
             raise CaptureError(f"could not prepare temporary annotation file: {exc}") from exc
+        finally:
+            active_error = sys.exception()
+            try:
+                os.close(annotation_descriptor)
+            except OSError as exc:
+                if active_error is None:
+                    raise CaptureError(
+                        f"could not prepare temporary annotation file: {exc}"
+                    ) from exc
+                active_error.add_note(f"temporary annotation fd cleanup also failed: {exc}")
+        try:
+            resolved_annotation_path = annotation_path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise CaptureError("could not resolve temporary annotation file") from exc
+        child_environment: dict[str, str] = {
+            **os.environ,
+            "PWD": str(working_directory),
+            "CONTRAIL_ANNOTATIONS_FILE": (
+                str(resolved_annotation_path)
+                if _annotation_fd is None
+                else f"/dev/fd/{_annotation_fd}"
+            ),
+        }
+        child_environment.pop(_ANNOTATIONS_FD_ENV, None)
+        child_environment.pop(_ANNOTATIONS_FALLBACK_ENV, None)
+        child_environment.pop(_ANNOTATIONS_IDENTITY_ENV, None)
+        if _annotation_fd is not None:
+            child_environment[_ANNOTATIONS_FD_ENV] = str(_annotation_fd)
+            child_environment[_ANNOTATIONS_FALLBACK_ENV] = str(resolved_annotation_path)
+            child_environment[_ANNOTATIONS_IDENTITY_ENV] = (
+                f"{annotation_status.st_dev}:{annotation_status.st_ino}"
+            )
+        metadata: dict[str, JsonValue] = _initial_metadata(
+            environment_names, environment=child_environment
+        )
         runpack_writer = RunpackWriter(temporary)
         temporary_created = True
         with runpack_writer as writer:
+            revision = _git_revision(working_directory)
+            started_at_ns = time.time_ns()
+            started_monotonic_ns = time.perf_counter_ns()
             writer.add_execution(
                 Execution(
                     id=execution_id,
@@ -352,7 +501,7 @@ def record_process(
                     command=command,
                     working_directory=str(working_directory),
                     exit_code=None,
-                    revision=_git_revision(working_directory),
+                    revision=revision,
                     metadata=metadata,
                 )
             )
@@ -366,15 +515,28 @@ def record_process(
                 )
             )
             try:
-                process = subprocess.Popen(
+                process: subprocess.Popen[bytes] = subprocess.Popen(
                     command,
                     cwd=working_directory,
-                    env={**os.environ, "CONTRAIL_ANNOTATIONS_FILE": str(annotation_path.resolve())},
+                    env=child_environment,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    start_new_session=True,
+                    pass_fds=() if _annotation_fd is None else (_annotation_fd,),
+                    text=False,
                 )
             except (OSError, ValueError) as exc:
                 raise CaptureError(f"could not start command {command[0]!r}: {exc}") from exc
+
+            if _annotation_fd is not None:
+                try:
+                    _restore_annotation_fd(_annotation_fd)
+                    annotation_fd_installed = False
+                except OSError as exc:
+                    _terminate_and_reap(process)
+                    raise CaptureError(
+                        f"could not restore reserved annotation transport fd: {exc}"
+                    ) from exc
 
             if process.stdout is None or process.stderr is None:
                 _terminate_and_reap(process)
@@ -382,6 +544,7 @@ def record_process(
             stdout_pipe = cast(BinaryIO, process.stdout)
             stderr_pipe = cast(BinaryIO, process.stderr)
             process_done = threading.Event()
+            cleanup_attempted = False
             try:
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     try:
@@ -399,13 +562,15 @@ def record_process(
                         stderr_digest = stderr_result.result()
                     except BaseException:
                         process_done.set()
+                        cleanup_attempted = True
                         _terminate_and_reap(process)
                         raise
                     finally:
                         process_done.set()
             except BaseException:
                 process_done.set()
-                _terminate_and_reap(process)
+                if not cleanup_attempted:
+                    _terminate_and_reap(process)
                 raise
 
             elapsed_ns = time.perf_counter_ns() - started_monotonic_ns
@@ -536,6 +701,19 @@ def record_process(
             remove_best_effort(temporary)
         raise
     finally:
-        if annotation_created:
+        if annotation_fd_installed:
+            assert _annotation_fd is not None
+            try:
+                _restore_annotation_fd(_annotation_fd)
+            except OSError as exc:
+                active_error = sys.exception()
+                if active_error is None:
+                    raise CaptureError(
+                        f"could not restore reserved annotation transport fd: {exc}"
+                    ) from exc
+                active_error.add_note(
+                    f"reserved annotation transport fd cleanup also failed: {exc}"
+                )
+        if annotation_created and _annotation_directory is None:
             remove_best_effort(annotation_path)
     return exit_code

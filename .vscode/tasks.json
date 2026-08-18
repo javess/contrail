@@ -1,0 +1,165 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Setup: Sync locked environment",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "sync",
+        "--locked"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Check: All",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Check: Architecture",
+        "Check: Format",
+        "Check: Lint",
+        "Check: Types",
+        "Test: All"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Check: Fast",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Check: Architecture",
+        "Check: Format",
+        "Check: Lint",
+        "Check: Types"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Check: Architecture",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "tools/check_architecture.py"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Check: Format",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "ruff",
+        "format",
+        "--check",
+        "."
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Check: Lint",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "ruff",
+        "check",
+        "."
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Check: Types",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "ty",
+        "check"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Test: All",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "pytest"
+      ],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Test: Current File",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "pytest",
+        "${file}",
+        "-x"
+      ],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Format: Apply",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "ruff",
+        "format",
+        "."
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Lint: Fix safe issues",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "ruff",
+        "check",
+        "--fix",
+        "."
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Build: Distributions",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "build"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Benchmark: Pull request profile",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "benchmarks/release.py",
+        "--profile",
+        "pr"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

@@ -7,10 +7,14 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Never
+from typing import Never, cast
 from urllib.parse import quote
 
-from runtime_tools.enrichment import EnrichmentError, enrich_copy
+from runtime_tools.enrichment import (
+    EnrichmentError,
+    enrich_copy,
+    validate_enrichment_destination,
+)
 from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import CausalEdge, Entity, Event, JsonValue
 from runtime_tools.storage import RunpackReader, RunpackWriter
@@ -45,13 +49,13 @@ MAX_KUBERNETES_CONTAINERS = 1_000_000
 def _object(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise KubernetesImportError(f"{label} must be an object")
-    return value
+    return cast(dict[str, object], value)
 
 
 def _list(value: object, label: str) -> list[object]:
     if not isinstance(value, list):
         raise KubernetesImportError(f"{label} must be a list")
-    return value
+    return cast(list[object], value)
 
 
 def _metadata(item: dict[str, object]) -> dict[str, object]:
@@ -267,9 +271,14 @@ def _container_state(status: dict[str, object]) -> dict[str, dict[str, object]]:
     return variants
 
 
-def _pod_finish(status: dict[str, object]) -> int | None:
+def _pod_finish(spec: dict[str, object], status: dict[str, object]) -> int | None:
     container_statuses = _container_statuses(status)
-    if not container_statuses:
+    containers = _list(spec.get("containers", []), "Pod containers")
+    container_names = {
+        _required_string(_object(container, "container").get("name"), "container name")
+        for container in containers
+    }
+    if not container_statuses or not container_names <= container_statuses.keys():
         return None
     finishes = []
     for container_status in container_statuses.values():
@@ -327,13 +336,12 @@ def _container_interval(status: dict[str, object]) -> tuple[int | None, int | No
 
 
 def _correlations(
-    runpack: Path,
+    reader: RunpackReader,
     pod_events: dict[str, str],
 ) -> tuple[CausalEdge, ...]:
-    with RunpackReader(runpack) as reader:
-        entities = reader.entities()
-        events = reader.events()
-        edges = reader.causal_edges()
+    entities = reader.entities()
+    events = reader.events()
+    edges = reader.causal_edges()
     entity_by_event = {event.id: event.entity_id for event in events}
     incoming_within_entity = {
         edge.target_event_id
@@ -368,6 +376,7 @@ def import_kubernetes_snapshot(
     source: Path,
     output: Path,
 ) -> KubernetesImportResult:
+    validate_enrichment_destination(output)
     items = _load(source)
     entities: list[Entity] = []
     events: list[Event] = []
@@ -377,12 +386,28 @@ def import_kubernetes_snapshot(
     node_uid_by_name: dict[str, str] = {}
     container_count = 0
 
+    occurrence_count_by_uid: dict[str, int] = {}
+    kinds_by_uid: dict[str, set[str]] = {}
+    for item in items:
+        kind = _kind(item)
+        if kind not in _WORKLOAD_KINDS and kind != "Event":
+            continue
+        uid = _uid(item)
+        occurrence_count_by_uid[uid] = occurrence_count_by_uid.get(uid, 0) + 1
+        kinds_by_uid.setdefault(uid, set()).add(kind)
+    duplicate_uid = next(
+        (uid for uid in sorted(occurrence_count_by_uid) if occurrence_count_by_uid[uid] > 1),
+        None,
+    )
+    if duplicate_uid is not None:
+        if kinds_by_uid[duplicate_uid] == {"Event"}:
+            raise KubernetesImportError(f"duplicate Kubernetes Event uid: {duplicate_uid}")
+        raise KubernetesImportError(f"duplicate Kubernetes object uid: {duplicate_uid}")
+
     for item in items:
         kind = _kind(item)
         if kind in _WORKLOAD_KINDS:
             uid = _uid(item)
-            if uid in entity_by_uid:
-                raise KubernetesImportError(f"duplicate Kubernetes object uid: {uid}")
             entity_by_uid[uid] = _workload_entity_id(kind, uid)
             if kind == "Node":
                 node_name = _name(item)
@@ -456,7 +481,9 @@ def import_kubernetes_snapshot(
         metadata = _metadata(item)
         started = _timestamp(metadata.get("creationTimestamp"))
         finished = (
-            _pod_finish(status) if kind == "Pod" else _timestamp(status.get("completionTime"))
+            _pod_finish(_object(item.get("spec", {}), "Pod spec"), status)
+            if kind == "Pod"
+            else _timestamp(status.get("completionTime"))
         )
         event_id = _lifecycle_event_id(uid)
         lifecycle_by_uid[uid] = event_id
@@ -581,14 +608,10 @@ def import_kubernetes_snapshot(
                     "containerStatuses contains names absent from Pod containers: "
                     f"{', '.join(unknown_statuses)}"
                 )
-    event_uids: set[str] = set()
     for item in items:
         if _kind(item) != "Event":
             continue
         event_uid = _uid(item)
-        if event_uid in event_uids:
-            raise KubernetesImportError(f"duplicate Kubernetes Event uid: {event_uid}")
-        event_uids.add(event_uid)
         involved = _object(item.get("involvedObject", {}), "Event involvedObject")
         involved_uid = _optional_string(involved.get("uid"), "Event involvedObject.uid")
         involved_entity_id = entity_by_uid.get(involved_uid)
@@ -619,8 +642,6 @@ def import_kubernetes_snapshot(
         if lifecycle:
             edges.append(CausalEdge(lifecycle, event_id, "emits", 1.0, {"source": "kubernetes"}))
 
-    correlations = _correlations(runpack, lifecycle_by_uid)
-    edges.extend(correlations)
     entity_order = {
         "node": 0,
         "deployment": 0,
@@ -632,6 +653,9 @@ def import_kubernetes_snapshot(
     entities.sort(key=lambda entity: (entity_order.get(entity.kind, 3), entity.id))
 
     def append(writer: RunpackWriter) -> KubernetesImportResult:
+        with RunpackReader(writer.path) as reader:
+            correlations = _correlations(reader, lifecycle_by_uid)
+        enriched_edges = (*edges, *correlations)
         starts = [event.started_at_ns for event in events if event.started_at_ns is not None]
         finishes = [event.finished_at_ns for event in events if event.finished_at_ns is not None]
         timestamps = [*starts, *finishes]
@@ -639,7 +663,12 @@ def import_kubernetes_snapshot(
             writer.expand_execution_bounds(min(timestamps), max(timestamps))
         writer.add_entities(entities)
         writer.add_events(events)
-        writer.add_causal_edges(edges)
-        return KubernetesImportResult(len(entities), len(events), len(edges), len(correlations))
+        writer.add_causal_edges(enriched_edges)
+        return KubernetesImportResult(
+            len(entities),
+            len(events),
+            len(enriched_edges),
+            len(correlations),
+        )
 
     return enrich_copy(runpack, output, append)

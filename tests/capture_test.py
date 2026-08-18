@@ -5,6 +5,7 @@ import io
 import json
 import os
 import select
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -19,7 +20,14 @@ from typing import Any, cast
 
 import pytest
 
-from runtime_tools import CaptureError, capture, inspect_runpack, record_process, storage
+from runtime_tools import (
+    CaptureError,
+    __version__,
+    capture,
+    inspect_runpack,
+    record_process,
+    storage,
+)
 from runtime_tools.annotations import AnnotationError
 from runtime_tools.inspect import render_summary
 from runtime_tools.model import (
@@ -60,7 +68,7 @@ def test_record_process_captures_outcome_resources_and_output_identity(tmp_path:
     assert stderr.getvalue() == b"warning\n"
     assert summary.exit_code == 0
     assert summary.schema_version == "1.1"
-    assert summary.producer_version == "0.1.0"
+    assert summary.producer_version == __version__
     assert summary.wall_time_seconds is not None and summary.wall_time_seconds >= 0
     assert summary.cpu_user_seconds is not None and summary.cpu_user_seconds >= 0
     assert summary.peak_memory_bytes is not None and summary.peak_memory_bytes > 0
@@ -127,6 +135,37 @@ def test_record_process_anchors_execution_finish_to_monotonic_elapsed_time(
     assert summary.started_at_ns == 100
     assert summary.finished_at_ns == 110
     assert summary.wall_time_seconds == 10 / 1_000_000_000
+
+
+def test_record_process_excludes_prelaunch_setup_from_execution_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "setup-boundary.runpack"
+    clock = {"now": 100}
+    revision = "a" * 40
+    monkeypatch.setattr(
+        capture,
+        "time",
+        SimpleNamespace(
+            time_ns=lambda: clock["now"],
+            perf_counter_ns=lambda: clock["now"],
+        ),
+    )
+
+    def delayed_revision(_cwd: Path) -> str:
+        clock["now"] += 2_000_000_000
+        return revision
+
+    monkeypatch.setattr(capture, "_git_revision", delayed_revision)
+
+    record_process((sys.executable, "-c", "pass"), output, name="setup-boundary")
+
+    summary = inspect_runpack(output)
+    assert summary.started_at_ns == 2_000_000_100
+    assert summary.finished_at_ns == 2_000_000_100
+    assert summary.wall_time_seconds == 0
+    assert summary.revision == revision
 
 
 def test_record_process_can_store_bounded_output_explicitly(tmp_path: Path) -> None:
@@ -197,6 +236,94 @@ def test_record_process_hashes_selected_environment_values(
     assert "runtime" not in metadata
 
 
+def test_record_process_hashes_custom_environment_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "custom-environment.runpack"
+    monkeypatch.setenv("CONTRAIL_TEST_FEATURE_MODE", "experimental")
+
+    record_process(
+        (sys.executable, "-c", "pass"),
+        output,
+        name="environment",
+        identify_environment=("CONTRAIL_TEST_FEATURE_MODE",),
+    )
+
+    with RunpackReader(output) as reader:
+        environment = reader.execution().metadata["environment"]
+    assert isinstance(environment, dict)
+    identities = environment["selected_value_sha256"]
+    assert isinstance(identities, dict)
+    assert identities["CONTRAIL_TEST_FEATURE_MODE"] == hashlib.sha256(b"experimental").hexdigest()
+    assert "experimental" not in json.dumps(environment)
+
+
+def test_record_process_cwd_sets_and_identifies_the_child_pwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    working_directory = tmp_path / "work"
+    working_directory.mkdir()
+    stale_pwd = tmp_path / "stale"
+    monkeypatch.setenv("PWD", str(stale_pwd))
+    output = tmp_path / "pwd.runpack"
+
+    record_process(
+        (
+            sys.executable,
+            "-c",
+            "import os; from pathlib import Path; print(os.environ['PWD']); print(Path.cwd())",
+        ),
+        output,
+        name="pwd",
+        cwd=working_directory,
+        capture_output_limit=4_096,
+        identify_environment=("PWD",),
+    )
+
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+        stdout = next(
+            attachment.content for attachment in reader.attachments() if attachment.name == "stdout"
+        )
+    resolved_working_directory = str(working_directory.resolve())
+    assert stdout.decode() == f"{resolved_working_directory}\n{resolved_working_directory}\n"
+    environment = execution.metadata["environment"]
+    assert isinstance(environment, dict)
+    identities = environment["selected_value_sha256"]
+    assert isinstance(identities, dict)
+    assert identities["PWD"] == hashlib.sha256(os.fsencode(resolved_working_directory)).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("names", "message"),
+    (
+        (cast(Any, ["FEATURE_MODE"]), "must be a tuple of strings"),
+        (("",), "must be non-empty"),
+        (("BAD=NAME",), "cannot contain '=' or NUL"),
+        (("BAD\0NAME",), "cannot contain '=' or NUL"),
+        (("bad-\udcff",), "must be valid UTF-8"),
+        ((("x" * 1025),), "cannot exceed 1024 UTF-8 bytes"),
+        (("MISSING",) * 257, "cannot identify more than 256"),
+    ),
+)
+def test_record_process_rejects_invalid_custom_environment_names(
+    tmp_path: Path,
+    names: tuple[str, ...],
+    message: str,
+) -> None:
+    output = tmp_path / "invalid-environment.runpack"
+
+    with pytest.raises(CaptureError, match=message):
+        record_process(
+            (sys.executable, "-c", "pass"),
+            output,
+            name="environment",
+            identify_environment=names,
+        )
+
+    assert not output.exists()
+
+
 def test_capture_hashes_surrogate_escaped_environment_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -237,6 +364,15 @@ def test_record_process_drains_output_after_relay_failure(tmp_path: Path) -> Non
     assert stdout_metadata["bytes"] == content_size
     assert stdout_metadata["sha256"] == hashlib.sha256(b"x" * content_size).hexdigest()
     assert stdout_metadata["relay_error"] == "BrokenPipeError: consumer closed"
+    summary = inspect_runpack(output)
+    assert summary.stdout_relay_error == "BrokenPipeError: consumer closed"
+    assert summary.stderr_relay_error is None
+    assert "stdout relay: failed (BrokenPipeError: consumer closed)" in render_summary(
+        summary, "text"
+    )
+    assert json.loads(render_summary(summary, "json"))["stdout_relay_error"] == (
+        "BrokenPipeError: consumer closed"
+    )
 
 
 def test_record_process_normalizes_invalid_unicode_in_relay_errors(tmp_path: Path) -> None:
@@ -398,36 +534,74 @@ def test_output_drain_retries_interrupted_select(monkeypatch: pytest.MonkeyPatch
     assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
 
 
-@pytest.mark.parametrize("operation", ("terminate", "kill"))
 @pytest.mark.parametrize("wait_error", (False, True))
-def test_process_cleanup_reaps_a_child_that_exits_during_signaling(
-    operation: str, wait_error: bool
+def test_process_cleanup_reaps_a_leader_after_its_group_vanishes(
+    wait_error: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     waits: list[float | None] = []
 
     class VanishedProcess:
-        def poll(self) -> None:
-            return None
-
-        def terminate(self) -> None:
-            if operation == "terminate":
-                raise ProcessLookupError
-
-        def kill(self) -> None:
-            if operation == "kill":
-                raise ProcessLookupError
+        pid = 123
 
         def wait(self, timeout: float | None = None) -> int:
             waits.append(timeout)
-            if operation == "kill" and timeout is not None:
-                raise subprocess.TimeoutExpired("child", timeout)
             if wait_error:
                 raise ChildProcessError
             return 0
 
+    def vanished_group(process_group: int, signal_number: int) -> None:
+        raise ProcessLookupError
+
+    monkeypatch.setattr(os, "killpg", vanished_group)
+
     capture._terminate_and_reap(cast(subprocess.Popen[bytes], VanishedProcess()))
 
-    assert waits[-1] is None
+    assert waits == [capture.PROCESS_TERMINATION_TIMEOUT_SECONDS]
+
+
+def test_process_cleanup_escalates_a_surviving_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals: list[int] = []
+
+    class SurvivingProcess:
+        pid = 123
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    def surviving_group(process_group: int, signal_number: int) -> None:
+        signals.append(signal_number)
+
+    monkeypatch.setattr(os, "killpg", surviving_group)
+    monkeypatch.setattr(capture, "PROCESS_TERMINATION_TIMEOUT_SECONDS", 0.0)
+
+    capture._terminate_and_reap(cast(subprocess.Popen[bytes], SurvivingProcess()))
+
+    assert signals == [signal.SIGTERM, 0, 0, signal.SIGKILL]
+
+
+def test_process_cleanup_remains_bounded_when_group_signals_are_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    waits: list[float | None] = []
+
+    class UnsignalableProcess:
+        pid = 123
+
+        def wait(self, timeout: float | None = None) -> int:
+            waits.append(timeout)
+            raise subprocess.TimeoutExpired("child", timeout if timeout is not None else 0.0)
+
+    def deny_signal(process_group: int, signal_number: int) -> None:
+        raise PermissionError
+
+    monkeypatch.setattr(os, "killpg", deny_signal)
+    monkeypatch.setattr(capture, "PROCESS_TERMINATION_TIMEOUT_SECONDS", 0.0)
+
+    capture._terminate_and_reap(cast(subprocess.Popen[bytes], UnsignalableProcess()))
+
+    assert waits == [0.0, 0.0]
 
 
 def test_capture_normalizes_child_status_collection_failures(
@@ -456,6 +630,48 @@ def test_capture_ignores_optional_git_revision_os_errors(
     assert capture._git_revision(tmp_path) is None
 
 
+@pytest.mark.parametrize("revision", ("not-a-revision", "a" * 39, "g" * 40, "a" * 65))
+def test_capture_ignores_malformed_optional_git_revisions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    revision: str,
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=f"{revision}\n"),
+    )
+
+    assert capture._git_revision(tmp_path) is None
+
+
+def test_capture_ignores_undecodable_optional_git_revisions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_git(*args: Any, **kwargs: Any) -> None:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(subprocess, "run", fail_git)
+
+    assert capture._git_revision(tmp_path) is None
+
+
+@pytest.mark.parametrize("length", (40, 64))
+def test_capture_normalizes_valid_optional_git_revisions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    length: int,
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=f"{'A' * length}\n"),
+    )
+
+    assert capture._git_revision(tmp_path) == "a" * length
+
+
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:
     output = tmp_path / "existing.runpack"
     output.write_bytes(b"keep me")
@@ -464,6 +680,16 @@ def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None
         record_process((sys.executable, "-c", "pass"), output, name="existing")
 
     assert output.read_bytes() == b"keep me"
+
+
+def test_record_process_refuses_to_overwrite_a_dangling_symlink(tmp_path: Path) -> None:
+    output = tmp_path / "existing.runpack"
+    output.symlink_to(tmp_path / "missing.runpack")
+
+    with pytest.raises(CaptureError, match="refusing to overwrite"):
+        record_process(("missing-command",), output, name="existing")
+
+    assert output.is_symlink()
 
 
 def test_record_process_preserves_a_colliding_temporary_file(
@@ -504,6 +730,65 @@ def test_record_process_preserves_a_colliding_annotation_file(
     assert annotations.read_bytes() == b"preserve me"
     assert not output.exists()
     assert not (tmp_path / ".collision.runpack.tmp-fixed").exists()
+
+
+@pytest.mark.parametrize("descriptor", (cast(Any, "3"), True, -1, 0, 2))
+def test_record_process_rejects_invalid_annotation_transport_fds(
+    tmp_path: Path, descriptor: int
+) -> None:
+    output = tmp_path / "invalid-fd.runpack"
+
+    with pytest.raises(CaptureError, match="open POSIX descriptor above 2"):
+        record_process(
+            (sys.executable, "-c", "pass"),
+            output,
+            name="invalid-fd",
+            _annotation_fd=descriptor,
+        )
+
+    assert not output.exists()
+
+
+def test_record_process_restores_reserved_annotation_fd_after_launch_failure(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "launch-failure.runpack"
+    descriptor = os.open(os.devnull, os.O_RDONLY)
+    try:
+        with pytest.raises(CaptureError, match="could not start command"):
+            record_process(
+                ("missing-contrail-command",),
+                output,
+                name="launch-failure",
+                _annotation_fd=descriptor,
+            )
+
+        os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".launch-failure.runpack.*"))
+
+
+def test_record_process_does_not_replace_an_unreserved_annotation_fd(tmp_path: Path) -> None:
+    output = tmp_path / "unreserved.runpack"
+    unreserved = tmp_path / "unreserved.txt"
+    descriptor = os.open(unreserved, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        with pytest.raises(CaptureError, match="reserved non-inheritable devnull fd"):
+            record_process(
+                (sys.executable, "-c", "pass"),
+                output,
+                name="unreserved",
+                _annotation_fd=descriptor,
+            )
+        os.write(descriptor, b"preserved")
+    finally:
+        os.close(descriptor)
+
+    assert unreserved.read_bytes() == b"preserved"
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(
@@ -618,7 +903,7 @@ def test_record_process_terminates_child_when_capture_is_interrupted(
     real_popen = subprocess.Popen
 
     def tracked_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
-        child: subprocess.Popen[bytes] = real_popen(*args, **kwargs)
+        child = cast("subprocess.Popen[bytes]", real_popen(*args, **kwargs))
         children.append(child)
         return child
 
@@ -642,6 +927,69 @@ def test_record_process_terminates_child_when_capture_is_interrupted(
     assert not tuple(tmp_path.glob(".interrupted.runpack.tmp-*"))
 
 
+def test_record_process_terminates_descendants_when_capture_is_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "interrupted-tree.runpack"
+    ready = tmp_path / "grandchild.pid"
+    children: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+    grandchild_pid: int | None = None
+
+    def tracked_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        child = cast("subprocess.Popen[bytes]", real_popen(*args, **kwargs))
+        children.append(child)
+        return child
+
+    def interrupt_after_grandchild_starts(
+        process: subprocess.Popen[bytes], output_pumps: tuple[object, ...] = ()
+    ) -> None:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not ready.exists():
+            raise RuntimeError("grandchild did not start")
+        raise KeyboardInterrupt
+
+    def process_exists(process_id: int) -> bool:
+        try:
+            os.kill(process_id, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    grandchild_script = (
+        "import os, pathlib, signal, time; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        f"pathlib.Path({str(ready)!r}).write_text(str(os.getpid()), encoding='utf-8'); "
+        "time.sleep(30)"
+    )
+    workload = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen((sys.executable, '-c', {grandchild_script!r})); "
+        "time.sleep(30)"
+    )
+    monkeypatch.setattr(subprocess, "Popen", tracked_popen)
+    monkeypatch.setattr(capture, "_wait_with_usage", interrupt_after_grandchild_starts)
+    monkeypatch.setattr(capture, "PROCESS_TERMINATION_TIMEOUT_SECONDS", 0.05)
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            record_process((sys.executable, "-c", workload), output, name="interrupted-tree")
+
+        grandchild_pid = int(ready.read_text(encoding="utf-8"))
+        deadline = time.monotonic() + 2
+        while process_exists(grandchild_pid) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert children[-1].poll() is not None
+        assert not process_exists(grandchild_pid)
+        assert not output.exists()
+        assert not tuple(tmp_path.glob(".interrupted-tree.runpack.*"))
+    finally:
+        if grandchild_pid is not None and process_exists(grandchild_pid):
+            os.kill(grandchild_pid, signal.SIGKILL)
+
+
 def test_record_process_terminates_child_when_output_pump_submission_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -649,10 +997,12 @@ def test_record_process_terminates_child_when_output_pump_submission_fails(
     children: list[subprocess.Popen[bytes]] = []
     real_popen = subprocess.Popen
     real_submit = ThreadPoolExecutor.submit
+    real_terminate = capture._terminate_and_reap
     submissions = 0
+    cleanup_calls = 0
 
     def tracked_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
-        child: subprocess.Popen[bytes] = real_popen(*args, **kwargs)
+        child = cast("subprocess.Popen[bytes]", real_popen(*args, **kwargs))
         children.append(child)
         return child
 
@@ -663,8 +1013,14 @@ def test_record_process_terminates_child_when_output_pump_submission_fails(
             raise RuntimeError("simulated thread submission failure")
         return real_submit(executor, *args, **kwargs)
 
+    def tracked_cleanup(process: subprocess.Popen[bytes]) -> None:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        real_terminate(process)
+
     monkeypatch.setattr(subprocess, "Popen", tracked_popen)
     monkeypatch.setattr(ThreadPoolExecutor, "submit", fail_second_submit)
+    monkeypatch.setattr(capture, "_terminate_and_reap", tracked_cleanup)
 
     with pytest.raises(RuntimeError, match="simulated thread submission failure"):
         record_process(
@@ -674,6 +1030,7 @@ def test_record_process_terminates_child_when_output_pump_submission_fails(
         )
 
     assert children[-1].poll() is not None
+    assert cleanup_calls == 1
     assert not output.exists()
     assert not tuple(tmp_path.glob(".pump-failure.runpack.tmp-*"))
 
@@ -686,7 +1043,7 @@ def test_record_process_terminates_child_when_an_output_pump_fails(
     real_popen = subprocess.Popen
 
     def tracked_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
-        child: subprocess.Popen[bytes] = real_popen(*args, **kwargs)
+        child = cast("subprocess.Popen[bytes]", real_popen(*args, **kwargs))
         children.append(child)
         return child
 
@@ -722,7 +1079,7 @@ def test_record_process_terminates_child_when_output_pipe_setup_is_incomplete(
     real_popen = subprocess.Popen
 
     def incomplete_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
-        child: subprocess.Popen[bytes] = real_popen(*args, **kwargs)
+        child = cast("subprocess.Popen[bytes]", real_popen(*args, **kwargs))
         children.append(child)
         assert child.stdout is not None
         child.stdout.close()
@@ -767,6 +1124,25 @@ def test_reader_closes_connection_when_validation_is_interrupted(
 
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
         connections[0].execute("SELECT 1")
+
+
+def test_reader_holds_one_snapshot_until_it_closes(tmp_path: Path) -> None:
+    output = tmp_path / "consistent-reader.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "before", 0, 1, (), str(tmp_path), 0, None, {}))
+
+    with RunpackReader(output) as reader:
+        assert reader.execution().name == "before"
+        mutator = sqlite3.connect(output, timeout=0)
+        try:
+            mutator.execute("UPDATE executions SET name = 'after'")
+            with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+                mutator.commit()
+            mutator.rollback()
+        finally:
+            mutator.close()
+
+        assert reader.execution().name == "before"
 
 
 def test_reader_normalizes_runpack_path_resolution_failures(
@@ -935,6 +1311,79 @@ def test_reader_rejects_runpacks_without_required_identity_constraints(
     with pytest.raises(
         RunpackError,
         match="measurements does not enforce required primary key: id",
+    ):
+        RunpackReader(output)
+
+
+def test_reader_requires_the_integer_measurement_primary_key_shape(tmp_path: Path) -> None:
+    output = tmp_path / "text-measurement-primary-key.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="measurement-primary-key")
+    with RunpackReader(output) as reader:
+        expected_measurement_count = len(reader.measurements())
+    with sqlite3.connect(output) as connection:
+        connection.execute("ALTER TABLE measurements RENAME TO original_measurements")
+        connection.execute(
+            """
+            CREATE TABLE measurements (
+                id TEXT PRIMARY KEY COLLATE NOCASE,
+                name TEXT NOT NULL,
+                value REAL NOT NULL,
+                unit TEXT NOT NULL,
+                timestamp_ns INTEGER,
+                entity_id TEXT REFERENCES entities(id),
+                attributes_json TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute("INSERT INTO measurements SELECT * FROM original_measurements")
+        connection.execute("DROP TABLE original_measurements")
+
+    with pytest.raises(
+        RunpackError,
+        match="runpack table measurements must use id INTEGER PRIMARY KEY",
+    ):
+        RunpackReader(output)
+
+    with sqlite3.connect(output) as connection:
+        assert connection.execute("SELECT count(*) FROM measurements").fetchone()[0] == (
+            expected_measurement_count
+        )
+
+
+def test_reader_rejects_case_insensitive_identity_primary_keys(tmp_path: Path) -> None:
+    output = tmp_path / "nocase-identity.runpack"
+    schema = storage._SCHEMA.replace(
+        "CREATE TABLE entities (\n    id TEXT PRIMARY KEY,",
+        "CREATE TABLE entities (\n    id TEXT PRIMARY KEY COLLATE NOCASE,",
+    )
+    assert schema != storage._SCHEMA
+    with sqlite3.connect(output) as connection:
+        connection.executescript(schema)
+        connection.execute(f"PRAGMA application_id = {storage.APPLICATION_ID}")
+        connection.executemany(
+            "INSERT INTO manifest(key, value) VALUES (?, ?)",
+            (
+                ("schema_version", storage.SCHEMA_VERSION),
+                ("producer_version", "test"),
+            ),
+        )
+        connection.execute(
+            "INSERT INTO executions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("run", "run", 0, 1, "[]", str(tmp_path), 0, None, "{}"),
+        )
+        connection.execute(
+            "INSERT INTO entities VALUES (?, ?, ?, ?, ?)",
+            ("app", "service", "app", None, "{}"),
+        )
+        connection.execute(
+            "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("work", "operation", "work", "APP", 0, 1, "test", None, None, "{}"),
+        )
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    with pytest.raises(
+        RunpackError,
+        match="runpack table entities primary key must use BINARY collation",
     ):
         RunpackReader(output)
 
@@ -1134,9 +1583,8 @@ def test_reader_rejects_oversized_normalized_text(tmp_path: Path) -> None:
     with sqlite3.connect(output) as connection:
         connection.execute("UPDATE events SET name = ?", ("x" * (MAX_RUNPACK_TEXT_BYTES + 1),))
 
-    with RunpackReader(output) as reader:
-        with pytest.raises(RunpackError, match="event name exceeds"):
-            reader.events()
+    with pytest.raises(RunpackError, match="event name exceeds"):
+        RunpackReader(output)
 
 
 @pytest.mark.parametrize(
@@ -1368,9 +1816,8 @@ def test_reader_rejects_oversized_attachment_content(
         )
     monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
 
-    with RunpackReader(output) as reader:
-        with pytest.raises(RunpackError, match="attachment content exceeds"):
-            reader.attachments()
+    with pytest.raises(RunpackError, match="attachment content exceeds"):
+        RunpackReader(output)
 
 
 def test_writer_rejects_oversized_aggregate_attachment_content(
@@ -1428,9 +1875,8 @@ def test_reader_rejects_oversized_aggregate_attachment_content(
         )
     monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
 
-    with RunpackReader(output) as reader:
-        with pytest.raises(RunpackError, match="aggregate runpack limit"):
-            reader.attachments()
+    with pytest.raises(RunpackError, match="aggregate runpack limit"):
+        RunpackReader(output)
 
 
 def test_reader_counts_malformed_text_attachment_sizes_as_bytes(
@@ -1447,9 +1893,29 @@ def test_reader_counts_malformed_text_attachment_sizes_as_bytes(
     monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 10)
     monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
 
-    with RunpackReader(output) as reader:
-        with pytest.raises(RunpackError, match="aggregate runpack limit"):
-            reader.attachments()
+    with pytest.raises(RunpackError, match="aggregate runpack limit"):
+        RunpackReader(output)
+
+
+def test_writer_counts_existing_text_attachment_sizes_as_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "text-attachment-write.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="text-attachment")
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?)",
+            ("text", "raw", "text", "text/plain", "€€", "{}"),
+        )
+    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 10)
+    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+
+    with pytest.raises(RunpackError, match="aggregate runpack limit"):
+        RunpackWriter.open_existing(output)
+
+    with sqlite3.connect(output) as connection:
+        assert connection.execute("SELECT count(*) FROM attachments").fetchone()[0] == 1
 
 
 def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) -> None:
@@ -1782,6 +2248,37 @@ def test_execution_bound_expansion_requires_an_execution(tmp_path: Path) -> None
             writer.expand_execution_bounds(0, 1)
 
 
+def test_writer_rejects_multiple_executions_before_mutation(tmp_path: Path) -> None:
+    output = tmp_path / "multiple-executions.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("first", "first", 10, 20, (), str(tmp_path), 0, None, {}))
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            """
+            INSERT INTO executions(
+                id, name, started_at_ns, finished_at_ns, command_json,
+                working_directory, exit_code, revision, metadata_json
+            )
+            SELECT
+                'second', 'second', started_at_ns, finished_at_ns, command_json,
+                working_directory, exit_code, revision, metadata_json
+            FROM executions
+            WHERE id = 'first'
+            """
+        )
+
+    with pytest.raises(RunpackError, match="executions exceeds the record limit of 1"):
+        RunpackWriter.open_existing(output)
+
+    with sqlite3.connect(output) as connection:
+        bounds = connection.execute(
+            "SELECT started_at_ns, finished_at_ns FROM executions ORDER BY id"
+        ).fetchall()
+        entity_count = connection.execute("SELECT count(*) FROM entities").fetchone()[0]
+    assert bounds == [(10, 20), (10, 20)]
+    assert entity_count == 0
+
+
 def test_execution_bound_expansion_does_not_close_an_open_execution(tmp_path: Path) -> None:
     output = tmp_path / "open-expansion.runpack"
     with RunpackWriter(output) as writer:
@@ -1852,6 +2349,195 @@ def test_writer_rejects_invalid_exit_code_when_finishing_execution(tmp_path: Pat
     with RunpackReader(output) as reader:
         assert reader.execution().finished_at_ns is None
         assert reader.events() == ()
+
+
+def test_writer_rejects_finishing_execution_twice_without_changing_first_evidence(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "repeated-finish.runpack"
+    first_event = Event(
+        "first-process",
+        "process.run",
+        "process",
+        None,
+        0,
+        1,
+        "host.wall",
+        None,
+        0,
+        {"exit_code": 0},
+    )
+    first_measurement = Measurement("process.cpu", 1.0, "seconds", 1, None, {})
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, None, (), str(tmp_path), None, None, {}))
+        writer.finish_execution(
+            "run",
+            finished_at_ns=1,
+            exit_code=0,
+            metadata={"finish": "first"},
+            event=first_event,
+            measurements=(first_measurement,),
+        )
+
+        with pytest.raises(RunpackError, match="execution is already finished: run"):
+            writer.finish_execution(
+                "run",
+                finished_at_ns=2,
+                exit_code=1,
+                metadata={"finish": "second"},
+                event=Event(
+                    "second-process",
+                    "process.run",
+                    "process",
+                    None,
+                    0,
+                    2,
+                    "host.wall",
+                    None,
+                    1,
+                    {"exit_code": 1},
+                ),
+                measurements=(Measurement("process.cpu", 2.0, "seconds", 2, None, {}),),
+            )
+
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+        events = reader.events()
+        measurements = reader.measurements()
+    assert (execution.finished_at_ns, execution.exit_code, execution.metadata) == (
+        1,
+        0,
+        {"finish": "first"},
+    )
+    assert events == (first_event,)
+    assert measurements == (first_measurement,)
+
+
+def test_writer_rejects_finishing_an_execution_created_already_finished(tmp_path: Path) -> None:
+    output = tmp_path / "already-finished.runpack"
+    original = Execution(
+        "run",
+        "run",
+        0,
+        1,
+        (),
+        str(tmp_path),
+        0,
+        None,
+        {"finish": "original"},
+    )
+    with RunpackWriter(output) as writer:
+        writer.add_execution(original)
+
+        with pytest.raises(RunpackError, match="execution is already finished: run"):
+            writer.finish_execution(
+                "run",
+                finished_at_ns=2,
+                exit_code=1,
+                metadata={"finish": "replacement"},
+                event=Event(
+                    "process",
+                    "process.run",
+                    "process",
+                    None,
+                    0,
+                    2,
+                    "host.wall",
+                    None,
+                    0,
+                    {"exit_code": 1},
+                ),
+                measurements=(Measurement("process.cpu", 2.0, "seconds", 2, None, {}),),
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.execution() == original
+        assert reader.events() == ()
+        assert reader.measurements() == ()
+
+
+def test_concurrent_writers_cannot_both_finish_the_same_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "concurrent-finish.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, None, (), str(tmp_path), None, None, {}))
+
+    finish_barrier = threading.Barrier(2)
+    execution_interval = storage._execution_interval
+
+    def synchronize_after_open_check(
+        started_at_ns: object,
+        finished_at_ns: object,
+    ) -> tuple[int, int | None]:
+        interval = execution_interval(started_at_ns, finished_at_ns)
+        finish_barrier.wait(timeout=5)
+        return interval
+
+    def finish(label: str, finished_at_ns: int, exit_code: int) -> tuple[str, str]:
+        try:
+            with RunpackWriter.open_existing(output) as writer:
+                writer.finish_execution(
+                    "run",
+                    finished_at_ns=finished_at_ns,
+                    exit_code=exit_code,
+                    metadata={"winner": label},
+                    event=Event(
+                        f"process-{label}",
+                        "process.run",
+                        "process",
+                        None,
+                        0,
+                        finished_at_ns,
+                        "host.wall",
+                        None,
+                        0,
+                        {"exit_code": exit_code},
+                    ),
+                    measurements=(
+                        Measurement(
+                            "process.cpu",
+                            float(finished_at_ns),
+                            "seconds",
+                            finished_at_ns,
+                            None,
+                            {},
+                        ),
+                    ),
+                )
+        except RunpackError as exc:
+            return "error", str(exc)
+        return "success", label
+
+    with monkeypatch.context() as context:
+        context.setattr(storage, "_execution_interval", synchronize_after_open_check)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = (
+                executor.submit(finish, "first", 1, 0),
+                executor.submit(finish, "second", 2, 1),
+            )
+            results = tuple(future.result(timeout=10) for future in futures)
+
+    assert sorted(result[0] for result in results) == ["error", "success"]
+    assert next(result[1] for result in results if result[0] == "error") == (
+        "execution is already finished: run"
+    )
+    winner = next(result[1] for result in results if result[0] == "success")
+    expected_finish, expected_exit = (1, 0) if winner == "first" else (2, 1)
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+        events = reader.events()
+        measurements = reader.measurements()
+    assert (execution.finished_at_ns, execution.exit_code, execution.metadata) == (
+        expected_finish,
+        expected_exit,
+        {"winner": winner},
+    )
+    assert [event.id for event in events] == [f"process-{winner}"]
+    assert [(measurement.name, measurement.value) for measurement in measurements] == [
+        ("process.cpu", float(expected_finish))
+    ]
 
 
 def test_bulk_event_write_rejects_boolean_timestamps_and_rolls_back(tmp_path: Path) -> None:

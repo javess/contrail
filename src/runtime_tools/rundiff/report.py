@@ -31,6 +31,17 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         for side, error in annotation_errors
         if error is not None
     )
+    relay_errors = (
+        ("baseline", "stdout", diff.baseline_stdout_relay_error),
+        ("baseline", "stderr", diff.baseline_stderr_relay_error),
+        ("candidate", "stdout", diff.candidate_stdout_relay_error),
+        ("candidate", "stderr", diff.candidate_stderr_relay_error),
+    )
+    warnings.extend(
+        f"  {side}: {stream} relay failed ({terminal_text(error)})"
+        for side, stream, error in relay_errors
+        if error is not None
+    )
     incomplete_streams = (
         ("baseline", diff.baseline_incomplete_streams),
         ("candidate", diff.candidate_incomplete_streams),
@@ -73,7 +84,11 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
             "",
             "Outcome",
             f"  {diff.outcome}",
-            f"  exit status: {_equivalence(diff.exit_code_equivalent)}",
+            (
+                f"  exit status: {_exit_status(diff.baseline_exit_code)} → "
+                f"{_exit_status(diff.candidate_exit_code)} "
+                f"({_equivalence(diff.exit_code_equivalent)})"
+            ),
             f"  stdout:      {_equivalence(diff.output_equivalent)}",
             f"  stderr:      {_equivalence(diff.stderr_equivalent)}",
             f"  op errors:   {_equivalence(diff.operation_errors_equivalent)}",
@@ -152,7 +167,8 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         if abs(change.candidate_seconds - change.baseline_seconds)
         >= MIN_TEXT_DURATION_DELTA_SECONDS
     )
-    if text_duration_changes:
+    hidden_duration_count = len(diff.operation_duration_changes) - len(text_duration_changes)
+    if diff.operation_duration_changes:
         lines.extend(("", "Aggregate operation duration changes"))
         for index, duration_change in enumerate(text_duration_changes[:MAX_TEXT_SECTION_ITEMS], 1):
             percent = _percent(
@@ -170,6 +186,12 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 f"{_duration(duration_change.candidate_seconds)} {percent}"
             )
         _append_omitted(lines, len(text_duration_changes))
+        if hidden_duration_count:
+            noun = "change" if hidden_duration_count == 1 else "changes"
+            lines.append(
+                f"  {hidden_duration_count:,} {noun} with delta below "
+                f"{_duration(MIN_TEXT_DURATION_DELTA_SECONDS)} omitted from text output"
+            )
     new_edges = tuple(change for change in diff.edge_count_changes if change.change_kind == "new")
     removed_edges = tuple(
         change for change in diff.edge_count_changes if change.change_kind == "removed"
@@ -192,7 +214,7 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         and not diff.operation_count_changes
         and not diff.operation_error_count_changes
         and not diff.operation_concurrency_changes
-        and not text_duration_changes
+        and not diff.operation_duration_changes
         and not diff.edge_count_changes
     ):
         lines.extend(
@@ -227,6 +249,14 @@ def _equivalence(value: bool | None) -> str:
     if value is None:
         return "unknown"
     return "equivalent" if value else "different"
+
+
+def _exit_status(value: int | None) -> str:
+    if value is None:
+        return "unknown"
+    if value < 0:
+        return f"signal {-value}"
+    return f"exit {value}"
 
 
 def _certainty(value: str | None) -> str:

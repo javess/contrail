@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -12,6 +15,8 @@ from runtime_tools.proofline import (
     counterexamples,
     search_counterexample,
 )
+from runtime_tools.proofline import cli as proofline_cli
+from runtime_tools.proofline.counterexamples import CounterexampleResult
 from runtime_tools.proofline.experiments import ExperimentResult
 from runtime_tools.proofline.verify import ClaimResult, ClaimStatus, VerificationReport
 
@@ -21,7 +26,17 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def test_counterexample_search_finds_and_shrinks_minimal_integer_input(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("threshold", "maximum", "max_examples", "shrink_budget_exhausted"),
+    ((2, 5, 10, False), (50, 100, 2, True)),
+)
+def test_counterexample_search_reports_budget_limited_shrinking(
+    tmp_path: Path,
+    threshold: int,
+    maximum: int,
+    max_examples: int,
+    shrink_budget_exhausted: bool,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "main")
@@ -41,11 +56,11 @@ print(a.value)
     _git(repo, "commit", "-m", "baseline")
     _git(repo, "switch", "-c", "candidate")
     workload.write_text(
-        """import argparse
+        f"""import argparse
 p = argparse.ArgumentParser()
 p.add_argument("--value", type=int)
 a = p.parse_args()
-print(a.value + 1 if a.value >= 2 else a.value)
+print(a.value + 1 if a.value >= {threshold} else a.value)
 """,
         encoding="utf-8",
     )
@@ -56,7 +71,7 @@ print(a.value + 1 if a.value >= 2 else a.value)
     )
     parameters = repo / "parameters.yaml"
     parameters.write_text(
-        "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 5\n",
+        f"parameters:\n  value:\n    type: integer\n    min: 0\n    max: {maximum}\n",
         encoding="utf-8",
     )
     output = tmp_path / "counterexample"
@@ -68,16 +83,222 @@ print(a.value + 1 if a.value >= 2 else a.value)
         candidate_ref="candidate",
         workload=Path("workload.py"),
         output_dir=output,
+        max_examples=max_examples,
+        cwd=repo,
+    )
+
+    assert result is not None
+    assert result.parameters["value"] >= threshold
+    assert result.shrink_budget_exhausted is shrink_budget_exhausted
+    if shrink_budget_exhausted:
+        assert result.parameters["value"] > threshold
+    else:
+        assert result.parameters == {"value": threshold}
+    assert result.experiment.verification.passed is False
+    assert result.experiment.baseline_runpack.is_file()
+    assert result.experiment.candidate_runpack.is_file()
+    assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
+
+
+def test_counterexample_search_reuses_the_contract_snapshot_across_runs(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Proofline Test")
+    _git(repo, "config", "user.email", "proofline@example.invalid")
+    workload = repo / "workload.py"
+    contract = repo / "contract.yaml"
+    mutated_contract = "name: changed\nassertions:\n  - type: exit_code_equivalent\n"
+    workload.write_text(
+        "import argparse\nfrom pathlib import Path\n"
+        "p = argparse.ArgumentParser()\np.add_argument('--value', type=int)\na = p.parse_args()\n"
+        f"Path({str(contract)!r}).write_text({mutated_contract!r}, encoding='utf-8')\n"
+        "print(a.value)\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "workload.py")
+    _git(repo, "commit", "-m", "baseline")
+    _git(repo, "switch", "-c", "candidate")
+    workload.write_text(
+        "import argparse\nfrom pathlib import Path\n"
+        "p = argparse.ArgumentParser()\np.add_argument('--value', type=int)\na = p.parse_args()\n"
+        f"Path({str(contract)!r}).write_text({mutated_contract!r}, encoding='utf-8')\n"
+        "print(a.value + 1 if a.value >= 2 else a.value)\n",
+        encoding="utf-8",
+    )
+    _git(repo, "commit", "-am", "candidate")
+    contract.write_text(
+        "name: original\nassertions:\n  - type: output_equivalent\n",
+        encoding="utf-8",
+    )
+    parameters = repo / "parameters.yaml"
+    parameters.write_text(
+        "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 5\n",
+        encoding="utf-8",
+    )
+
+    result = search_counterexample(
+        contract,
+        parameters,
+        baseline_ref="main",
+        candidate_ref="candidate",
+        workload=Path("workload.py"),
+        output_dir=tmp_path / "counterexample",
         max_examples=10,
         cwd=repo,
     )
 
     assert result is not None
     assert result.parameters == {"value": 2}
-    assert result.experiment.verification.passed is False
-    assert result.experiment.baseline_runpack.is_file()
-    assert result.experiment.candidate_runpack.is_file()
-    assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
+    assert contract.read_text(encoding="utf-8") == mutated_contract
+    assert [
+        (claim.contract, claim.type, claim.status)
+        for claim in result.experiment.verification.results
+    ] == [("original", "output_equivalent", "fail")]
+
+
+def _counterexample_result(tmp_path: Path) -> CounterexampleResult:
+    report = VerificationReport(
+        "baseline",
+        "candidate",
+        (
+            ClaimResult(
+                "contract",
+                "output",
+                "output_equivalent",
+                "fail",
+                "equivalent output",
+                "different",
+            ),
+        ),
+    )
+    return CounterexampleResult(
+        {"jobs": 2},
+        ExperimentResult(
+            tmp_path / "baseline.runpack",
+            tmp_path / "candidate.runpack",
+            0,
+            1,
+            report,
+        ),
+        False,
+    )
+
+
+def test_counterexample_result_has_stable_json_shape(tmp_path: Path) -> None:
+    payload = _counterexample_result(tmp_path).as_json_value()
+
+    assert payload["parameters"] == {"jobs": 2}
+    assert payload["shrink_budget_exhausted"] is False
+    experiment = payload["experiment"]
+    assert isinstance(experiment, dict)
+    assert experiment["document_type"] == "proofline.experiment"
+    assert experiment["format_version"] == "1"
+    assert experiment["candidate_exit_code"] == 1
+    verification = experiment["verification"]
+    assert isinstance(verification, dict)
+    assert verification["passed"] is False
+
+
+@pytest.mark.parametrize("result, expected_status", ((None, 0), ("found", 1)))
+def test_counterexample_search_cli_supports_json_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    result: str | None,
+    expected_status: int,
+) -> None:
+    counterexample = None if result is None else _counterexample_result(tmp_path)
+    calls: list[dict[str, object]] = []
+
+    def search(*args: object, **kwargs: object) -> CounterexampleResult | None:
+        calls.append(kwargs)
+        return counterexample
+
+    monkeypatch.setattr(proofline_cli, "search_counterexample", search)
+
+    status = proofline_cli.main(
+        [
+            "search",
+            str(tmp_path / "contract.yaml"),
+            "--parameters",
+            str(tmp_path / "parameters.yaml"),
+            "--baseline-ref",
+            "main",
+            "--candidate-ref",
+            "HEAD",
+            "--workload",
+            "workload.py",
+            "--python",
+            str(tmp_path / "workload-python"),
+            "--max-examples",
+            "7",
+            "--format",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert status == expected_status
+    assert captured.err == ""
+    assert set(payload) == {
+        "counterexample",
+        "document_type",
+        "format_version",
+        "max_examples",
+    }
+    assert payload["document_type"] == "proofline.search"
+    assert payload["format_version"] == "1"
+    assert payload["max_examples"] == 7
+    assert len(calls) == 1
+    output_dir = calls[0].pop("output_dir")
+    assert isinstance(output_dir, Path)
+    assert output_dir.name.startswith("proofline-results-")
+    assert calls == [
+        {
+            "baseline_ref": "main",
+            "candidate_ref": "HEAD",
+            "workload": Path("workload.py"),
+            "max_examples": 7,
+            "python_executable": tmp_path / "workload-python",
+        }
+    ]
+    if counterexample is None:
+        assert payload["counterexample"] is None
+    else:
+        assert payload["counterexample"]["parameters"] == {"jobs": 2}
+        assert payload["counterexample"]["shrink_budget_exhausted"] is False
+
+
+def test_counterexample_search_cli_reports_exhausted_shrink_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = _counterexample_result(tmp_path)
+    result = CounterexampleResult(result.parameters, result.experiment, True)
+    monkeypatch.setattr(proofline_cli, "search_counterexample", lambda *args, **kwargs: result)
+
+    status = proofline_cli.main(
+        [
+            "search",
+            str(tmp_path / "contract.yaml"),
+            "--parameters",
+            str(tmp_path / "parameters.yaml"),
+            "--baseline-ref",
+            "main",
+            "--candidate-ref",
+            "HEAD",
+            "--workload",
+            "workload.py",
+        ]
+    )
+
+    report = capsys.readouterr().out
+    assert status == 1
+    assert "shrink_budget_exhausted: true" in report
+    assert "minimiz" not in report.lower()
 
 
 def test_counterexample_search_rejects_duplicate_parameter_flags(tmp_path: Path) -> None:
@@ -344,13 +565,22 @@ def test_counterexample_search_hard_limits_distinct_experiment_runs(
         "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 100\n",
         encoding="utf-8",
     )
+    contract = tmp_path / "contract.yaml"
+    contract.write_text(
+        "name: output\nassertions:\n  - type: output_equivalent\n",
+        encoding="utf-8",
+    )
     calls: list[int] = []
+    python_executables: list[Path] = []
 
     def experiment(*args: object, **kwargs: object) -> ExperimentResult:
         workload_args = kwargs["workload_args"]
         assert isinstance(workload_args, tuple)
         value = int(str(workload_args[0]).split("=", 1)[1])
         calls.append(value)
+        selected_python = kwargs["python_executable"]
+        assert isinstance(selected_python, Path)
+        python_executables.append(selected_python)
         status: ClaimStatus = "fail" if value >= 50 else "pass"
         report = VerificationReport(
             "baseline",
@@ -376,21 +606,24 @@ def test_counterexample_search_hard_limits_distinct_experiment_runs(
             report,
         )
 
-    monkeypatch.setattr(counterexamples, "run_experiment", experiment)
+    monkeypatch.setattr(counterexamples, "_run_experiment", experiment)
 
     result = search_counterexample(
-        tmp_path / "contract.yaml",
+        contract,
         parameters,
         baseline_ref="main",
         candidate_ref="candidate",
         workload=Path("workload.py"),
         output_dir=tmp_path / "output",
         max_examples=2,
+        python_executable=Path(sys.executable),
     )
 
     assert result is not None
     assert result.parameters["value"] >= 50
     assert len(calls) <= 3  # two search executions plus the preserved reproduction
+    assert len(python_executables) >= 2
+    assert set(python_executables) == {Path(os.path.abspath(sys.executable))}
 
 
 def test_counterexample_search_rejects_existing_output_before_loading_parameters(
@@ -410,6 +643,44 @@ def test_counterexample_search_rejects_existing_output_before_loading_parameters
         )
 
 
+def test_counterexample_search_rejects_invalid_workload_python_before_loading_inputs(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "output"
+
+    with pytest.raises(ExperimentError, match="workload Python does not exist"):
+        search_counterexample(
+            tmp_path / "missing-contract.yaml",
+            tmp_path / "missing-parameters.yaml",
+            baseline_ref="bad\0ref",
+            candidate_ref="bad\0ref",
+            workload=Path("bad\0workload.py"),
+            output_dir=output,
+            python_executable=tmp_path / "missing-python",
+        )
+
+    assert not output.exists()
+
+
+def test_counterexample_search_rejects_dangling_output_before_loading_inputs(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "output"
+    output.symlink_to(tmp_path / "missing-output-target")
+
+    with pytest.raises(ExperimentError, match="refusing to reuse output directory"):
+        search_counterexample(
+            tmp_path / "missing-contract.yaml",
+            tmp_path / "missing-parameters.yaml",
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("missing-workload.py"),
+            output_dir=output,
+        )
+
+    assert output.is_symlink()
+
+
 def test_counterexample_search_does_not_treat_unverifiable_claims_as_violations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -417,6 +688,11 @@ def test_counterexample_search_does_not_treat_unverifiable_claims_as_violations(
     parameters = tmp_path / "parameters.yaml"
     parameters.write_text(
         "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 1\n",
+        encoding="utf-8",
+    )
+    contract = tmp_path / "contract.yaml"
+    contract.write_text(
+        "name: output\nassertions:\n  - type: output_equivalent\n",
         encoding="utf-8",
     )
     calls = 0
@@ -446,10 +722,10 @@ def test_counterexample_search_does_not_treat_unverifiable_claims_as_violations(
             report,
         )
 
-    monkeypatch.setattr(counterexamples, "run_experiment", unverifiable)
+    monkeypatch.setattr(counterexamples, "_run_experiment", unverifiable)
 
     result = search_counterexample(
-        tmp_path / "contract.yaml",
+        contract,
         parameters,
         baseline_ref="main",
         candidate_ref="candidate",
@@ -470,6 +746,11 @@ def test_counterexample_search_rejects_a_nonreproducible_final_run(
     parameters = tmp_path / "parameters.yaml"
     parameters.write_text(
         "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 0\n",
+        encoding="utf-8",
+    )
+    contract = tmp_path / "contract.yaml"
+    contract.write_text(
+        "name: output\nassertions:\n  - type: output_equivalent\n",
         encoding="utf-8",
     )
     final_output = tmp_path / "output"
@@ -498,11 +779,11 @@ def test_counterexample_search_rejects_a_nonreproducible_final_run(
             report,
         )
 
-    monkeypatch.setattr(counterexamples, "run_experiment", experiment)
+    monkeypatch.setattr(counterexamples, "_run_experiment", experiment)
 
     with pytest.raises(ExperimentError, match="did not reproduce"):
         search_counterexample(
-            tmp_path / "contract.yaml",
+            contract,
             parameters,
             baseline_ref="main",
             candidate_ref="candidate",

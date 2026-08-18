@@ -12,6 +12,8 @@ from runtime_tools.model import JsonValue
 from runtime_tools.yaml_support import YamlInputError, load_yaml_file
 
 _ASSERTION_FIELDS = {
+    "candidate_exit_success": set(),
+    "exit_code_equivalent": set(),
     "output_equivalent": set(),
     "result_equivalence": set(),
     "max_runtime_regression": {"percent"},
@@ -35,6 +37,14 @@ class Assertion:
     type: str
     name: str
     config: dict[str, JsonValue]
+
+    def as_json_value(self) -> dict[str, JsonValue]:
+        """Return the resolved assertion policy in its canonical report shape."""
+        return {
+            "type": self.type,
+            "name": self.name,
+            **{key: self.config[key] for key in sorted(self.config.keys() - {"type", "name"})},
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +118,23 @@ def _validate_assertion_fields(assertion_type: str, config: dict[str, JsonValue]
         raise ContractError(f"{assertion_type} relative_to must be baseline")
 
 
+def parse_assertion(value: object, *, label: str = "assertion") -> Assertion:
+    """Parse one in-memory assertion using the contract input rules."""
+    config = _object(value, label)
+    assertion_type = _required_string(config.get("type"), f"{label} type")
+    if assertion_type not in SUPPORTED_ASSERTIONS:
+        raise ContractError(f"unsupported assertion type: {assertion_type}")
+    _reject_unknown_fields(
+        config,
+        {"type", "name", *_ASSERTION_FIELDS[assertion_type]},
+        f"{assertion_type} assertion",
+    )
+    _validate_assertion_fields(assertion_type, config)
+    assertion_name_value = config.get("name", assertion_type.replace("_", "-"))
+    assertion_name = _required_string(assertion_name_value, f"{label} name")
+    return Assertion(assertion_type, assertion_name, config)
+
+
 def _parse_contract(value: object, default_name: str) -> Contract:
     raw = _object(value, "contract")
     _reject_unknown_fields(raw, {"name", "description", "assertions"}, "contract")
@@ -119,22 +146,26 @@ def _parse_contract(value: object, default_name: str) -> Contract:
     raw_assertions = raw.get("assertions")
     if not isinstance(raw_assertions, list) or not raw_assertions:
         raise ContractError(f"contract {name!r} requires a non-empty assertions list")
-    assertions = []
-    for index, raw_assertion in enumerate(raw_assertions, 1):
-        config = _object(raw_assertion, f"assertion {index}")
-        assertion_type = _required_string(config.get("type"), f"assertion {index} type")
-        if assertion_type not in SUPPORTED_ASSERTIONS:
-            raise ContractError(f"unsupported assertion type: {assertion_type}")
-        _reject_unknown_fields(
-            config,
-            {"type", "name", *_ASSERTION_FIELDS[assertion_type]},
-            f"{assertion_type} assertion",
-        )
-        _validate_assertion_fields(assertion_type, config)
-        assertion_name_value = config.get("name", assertion_type.replace("_", "-"))
-        assertion_name = _required_string(assertion_name_value, f"assertion {index} name")
-        assertions.append(Assertion(assertion_type, assertion_name, config))
-    return Contract(name, description_value, tuple(assertions))
+    assertions = tuple(
+        parse_assertion(raw_assertion, label=f"assertion {index}")
+        for index, raw_assertion in enumerate(raw_assertions, 1)
+    )
+    return Contract(name, description_value, assertions)
+
+
+def _enforce_assertion_limit(raw_contracts: tuple[JsonValue, ...]) -> None:
+    assertion_count = 0
+    for raw_contract in raw_contracts:
+        if not isinstance(raw_contract, dict):
+            continue
+        raw_assertions = raw_contract.get("assertions")
+        if not isinstance(raw_assertions, list):
+            continue
+        assertion_count += len(raw_assertions)
+        if assertion_count > MAX_CONTRACT_ASSERTIONS:
+            raise ContractError(
+                f"contract document exceeds the {MAX_CONTRACT_ASSERTIONS}-assertion input limit"
+            )
 
 
 def load_contracts(path: Path) -> tuple[Contract, ...]:
@@ -151,11 +182,13 @@ def load_contracts(path: Path) -> tuple[Contract, ...]:
     raw_contracts = root.get("contracts")
     contracts: tuple[Contract, ...]
     if raw_contracts is None:
+        _enforce_assertion_limit((root,))
         contracts = (_parse_contract(root, path.stem),)
     else:
         _reject_unknown_fields(root, {"contracts"}, "contract document")
         if not isinstance(raw_contracts, list) or not raw_contracts:
             raise ContractError("contracts must be a non-empty list")
+        _enforce_assertion_limit(tuple(raw_contracts))
         contracts = tuple(
             _parse_contract(item, f"{path.stem}-{index}")
             for index, item in enumerate(raw_contracts, 1)

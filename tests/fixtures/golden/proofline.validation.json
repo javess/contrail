@@ -1,0 +1,8 @@
+{
+  "assertion_count": 2,
+  "assertion_types": ["output_equal", "relative_change"],
+  "contract_count": 1,
+  "document_type": "proofline.validation",
+  "format_version": "1",
+  "parameter_count": 2
+}

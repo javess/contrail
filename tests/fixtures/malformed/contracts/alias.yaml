@@ -1,0 +1,5 @@
+shared: &shared
+  type: output_equivalent
+name: aliases-are-not-evidence
+assertions:
+  - *shared

@@ -4,13 +4,34 @@ from __future__ import annotations
 
 import json
 
-from runtime_tools.proofline.verify import VerificationReport
+from runtime_tools.proofline.verify import DiffEvidenceReference, VerificationReport
 from runtime_tools.terminal import terminal_text
 
 MAX_TEXT_RESULTS = 100
 
 
-def render_verification(report: VerificationReport, output_format: str) -> str:
+def _render_fact_value(value: object) -> str:
+    if isinstance(value, float):
+        return f"{value:g}"
+    return json.dumps(value, ensure_ascii=True)
+
+
+def _render_evidence(reference: DiffEvidenceReference) -> str:
+    fact = ", ".join(
+        f"{terminal_text(key)}={terminal_text(_render_fact_value(value))}"
+        for key, value in reference.fact
+    )
+    selector = ", ".join(
+        f"{terminal_text(key)}={terminal_text(json.dumps(value, ensure_ascii=True))}"
+        for key, value in reference.selector
+    )
+    suffix = f" where {selector}" if selector else ""
+    return f"  Evidence: {fact}; diff{terminal_text(reference.diff_path)}{suffix}"
+
+
+def render_verification(
+    report: VerificationReport, output_format: str, *, include_evidence: bool = False
+) -> str:
     if output_format == "json":
         return json.dumps(report.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
     lines = ["PROOFLINE", "", f"{len(report.results)} claims evaluated", ""]
@@ -36,4 +57,6 @@ def render_verification(report: VerificationReport, output_format: str) -> str:
                 f"  Observed: {terminal_text(result.observed)}",
             )
         )
+        if include_evidence:
+            lines.extend(_render_evidence(reference) for reference in result.evidence)
     return "\n".join(lines)

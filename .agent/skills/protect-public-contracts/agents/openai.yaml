@@ -1,0 +1,4 @@
+interface:
+  display_name: "Protect Public Contracts"
+  short_description: "Preserve Contrail compatibility guarantees"
+  default_prompt: "Use $protect-public-contracts to evolve this public Contrail interface safely."

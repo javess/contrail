@@ -6,35 +6,43 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
-from runtime_tools import __version__
+from runtime_tools._version import __version__
 from runtime_tools.capture import CaptureError, record_process
 from runtime_tools.enrichment import EnrichmentError
-from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
+from runtime_tools.inspect import inspect_reader, render_causal_tree_reader, render_summary
 from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
 from runtime_tools.otel import OtelImportError, import_otlp_json, import_otlp_logs
 from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
 from runtime_tools.query import QueryError, query_runpack, render_query
-from runtime_tools.storage import RunpackError
-from runtime_tools.terminal import terminal_text
+from runtime_tools.storage import RunpackError, RunpackReader, resolve_runpack_path
+from runtime_tools.terminal import broken_pipe_safe, terminal_text
 from runtime_tools.ui import TimelineError, serve_runpacks
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="runtime")
+def _parser(*, prog: str = "runtime") -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     record = subparsers.add_parser("record", help="capture a local process")
     record.add_argument("--name", help="logical execution name")
     record.add_argument("--output", type=Path, help="output .runpack path")
+    record.add_argument("--cwd", type=Path, help="working directory for the command")
+    record.add_argument(
+        "--identify-env",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="hash an environment value for drift detection; repeat as needed",
+    )
     record.add_argument(
         "--include-output",
         action="store_true",
         help="store bounded stdout/stderr content (may contain secrets)",
     )
-    record.add_argument("--output-limit-bytes", type=int, default=1_048_576)
+    record.add_argument("--output-limit-bytes", type=int)
     record.add_argument("command", nargs=argparse.REMAINDER, help="command after --")
 
     inspect = subparsers.add_parser("inspect", help="inspect a .runpack")
@@ -55,6 +63,17 @@ def _parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="open a local execution timeline")
     serve.add_argument("runpack", type=Path)
     serve.add_argument("--compare", type=Path, help="candidate runpack for compare mode")
+    proofline_input = serve.add_mutually_exclusive_group()
+    proofline_input.add_argument(
+        "--contract",
+        type=Path,
+        help="evaluate and navigate a Proofline contract in compare mode",
+    )
+    proofline_input.add_argument(
+        "--proofline-report",
+        type=Path,
+        help="navigate an explained Proofline report retained with the runpacks",
+    )
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--no-open", action="store_true", help="do not open a browser")
@@ -101,15 +120,21 @@ def _safe_name(command: tuple[str, ...]) -> str:
 
 def _binary_stream(name: str) -> BinaryIO | None:
     stream = getattr(sys, name)
-    return getattr(stream, "buffer", None)
+    return cast(BinaryIO | None, getattr(stream, "buffer", None))
 
 
 def _process_exit_status(return_code: int) -> int:
     return 128 - return_code if return_code < 0 else return_code
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+@broken_pipe_safe
+def main(
+    argv: list[str] | None = None,
+    *,
+    prog: str = "runtime",
+    error_label: str = "runtime",
+) -> int:
+    args = _parser(prog=prog).parse_args(argv)
     try:
         if args.subcommand == "record":
             command = tuple(args.command)
@@ -117,15 +142,24 @@ def main(argv: list[str] | None = None) -> int:
                 command = command[1:]
             if not command:
                 raise CaptureError("a command is required after --")
+            if args.output_limit_bytes is not None and not args.include_output:
+                raise CaptureError("--output-limit-bytes requires --include-output")
             name = args.name or _safe_name(command)
             output = args.output or Path(f"{_safe_name((name,))}.runpack")
+            capture_output_limit = (
+                (args.output_limit_bytes if args.output_limit_bytes is not None else 1_048_576)
+                if args.include_output
+                else None
+            )
             exit_code = record_process(
                 command,
                 output,
                 name=name,
+                cwd=args.cwd,
                 stdout=_binary_stream("stdout"),
                 stderr=_binary_stream("stderr"),
-                capture_output_limit=(args.output_limit_bytes if args.include_output else None),
+                capture_output_limit=capture_output_limit,
+                identify_environment=tuple(args.identify_env),
             )
             print(f"recorded {terminal_text(output)}", file=sys.stderr)
             return _process_exit_status(exit_code)
@@ -142,9 +176,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if args.subcommand == "serve":
+            if args.compare is None and args.contract is not None:
+                raise TimelineError("--contract requires --compare")
+            if args.compare is None and args.proofline_report is not None:
+                raise TimelineError("--proofline-report requires --compare")
             serve_runpacks(
                 args.runpack,
                 args.compare,
+                contract=args.contract,
+                proofline_report=args.proofline_report,
                 host=args.host,
                 port=args.port,
                 open_browser=not args.no_open,
@@ -187,17 +227,25 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.subcommand == "query":
             result = query_runpack(args.runpack, args.sql, limit=args.limit)
-            print(render_query(result, args.format))
+            rendered = render_query(result, args.format)
+            if rendered:
+                print(rendered)
             if args.format == "jsonl" and result.truncated:
-                print("runtime: query result truncated at the requested row limit", file=sys.stderr)
+                print(
+                    f"{error_label}: query result truncated at the requested row limit",
+                    file=sys.stderr,
+                )
             return 0
         if args.tree and args.format != "text":
             raise RunpackError("--tree is only available with text output")
-        summary = inspect_runpack(args.runpack)
+        runpack = resolve_runpack_path(args.runpack)
+        with RunpackReader(runpack) as reader:
+            summary = inspect_reader(reader)
+            causal_tree = render_causal_tree_reader(reader) if args.tree else None
         print(render_summary(summary, args.format))
-        if args.tree:
+        if causal_tree is not None:
             print()
-            print(render_causal_tree(args.runpack))
+            print(causal_tree)
         return 0
     except (
         CaptureError,
@@ -209,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
         RunpackError,
         TimelineError,
     ) as exc:
-        print(f"runtime: {terminal_text(exc)}", file=sys.stderr)
+        print(f"{error_label}: {terminal_text(exc)}", file=sys.stderr)
         return 2
 
 

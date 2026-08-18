@@ -16,6 +16,14 @@ def _attribute(key: str, value: str) -> dict[str, object]:
     return {"key": key, "value": {"stringValue": value}}
 
 
+def _trace_id(label: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-trace:{label}").hex
+
+
+def _span_id(label: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-span:{label}").hex[:16]
+
+
 def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: Path) -> None:
     source = tmp_path / "trace.json"
     output = tmp_path / "trace.runpack"
@@ -34,8 +42,8 @@ def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: P
                                 },
                                 "spans": [
                                     {
-                                        "traceId": "trace-1",
-                                        "spanId": "root",
+                                        "traceId": _trace_id("trace-1").upper(),
+                                        "spanId": _span_id("root").upper(),
                                         "name": "GET /items",
                                         "kind": "SPAN_KIND_SERVER",
                                         "startTimeUnixNano": "1000000",
@@ -43,9 +51,9 @@ def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: P
                                         "attributes": [_attribute("http.request.method", "GET")],
                                     },
                                     {
-                                        "traceId": "trace-1",
-                                        "spanId": "lookup",
-                                        "parentSpanId": "root",
+                                        "traceId": _trace_id("trace-1"),
+                                        "spanId": _span_id("lookup"),
+                                        "parentSpanId": _span_id("root"),
                                         "name": "SELECT items",
                                         "kind": "SPAN_KIND_CLIENT",
                                         "startTimeUnixNano": "3000000",
@@ -62,9 +70,9 @@ def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: P
                                 "scope": {"name": "demo.worker"},
                                 "spans": [
                                     {
-                                        "traceId": "trace-1",
-                                        "spanId": "work",
-                                        "parentSpanId": "root",
+                                        "traceId": _trace_id("trace-1"),
+                                        "spanId": _span_id("work"),
+                                        "parentSpanId": _span_id("root"),
                                         "name": "process item",
                                         "kind": 1,
                                         "startTimeUnixNano": "8000000",
@@ -98,6 +106,8 @@ def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: P
         assert events["GET /items"].kind == "server.request"
         assert events["SELECT items"].kind == "client.request"
         assert events["GET /items"].attributes["http.request.method"] == "GET"
+        assert events["GET /items"].attributes["otel.trace_id"] == _trace_id("trace-1")
+        assert events["GET /items"].attributes["otel.span_id"] == _span_id("root")
         assert events["GET /items"].attributes["otel.scope.version"] == "1.2.3"
         assert events["GET /items"].attributes["otel.scope.attributes"] == {"schema": "stable"}
         assert reader.clock_inconsistency_count() == 1
@@ -143,8 +153,8 @@ def test_otlp_json_import_normalizes_numeric_enum_strings_and_error_status(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "name": "write",
                                         "kind": "3",
                                         "status": {"code": "STATUS_CODE_ERROR"},
@@ -183,8 +193,8 @@ def test_otlp_json_import_accepts_integral_exponent_notation(tmp_path: Path) -> 
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1e3",
                                         "endTimeUnixNano": 2e3,
                                         "attributes": [
@@ -208,6 +218,29 @@ def test_otlp_json_import_accepts_integral_exponent_notation(tmp_path: Path) -> 
     assert event.started_at_ns == 1_000
     assert event.finished_at_ns == 2_000
     assert event.attributes["attempt"] == 100
+
+
+def test_otlp_json_import_preserves_exponent_timestamp_nanoseconds(tmp_path: Path) -> None:
+    source = tmp_path / "precise-exponents.json"
+    output = tmp_path / "precise-exponents.runpack"
+    source.write_text(
+        '{"resourceSpans":[{"scopeSpans":[{"spans":[{'
+        f'"traceId":"{_trace_id("trace")}",'
+        f'"spanId":"{_span_id("span")}",'
+        '"kind":2.0,'
+        '"startTimeUnixNano":1.725e18,'
+        '"endTimeUnixNano":1.725000000000000001e18'
+        "}]}]}]}",
+        encoding="utf-8",
+    )
+
+    import_otlp_json(source, output, name="precise-exponents")
+
+    with RunpackReader(output) as reader:
+        event = reader.events()[0]
+    assert event.kind == "server.request"
+    assert event.started_at_ns == 1_725_000_000_000_000_000
+    assert event.finished_at_ns == event.started_at_ns + 1
 
 
 def test_otlp_json_import_omits_empty_resource_groups_from_evidence(tmp_path: Path) -> None:
@@ -243,8 +276,8 @@ def test_otlp_json_import_omits_empty_resource_groups_from_evidence(tmp_path: Pa
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                     }
@@ -276,8 +309,8 @@ def test_otlp_json_import_rejects_malformed_span_semantics(
     source = tmp_path / f"invalid-{field}.json"
     output = tmp_path / f"invalid-{field}.runpack"
     span: dict[str, object] = {
-        "traceId": "trace",
-        "spanId": "span",
+        "traceId": _trace_id("trace"),
+        "spanId": _span_id("span"),
         "startTimeUnixNano": "1",
         "endTimeUnixNano": "2",
         field: value,
@@ -301,8 +334,8 @@ def test_otlp_json_import_rejects_spans_over_the_input_limit(
     output = tmp_path / "too-many-spans.runpack"
     spans = [
         {
-            "traceId": "trace",
-            "spanId": f"span-{index}",
+            "traceId": _trace_id("trace"),
+            "spanId": f"{index + 1:016x}",
             "startTimeUnixNano": "1",
             "endTimeUnixNano": "2",
         }
@@ -335,13 +368,19 @@ def test_otlp_json_import_rejects_links_over_the_input_limit(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "links": [
-                                            {"traceId": "trace", "spanId": "one"},
-                                            {"traceId": "trace", "spanId": "two"},
+                                            {
+                                                "traceId": _trace_id("trace"),
+                                                "spanId": _span_id("one"),
+                                            },
+                                            {
+                                                "traceId": _trace_id("trace"),
+                                                "spanId": _span_id("two"),
+                                            },
                                         ],
                                     }
                                 ]
@@ -373,8 +412,8 @@ def test_otlp_json_import_rejects_an_impossible_local_interval(tmp_path: Path) -
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "2000",
                                         "endTimeUnixNano": "1000",
                                     }
@@ -406,8 +445,8 @@ def test_otlp_json_import_rejects_timestamps_outside_runpack_range(tmp_path: Pat
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": str(2**63),
                                         "endTimeUnixNano": str(2**63),
                                     }
@@ -440,8 +479,8 @@ def test_otlp_json_bulk_import_handles_ten_thousand_spans(tmp_path: Path) -> Non
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": str(index),
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": f"{index + 1:016x}",
                                         "name": "work",
                                         "startTimeUnixNano": str(index + 1),
                                         "endTimeUnixNano": str(index + 2),
@@ -476,22 +515,22 @@ def test_otlp_json_import_normalizes_asynchronous_span_links(tmp_path: Path) -> 
                             {
                                 "spans": [
                                     {
-                                        "traceId": "producer-trace",
-                                        "spanId": "publish",
+                                        "traceId": _trace_id("producer-trace"),
+                                        "spanId": _span_id("publish"),
                                         "name": "publish",
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                     },
                                     {
-                                        "traceId": "consumer-trace",
-                                        "spanId": "consume",
+                                        "traceId": _trace_id("consumer-trace"),
+                                        "spanId": _span_id("consume"),
                                         "name": "consume",
                                         "startTimeUnixNano": "3",
                                         "endTimeUnixNano": "4",
                                         "links": [
                                             {
-                                                "traceId": "producer-trace",
-                                                "spanId": "publish",
+                                                "traceId": _trace_id("producer-trace"),
+                                                "spanId": _span_id("publish"),
                                                 "attributes": [
                                                     {
                                                         "key": "messaging.message.id",
@@ -518,8 +557,8 @@ def test_otlp_json_import_normalizes_asynchronous_span_links(tmp_path: Path) -> 
     with RunpackReader(output) as reader:
         edge = reader.causal_edges()[0]
     assert edge.kind == "link"
-    assert edge.source_event_id == "otel:producer-trace:publish"
-    assert edge.target_event_id == "otel:consumer-trace:consume"
+    assert edge.source_event_id == (f"otel:{_trace_id('producer-trace')}:{_span_id('publish')}")
+    assert edge.target_event_id == (f"otel:{_trace_id('consumer-trace')}:{_span_id('consume')}")
     assert edge.attributes["otel.link.attributes"] == {"messaging.message.id": "message-1"}
     tree = render_causal_tree(output)
     assert "CAUSAL LINKS" in tree
@@ -538,11 +577,16 @@ def test_otlp_json_import_rejects_self_referential_span_links(tmp_path: Path) ->
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
-                                        "links": [{"traceId": "trace", "spanId": "span"}],
+                                        "links": [
+                                            {
+                                                "traceId": _trace_id("trace"),
+                                                "spanId": _span_id("span"),
+                                            }
+                                        ],
                                     }
                                 ]
                             }
@@ -554,7 +598,7 @@ def test_otlp_json_import_rejects_self_referential_span_links(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    with pytest.raises(OtelImportError, match="span cannot link to itself: trace/span"):
+    with pytest.raises(OtelImportError, match="span cannot link to itself"):
         import_otlp_json(source, output, name="self-link")
 
     assert not output.exists()
@@ -574,8 +618,8 @@ def test_otlp_json_import_reports_exporter_dropped_links_as_incomplete(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "droppedLinksCount": "2",
@@ -610,12 +654,17 @@ def test_otlp_json_import_bounds_dropped_and_unresolved_link_totals(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "droppedLinksCount": (1 << 63) - 1,
-                                        "links": [{"traceId": "missing", "spanId": "missing"}],
+                                        "links": [
+                                            {
+                                                "traceId": _trace_id("missing"),
+                                                "spanId": _span_id("missing"),
+                                            }
+                                        ],
                                     }
                                 ]
                             }
@@ -647,8 +696,8 @@ def test_otlp_json_import_surfaces_exporter_dropped_attributes(tmp_path: Path) -
                                 "scope": {"droppedAttributesCount": 4},
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "droppedAttributesCount": "2",
@@ -686,8 +735,8 @@ def test_otlp_json_import_rejects_invalid_span_status_codes(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "status": {"code": code},
@@ -732,8 +781,8 @@ def test_otlp_json_import_normalizes_numeric_span_status_codes(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "status": {"code": code},
@@ -773,8 +822,8 @@ def test_otlp_json_import_rejects_invalid_dropped_link_counts(tmp_path: Path) ->
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "droppedLinksCount": -1,
@@ -807,16 +856,16 @@ def test_otlp_json_import_rejects_cyclic_parent_relationships(tmp_path: Path) ->
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "a",
-                                        "parentSpanId": "b",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("a"),
+                                        "parentSpanId": _span_id("b"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "4",
                                     },
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "b",
-                                        "parentSpanId": "a",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("b"),
+                                        "parentSpanId": _span_id("a"),
                                         "startTimeUnixNano": "2",
                                         "endTimeUnixNano": "3",
                                     },
@@ -848,15 +897,15 @@ def test_otlp_json_import_keeps_delimited_span_identities_distinct(tmp_path: Pat
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace:one",
-                                        "spanId": "parent",
+                                        "traceId": _trace_id("trace:one"),
+                                        "spanId": _span_id("parent"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "4",
                                     },
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "child",
-                                        "parentSpanId": "one:parent",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("child"),
+                                        "parentSpanId": _span_id("one:parent"),
                                         "startTimeUnixNano": "2",
                                         "endTimeUnixNano": "3",
                                     },
@@ -875,7 +924,10 @@ def test_otlp_json_import_keeps_delimited_span_identities_distinct(tmp_path: Pat
     with RunpackReader(output) as reader:
         event_ids = {event.id for event in reader.events()}
         edges = reader.causal_edges()
-    assert event_ids == {"otel:trace%3Aone:parent", "otel:trace:child"}
+    assert event_ids == {
+        f"otel:{_trace_id('trace:one')}:{_span_id('parent')}",
+        f"otel:{_trace_id('trace')}:{_span_id('child')}",
+    }
     assert edges == ()
     assert result.missing_parent_count == 1
 
@@ -884,9 +936,12 @@ def test_otlp_json_import_can_preserve_raw_source_explicitly(tmp_path: Path) -> 
     source = tmp_path / "raw.json"
     output = tmp_path / "raw.runpack"
     raw = (
-        b'{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"trace",'
-        b'"spanId":"span","startTimeUnixNano":"1","endTimeUnixNano":"2"}]}]}]}'
-    )
+        '{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"'
+        + _trace_id("trace")
+        + '","spanId":"'
+        + _span_id("span")
+        + '","startTimeUnixNano":"1","endTimeUnixNano":"2"}]}]}]}'
+    ).encode()
     source.write_bytes(raw)
 
     import_otlp_json(source, output, name="raw", include_raw=True)
@@ -913,14 +968,14 @@ def test_otlp_json_import_keeps_execution_open_when_any_span_is_incomplete(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "complete",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("complete"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                     },
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "open",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("open"),
                                         "startTimeUnixNano": "3",
                                     },
                                 ]
@@ -954,14 +1009,14 @@ def test_otlp_json_import_keeps_execution_open_when_a_span_start_is_missing(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "complete",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("complete"),
                                         "startTimeUnixNano": "2",
                                         "endTimeUnixNano": "3",
                                     },
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "partial",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("partial"),
                                         "endTimeUnixNano": "4",
                                     },
                                 ]
@@ -993,8 +1048,8 @@ def test_otlp_json_import_rejects_non_string_string_attributes(tmp_path: Path) -
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "attributes": [
@@ -1032,8 +1087,8 @@ def test_otlp_json_import_rejects_ambiguous_attribute_values(tmp_path: Path) -> 
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "attributes": [
@@ -1074,8 +1129,8 @@ def test_otlp_json_import_rejects_out_of_range_integer_attributes(tmp_path: Path
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "attributes": [
@@ -1115,8 +1170,8 @@ def test_otlp_json_import_canonicalizes_url_safe_unpadded_bytes_attributes(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "attributes": [
@@ -1152,8 +1207,8 @@ def test_otlp_json_import_rejects_invalid_bytes_attributes(tmp_path: Path, encod
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "attributes": [
@@ -1201,8 +1256,8 @@ def test_otlp_json_import_rejects_unpaired_surrogates_at_the_adapter_boundary(
     source = tmp_path / "surrogate.json"
     output = tmp_path / "surrogate.runpack"
     span = {
-        "traceId": "trace",
-        "spanId": "span",
+        "traceId": _trace_id("trace"),
+        "spanId": _span_id("span"),
         "startTimeUnixNano": "1",
         "endTimeUnixNano": "2",
         field: value,
@@ -1240,8 +1295,8 @@ def test_otlp_json_import_rejects_duplicate_attribute_keys(tmp_path: Path) -> No
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "attributes": [
@@ -1280,8 +1335,8 @@ def test_otlp_json_import_rejects_excessively_nested_attributes(tmp_path: Path) 
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                         "attributes": [{"key": "nested", "value": value}],
@@ -1331,8 +1386,8 @@ def test_otlp_json_import_rejects_malformed_semantic_names(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "name": span_name,
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
@@ -1366,7 +1421,7 @@ def test_otlp_json_import_rejects_non_string_span_identifiers(tmp_path: Path) ->
                                 "spans": [
                                     {
                                         "traceId": 123,
-                                        "spanId": "span",
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                     }
@@ -1382,6 +1437,43 @@ def test_otlp_json_import_rejects_non_string_span_identifiers(tmp_path: Path) ->
 
     with pytest.raises(OtelImportError, match="span traceId must be a non-empty string"):
         import_otlp_json(source, output, name="malformed")
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("traceId", "f" * 31, "span traceId must be a 32-character hexadecimal string"),
+        ("traceId", "g" * 32, "span traceId must be a 32-character hexadecimal string"),
+        ("traceId", "0" * 32, "span traceId must not be all zero"),
+        ("spanId", "f" * 15, "span spanId must be a 16-character hexadecimal string"),
+        ("spanId", "g" * 16, "span spanId must be a 16-character hexadecimal string"),
+        ("spanId", "0" * 16, "span spanId must not be all zero"),
+    ),
+)
+def test_otlp_json_import_rejects_invalid_hex_span_identifiers(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    source = tmp_path / "invalid-id.json"
+    output = tmp_path / "invalid-id.runpack"
+    span = {
+        "traceId": _trace_id("trace"),
+        "spanId": _span_id("span"),
+        "startTimeUnixNano": "1",
+        "endTimeUnixNano": "2",
+        field: value,
+    }
+    source.write_text(
+        json.dumps({"resourceSpans": [{"scopeSpans": [{"spans": [span]}]}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match=message):
+        import_otlp_json(source, output, name="invalid-id")
 
     assert not output.exists()
 
@@ -1448,8 +1540,8 @@ def test_otlp_json_import_normalizes_source_directory_resolution_failures(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                     }
@@ -1492,8 +1584,8 @@ def test_otlp_json_import_preserves_a_colliding_temporary_file(
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                     }
@@ -1519,3 +1611,13 @@ def test_otlp_json_import_preserves_a_colliding_temporary_file(
 
     assert temporary.read_bytes() == b"preserve me"
     assert not output.exists()
+
+
+def test_otlp_json_import_refuses_to_overwrite_a_dangling_symlink(tmp_path: Path) -> None:
+    output = tmp_path / "trace.runpack"
+    output.symlink_to(tmp_path / "missing.runpack")
+
+    with pytest.raises(OtelImportError, match="refusing to overwrite"):
+        import_otlp_json(tmp_path / "missing.json", output, name="collision")
+
+    assert output.is_symlink()

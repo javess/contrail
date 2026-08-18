@@ -1,0 +1,96 @@
+name: Bug report
+description: Report a reproducible, non-security Contrail defect
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Contrail. Start with the smallest reproduction you can share safely. For suspected vulnerabilities, follow [SECURITY.md](../../SECURITY.md) instead of opening a public issue.
+
+  - type: input
+    id: contrail-version
+    attributes:
+      label: Contrail version
+      description: Paste the exact installed version.
+      placeholder: "0.9.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Paste the full output of `python --version`.
+      placeholder: "Python 3.12.0"
+    validations:
+      required: true
+
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system
+      description: Include the operating system, release, and architecture.
+      placeholder: "macOS 15 arm64 or Ubuntu 24.04 x86_64"
+    validations:
+      required: true
+
+  - type: input
+    id: installation-method
+    attributes:
+      label: Installation method
+      description: State how Contrail was installed, including whether this is a wheel, tool install, or source checkout.
+      placeholder: "uv tool install ... or uv sync --locked"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the smallest commands or code that reliably reproduce the defect and their exit statuses.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-outcome
+    attributes:
+      label: Expected outcome
+      description: Describe the public result, output, or exit status you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-outcome
+    attributes:
+      label: Actual outcome
+      description: Describe what happened, including diagnostics and the observed exit status.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence-artifacts
+    attributes:
+      label: Evidence artifacts (optional)
+      description: If they are safe to share, attach the exact four demo-shaped artifacts below. Explain any redaction and confirm the redacted evidence still reproduces the defect.
+      placeholder: |
+        baseline.runpack
+        candidate.runpack
+        contract.yaml
+        proofline-report.json
+
+  - type: checkboxes
+    id: public-report
+    attributes:
+      label: Public-report acknowledgement
+      options:
+        - label: I confirm this is not a suspected security vulnerability and does not contain exploit details; security reports belong in the private process described by SECURITY.md.
+          required: true
+
+  - type: checkboxes
+    id: redaction-review
+    attributes:
+      label: Evidence review
+      options:
+        - label: I reviewed this report and every attached artifact for credentials, personal data, sensitive command arguments and paths, output attachments, logs, and imported telemetry, and redacted them where necessary.
+          required: true

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -12,7 +14,8 @@ import pytest
 
 import runtime_tools.rundiff.report as report_module
 from runtime_tools import record_process
-from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
+from runtime_tools.inspect import inspect_runpack, render_summary
+from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue, Measurement
 from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.rundiff.report import render_diff
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
@@ -144,6 +147,77 @@ def _write_cpu_runpack(path: Path, user: float, system: float) -> None:
                 Measurement("process.cpu.system", system, "s", 1, None, {}),
             )
         )
+
+
+def test_rundiff_uses_one_resolved_baseline_across_all_analysis_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    validated = tmp_path / "validated.runpack"
+    replacement = tmp_path / "replacement.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    requested = tmp_path / "requested.runpack"
+    _write_runpack(validated, candidate=False)
+    _write_runpack(replacement, candidate=True)
+    shutil.copyfile(validated, candidate)
+    real_resolve = Path.resolve
+    resolution_count = 0
+
+    def retarget_after_validation(path: Path, strict: bool = False) -> Path:
+        nonlocal resolution_count
+        if path == requested:
+            resolution_count += 1
+            return validated if resolution_count == 1 else replacement
+        return real_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", retarget_after_validation)
+
+    diff = compare_runpacks(requested, candidate)
+
+    assert diff.match_level == "exact"
+    assert diff.operation_count_changes == ()
+    assert resolution_count == 1
+
+
+def test_rundiff_uses_one_snapshot_per_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    _write_runpack(baseline, candidate=False)
+    shutil.copyfile(baseline, candidate)
+    real_close = RunpackReader.close
+    mutated = False
+
+    def mutate_candidate_after_snapshot(reader: RunpackReader) -> None:
+        nonlocal mutated
+        real_close(reader)
+        if reader.path == candidate.resolve() and not mutated:
+            mutated = True
+            with RunpackWriter.open_existing(candidate) as writer:
+                writer.add_event(
+                    Event(
+                        "late-error",
+                        "client.request",
+                        "late error",
+                        "gateway",
+                        4_000_000,
+                        5_000_000,
+                        "test",
+                        None,
+                        99,
+                        {"error": True},
+                    )
+                )
+
+    monkeypatch.setattr(RunpackReader, "close", mutate_candidate_after_snapshot)
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.outcome == "equivalent"
+    assert diff.operation_errors_equivalent is True
+    assert diff.operation_count_changes == ()
+    with sqlite3.connect(candidate) as connection:
+        assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 3
 
 
 def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
@@ -358,6 +432,62 @@ def test_reader_aggregates_peer_dependencies_from_client_rows(tmp_path: Path) ->
         }
 
 
+def test_compare_runpacks_deduplicates_peer_hint_for_an_explicit_call(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    cases: tuple[tuple[Path, dict[str, JsonValue]], ...] = (
+        (baseline, {}),
+        (candidate, {"peer.service": "database"}),
+    )
+    for path, attributes in cases:
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(path.stem, path.stem, 0, 10, (), str(tmp_path), 0, None, {})
+            )
+            writer.add_entities(
+                (
+                    Entity("api", "service", "api", None, {}),
+                    Entity("database", "service", "database", None, {}),
+                )
+            )
+            writer.add_events(
+                (
+                    Event(
+                        "request",
+                        "client.request",
+                        "query",
+                        "api",
+                        1,
+                        9,
+                        "test",
+                        None,
+                        0,
+                        attributes,
+                    ),
+                    Event(
+                        "handler",
+                        "server.request",
+                        "query",
+                        "database",
+                        2,
+                        8,
+                        "test",
+                        None,
+                        0,
+                        {},
+                    ),
+                )
+            )
+            writer.add_causal_edge(CausalEdge("request", "handler", "calls", 1.0, {}))
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.match_level == "structural"
+    assert diff.edge_count_changes == ()
+    with RunpackReader(candidate) as reader:
+        assert reader.peer_service_edge_counts() == {}
+
+
 def test_compare_runpacks_keeps_edges_between_same_named_entity_instances(
     tmp_path: Path,
 ) -> None:
@@ -492,6 +622,102 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert payload["operation_concurrency_changes"][0]["candidate"] == 3
 
 
+def test_rundiff_cli_normalizes_overlong_runpack_paths() -> None:
+    compared = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "compare",
+            "a" * 5000,
+            "candidate",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert compared.returncode == 2
+    assert compared.stdout == ""
+    assert compared.stderr.startswith("rundiff: could not resolve runpack path: ")
+    assert "Traceback" not in compared.stderr
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_report"),
+    (
+        ("different", '"outcome": "different"'),
+        ("unknown", '"outcome": "unknown"'),
+    ),
+)
+def test_rundiff_cli_can_require_an_equivalent_behavioral_outcome(
+    tmp_path: Path, outcome: str, expected_report: str
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    if outcome == "different":
+        _write_runpack(baseline, candidate=False)
+        _write_runpack(candidate, candidate=True)
+    else:
+        for path in (baseline, candidate):
+            with RunpackWriter(path) as writer:
+                writer.add_execution(
+                    Execution(path.stem, path.stem, 0, 1, (), str(tmp_path), 0, None, {})
+                )
+
+    compared = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "compare",
+            str(baseline),
+            str(candidate),
+            "--format",
+            "json",
+            "--require-equivalent-outcome",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert compared.returncode == 1
+    assert expected_report in compared.stdout
+    assert compared.stderr == ""
+
+
+def test_rundiff_cli_outcome_gate_ignores_resource_and_structural_changes(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=True)
+    with sqlite3.connect(candidate) as connection:
+        connection.execute("UPDATE events SET attributes_json = '{}' WHERE attributes_json != '{}'")
+
+    compared = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "compare",
+            str(baseline),
+            str(candidate),
+            "--require-equivalent-outcome",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert compared.returncode == 0
+    assert "Outcome\n  equivalent" in compared.stdout
+    assert "Entity changes" in compared.stdout
+    assert "Runtime\n  10.0ms → 20.0ms (+100.0%)" in compared.stdout
+
+
 def test_rundiff_text_hides_submillisecond_duration_noise_but_json_retains_it(
     tmp_path: Path,
 ) -> None:
@@ -511,9 +737,50 @@ def test_rundiff_text_hides_submillisecond_duration_noise_but_json_retains_it(
     text_report = render_diff(diff, "text")
     json_report = json.loads(render_diff(diff, "json"))
 
-    assert "Aggregate operation duration changes" not in text_report
+    assert "Aggregate operation duration changes" in text_report
+    assert "1 change with delta below 1.0ms omitted from text output" in text_report
+    assert "No entity, structural, error, concurrency, duration" not in text_report
     assert "100.0µs → 101.0µs" in text_report
     assert len(json_report["operation_duration_changes"]) == 1
+
+
+def test_rundiff_text_counts_hidden_duration_changes_alongside_visible_rows(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, durations in (
+        (baseline, (100_000, 1_000_000)),
+        (candidate, (101_000, 3_000_000)),
+    ):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(path.stem, path.stem, 0, 10_000_000, (), str(tmp_path), 0, None, {})
+            )
+            writer.add_entity(Entity("worker", "service", "worker", None, {}))
+            writer.add_events(
+                Event(
+                    f"work-{index}",
+                    "operation",
+                    f"work-{index}",
+                    "worker",
+                    0,
+                    duration,
+                    "test",
+                    None,
+                    index,
+                    {},
+                )
+                for index, duration in enumerate(durations)
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+    text_report = render_diff(diff, "text")
+    json_report = json.loads(render_diff(diff, "json"))
+
+    assert "1 change with delta below 1.0ms omitted from text output" in text_report
+    assert "1.0ms → 3.0ms (+200.0%)" in text_report
+    assert len(json_report["operation_duration_changes"]) == 2
 
 
 def test_rundiff_text_report_bounds_each_change_section(
@@ -578,6 +845,105 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
         "No entity, structural, error, concurrency, duration, or operation-count changes."
         in compared.stdout
     )
+
+
+def test_rundiff_record_rejects_an_output_limit_without_output_capture(tmp_path: Path) -> None:
+    output = tmp_path / "ignored-limit.runpack"
+
+    recorded = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "record",
+            "ignored-limit",
+            "--output",
+            str(output),
+            "--output-limit-bytes",
+            "4",
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert recorded.returncode == 2
+    assert recorded.stdout == ""
+    assert recorded.stderr == "rundiff: --output-limit-bytes requires --include-output\n"
+    assert "Traceback" not in recorded.stderr
+    assert not output.exists()
+
+
+def test_rundiff_record_uses_an_explicit_working_directory(tmp_path: Path) -> None:
+    working_directory = tmp_path / "work"
+    working_directory.mkdir()
+    output = tmp_path / "cwd.runpack"
+
+    recorded = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "record",
+            "cwd",
+            "--cwd",
+            str(working_directory),
+            "--output",
+            str(output),
+            "--",
+            sys.executable,
+            "-c",
+            "from pathlib import Path; print(Path.cwd().name)",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert recorded.returncode == 0
+    assert recorded.stdout == "work\n"
+    with RunpackReader(output) as reader:
+        assert reader.execution().working_directory == str(working_directory)
+
+
+def test_rundiff_record_identifies_custom_environment_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "environment.runpack"
+    monkeypatch.setenv("CONTRAIL_TEST_FEATURE_MODE", "experimental")
+
+    recorded = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "record",
+            "environment",
+            "--identify-env",
+            "CONTRAIL_TEST_FEATURE_MODE",
+            "--output",
+            str(output),
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert recorded.returncode == 0
+    with RunpackReader(output) as reader:
+        environment = reader.execution().metadata["environment"]
+    assert isinstance(environment, dict)
+    identities = environment["selected_value_sha256"]
+    assert isinstance(identities, dict)
+    assert identities["CONTRAIL_TEST_FEATURE_MODE"] == hashlib.sha256(b"experimental").hexdigest()
 
 
 def test_rundiff_record_normalizes_child_signal_exit_status(tmp_path: Path) -> None:
@@ -709,6 +1075,26 @@ def test_compare_runpacks_treats_changed_stderr_as_different_behavior(tmp_path: 
     assert "stderr:      different" in render_diff(diff, "text")
 
 
+def test_compare_runpacks_reports_signaled_exit_statuses(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, exit_code in ((baseline, 0), (candidate, -signal.SIGTERM)):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(path.stem, path.stem, 0, 1, (), str(tmp_path), exit_code, None, {})
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.baseline_exit_code == 0
+    assert diff.candidate_exit_code == -signal.SIGTERM
+    assert diff.exit_code_equivalent is False
+    assert "exit status: exit 0 → signal 15 (different)" in render_diff(diff, "text")
+    payload = json.loads(render_diff(diff, "json"))
+    assert payload["baseline"]["exit_code"] == 0
+    assert payload["candidate"]["exit_code"] == -signal.SIGTERM
+
+
 def test_compare_runpacks_reports_selected_environment_drift_without_hashes(
     tmp_path: Path,
 ) -> None:
@@ -765,6 +1151,39 @@ def test_compare_runpacks_reports_selected_environment_drift_without_hashes(
         "change_kind": "changed",
         "variable": "TZ",
     }
+
+
+def test_compare_runpacks_does_not_claim_environment_drift_without_evidence(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, metadata in (
+        (baseline, {}),
+        (
+            candidate,
+            {"environment": {"selected_value_sha256": {"CI": "a" * 64}}},
+        ),
+    ):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(
+                    path.stem,
+                    path.stem,
+                    0,
+                    1,
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    cast(Any, metadata),
+                )
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.environment_changes == ()
+    assert "Environment changes" not in render_diff(diff, "text")
 
 
 def test_compare_runpacks_normalizes_environment_identity_case(tmp_path: Path) -> None:
@@ -850,7 +1269,55 @@ def test_compare_runpacks_keeps_incomplete_output_identity_unknown(tmp_path: Pat
     assert "baseline: incomplete stdout identity" in render_diff(diff, "text")
 
 
-@pytest.mark.parametrize("invalid_completeness", ("false", 0))
+def test_compare_runpacks_warns_about_relay_failures_without_changing_equivalence(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, stdout_error, stderr_error in (
+        (baseline, "BrokenPipeError: consumer\x1b[31m closed", None),
+        (candidate, None, "OSError: terminal closed"),
+    ):
+        stdout: dict[str, Any] = {"bytes": 4, "sha256": _STDOUT_IDENTITY}
+        stderr: dict[str, Any] = {"bytes": 0, "sha256": _STDERR_IDENTITY}
+        if stdout_error is not None:
+            stdout["relay_error"] = stdout_error
+        if stderr_error is not None:
+            stderr["relay_error"] = stderr_error
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(
+                    path.stem,
+                    path.stem,
+                    0,
+                    1,
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    {"output": {"stdout": stdout, "stderr": stderr}},
+                )
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+    report = render_diff(diff, "text")
+    payload = json.loads(render_diff(diff, "json"))
+
+    assert diff.baseline_stdout_relay_error == "BrokenPipeError: consumer\x1b[31m closed"
+    assert diff.baseline_stderr_relay_error is None
+    assert diff.candidate_stdout_relay_error is None
+    assert diff.candidate_stderr_relay_error == "OSError: terminal closed"
+    assert diff.output_equivalent is True
+    assert diff.stderr_equivalent is True
+    assert diff.outcome == "equivalent"
+    assert "baseline: stdout relay failed (BrokenPipeError: consumer\\x1b[31m closed)" in report
+    assert "candidate: stderr relay failed (OSError: terminal closed)" in report
+    assert "\x1b" not in report
+    assert payload["baseline_stdout_relay_error"] == ("BrokenPipeError: consumer\x1b[31m closed")
+    assert payload["candidate_stderr_relay_error"] == "OSError: terminal closed"
+
+
+@pytest.mark.parametrize("invalid_completeness", ("false", 0, None))
 def test_compare_runpacks_keeps_invalid_output_completeness_unknown(
     tmp_path: Path, invalid_completeness: object
 ) -> None:
@@ -870,11 +1337,15 @@ def test_compare_runpacks_keeps_invalid_output_completeness_unknown(
         writer.set_execution_metadata(execution.id, metadata)
 
     diff = compare_runpacks(baseline, candidate)
+    baseline_summary = json.loads(render_summary(inspect_runpack(baseline), "json"))
+    candidate_summary = json.loads(render_summary(inspect_runpack(candidate), "json"))
 
     assert diff.output_equivalent is None
     assert diff.stderr_equivalent is True
     assert diff.outcome == "unknown"
     assert "stdout:      unknown" in render_diff(diff, "text")
+    assert baseline_summary["stdout_complete"] is None
+    assert candidate_summary["stdout_complete"] is True
 
 
 def test_compare_runpacks_keeps_invalid_output_byte_counts_unknown(tmp_path: Path) -> None:
@@ -1013,7 +1484,27 @@ def test_compare_runpacks_surfaces_incomplete_annotation_evidence(tmp_path: Path
     assert "candidate: annotations ignored" in render_diff(diff, "text")
 
 
-def test_compare_runpacks_surfaces_unresolved_causal_references(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("otel_metadata", "expected_count", "expected_warning"),
+    (
+        (
+            {"missing_parent_count": 2, "missing_link_count": 1},
+            3,
+            "candidate: 3 unresolved causal references",
+        ),
+        (
+            {"missing_parent_count": "invalid"},
+            None,
+            "candidate: causal completeness metadata invalid",
+        ),
+    ),
+)
+def test_compare_runpacks_downgrades_structural_match_with_incomplete_causal_evidence(
+    tmp_path: Path,
+    otel_metadata: dict[str, Any],
+    expected_count: int | None,
+    expected_warning: str,
+) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"
     _write_runpack(baseline, candidate=False)
@@ -1021,14 +1512,18 @@ def test_compare_runpacks_surfaces_unresolved_causal_references(tmp_path: Path) 
     with sqlite3.connect(candidate) as connection:
         row = connection.execute("SELECT metadata_json FROM executions").fetchone()
         metadata = json.loads(row[0])
-        metadata["otel"] = {"missing_parent_count": 2, "missing_link_count": 1}
-        connection.execute("UPDATE executions SET metadata_json = ?", (json.dumps(metadata),))
+        metadata["otel"] = otel_metadata
+        connection.execute(
+            "UPDATE executions SET id = ?, metadata_json = ?",
+            ("candidate", json.dumps(metadata)),
+        )
 
     diff = compare_runpacks(baseline, candidate)
 
     assert diff.baseline_missing_causal_references == 0
-    assert diff.candidate_missing_causal_references == 3
-    assert "candidate: 3 unresolved causal references" in render_diff(diff, "text")
+    assert diff.candidate_missing_causal_references == expected_count
+    assert diff.match_level == "aggregate"
+    assert expected_warning in render_diff(diff, "text")
 
 
 def test_compare_runpacks_keeps_failure_equivalence_unknown_with_dropped_attributes(

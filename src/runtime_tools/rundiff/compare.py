@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from runtime_tools.batchscope import analyze_runpack
-from runtime_tools.inspect import ExecutionSummary, inspect_runpack
+from runtime_tools.batchscope.analysis import analyze_reader
+from runtime_tools.inspect import ExecutionSummary, inspect_reader
+from runtime_tools.json_support import output_document
 from runtime_tools.model import JsonValue
-from runtime_tools.storage import RunpackError, RunpackReader
+from runtime_tools.storage import RunpackError, RunpackReader, resolve_runpack_path
 
 type Outcome = Literal["equivalent", "different", "unknown"]
 
@@ -187,9 +188,15 @@ class ExecutionDiff:
     candidate_missing_causal_references: int | None
     baseline_dropped_attribute_count: int | None
     candidate_dropped_attribute_count: int | None
+    baseline_stdout_relay_error: str | None
+    baseline_stderr_relay_error: str | None
+    candidate_stdout_relay_error: str | None
+    candidate_stderr_relay_error: str | None
     baseline_incomplete_streams: tuple[str, ...]
     candidate_incomplete_streams: tuple[str, ...]
     outcome: Outcome
+    baseline_exit_code: int | None
+    candidate_exit_code: int | None
     exit_code_equivalent: bool | None
     output_equivalent: bool | None
     stderr_equivalent: bool | None
@@ -209,47 +216,66 @@ class ExecutionDiff:
     environment_changes: tuple[EnvironmentChange, ...]
 
     def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "baseline": {"id": self.baseline_id, "name": self.baseline_name},
-            "candidate": {"id": self.candidate_id, "name": self.candidate_name},
-            "match_level": self.match_level,
-            "baseline_annotation_error": self.baseline_annotation_error,
-            "candidate_annotation_error": self.candidate_annotation_error,
-            "baseline_missing_causal_references": self.baseline_missing_causal_references,
-            "candidate_missing_causal_references": self.candidate_missing_causal_references,
-            "baseline_dropped_attribute_count": self.baseline_dropped_attribute_count,
-            "candidate_dropped_attribute_count": self.candidate_dropped_attribute_count,
-            "baseline_incomplete_streams": list(self.baseline_incomplete_streams),
-            "candidate_incomplete_streams": list(self.candidate_incomplete_streams),
-            "outcome": self.outcome,
-            "exit_code_equivalent": self.exit_code_equivalent,
-            "output_equivalent": self.output_equivalent,
-            "stderr_equivalent": self.stderr_equivalent,
-            "operation_errors_equivalent": self.operation_errors_equivalent,
-            "wall_time": self.wall_time.as_json_value(),
-            "cpu_time": self.cpu_time.as_json_value(),
-            "critical_path": self.critical_path.as_json_value(),
-            "baseline_critical_path_certainty": self.baseline_critical_path_certainty,
-            "candidate_critical_path_certainty": self.candidate_critical_path_certainty,
-            "peak_memory": self.peak_memory.as_json_value(),
-            "entity_count_changes": [
-                change.as_json_value() for change in self.entity_count_changes
-            ],
-            "operation_count_changes": [
-                change.as_json_value() for change in self.operation_count_changes
-            ],
-            "operation_error_count_changes": [
-                change.as_json_value() for change in self.operation_error_count_changes
-            ],
-            "operation_concurrency_changes": [
-                change.as_json_value() for change in self.operation_concurrency_changes
-            ],
-            "operation_duration_changes": [
-                change.as_json_value() for change in self.operation_duration_changes
-            ],
-            "edge_count_changes": [change.as_json_value() for change in self.edge_count_changes],
-            "environment_changes": [change.as_json_value() for change in self.environment_changes],
-        }
+        return output_document(
+            "rundiff.compare",
+            {
+                "baseline": {
+                    "id": self.baseline_id,
+                    "name": self.baseline_name,
+                    "exit_code": self.baseline_exit_code,
+                },
+                "candidate": {
+                    "id": self.candidate_id,
+                    "name": self.candidate_name,
+                    "exit_code": self.candidate_exit_code,
+                },
+                "match_level": self.match_level,
+                "baseline_annotation_error": self.baseline_annotation_error,
+                "candidate_annotation_error": self.candidate_annotation_error,
+                "baseline_missing_causal_references": self.baseline_missing_causal_references,
+                "candidate_missing_causal_references": self.candidate_missing_causal_references,
+                "baseline_dropped_attribute_count": self.baseline_dropped_attribute_count,
+                "candidate_dropped_attribute_count": self.candidate_dropped_attribute_count,
+                "baseline_stdout_relay_error": self.baseline_stdout_relay_error,
+                "baseline_stderr_relay_error": self.baseline_stderr_relay_error,
+                "candidate_stdout_relay_error": self.candidate_stdout_relay_error,
+                "candidate_stderr_relay_error": self.candidate_stderr_relay_error,
+                "baseline_incomplete_streams": list(self.baseline_incomplete_streams),
+                "candidate_incomplete_streams": list(self.candidate_incomplete_streams),
+                "outcome": self.outcome,
+                "exit_code_equivalent": self.exit_code_equivalent,
+                "output_equivalent": self.output_equivalent,
+                "stderr_equivalent": self.stderr_equivalent,
+                "operation_errors_equivalent": self.operation_errors_equivalent,
+                "wall_time": self.wall_time.as_json_value(),
+                "cpu_time": self.cpu_time.as_json_value(),
+                "critical_path": self.critical_path.as_json_value(),
+                "baseline_critical_path_certainty": self.baseline_critical_path_certainty,
+                "candidate_critical_path_certainty": self.candidate_critical_path_certainty,
+                "peak_memory": self.peak_memory.as_json_value(),
+                "entity_count_changes": [
+                    change.as_json_value() for change in self.entity_count_changes
+                ],
+                "operation_count_changes": [
+                    change.as_json_value() for change in self.operation_count_changes
+                ],
+                "operation_error_count_changes": [
+                    change.as_json_value() for change in self.operation_error_count_changes
+                ],
+                "operation_concurrency_changes": [
+                    change.as_json_value() for change in self.operation_concurrency_changes
+                ],
+                "operation_duration_changes": [
+                    change.as_json_value() for change in self.operation_duration_changes
+                ],
+                "edge_count_changes": [
+                    change.as_json_value() for change in self.edge_count_changes
+                ],
+                "environment_changes": [
+                    change.as_json_value() for change in self.environment_changes
+                ],
+            },
+        )
 
 
 def _percent(baseline: float | int | None, candidate: float | int | None) -> float | None:
@@ -490,15 +516,15 @@ def _structural_entity_parent_keys(
     }
 
 
-def _selected_environment(metadata: dict[str, JsonValue]) -> dict[str, str]:
+def _selected_environment(metadata: dict[str, JsonValue]) -> dict[str, str] | None:
     environment = metadata.get("environment")
     if environment is None:
-        return {}
+        return None
     if not isinstance(environment, dict):
         raise RunpackError("execution environment metadata must be an object")
     selected = environment.get("selected_value_sha256")
     if selected is None:
-        return {}
+        return None
     if not isinstance(selected, dict):
         raise RunpackError("selected environment identities must be an object")
     result: dict[str, str] = {}
@@ -516,8 +542,10 @@ def _selected_environment(metadata: dict[str, JsonValue]) -> dict[str, str]:
 
 
 def _environment_changes(
-    baseline: dict[str, str], candidate: dict[str, str]
+    baseline: dict[str, str] | None, candidate: dict[str, str] | None
 ) -> tuple[EnvironmentChange, ...]:
+    if baseline is None or candidate is None:
+        return ()
     return tuple(
         EnvironmentChange(variable, variable in baseline, variable in candidate)
         for variable in sorted(baseline.keys() | candidate.keys())
@@ -525,31 +553,32 @@ def _environment_changes(
     )
 
 
-def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff:
-    baseline_summary = inspect_runpack(baseline_path)
-    candidate_summary = inspect_runpack(candidate_path)
-    baseline_analysis = analyze_runpack(baseline_path)
-    candidate_analysis = analyze_runpack(candidate_path)
-    with RunpackReader(baseline_path) as baseline_reader:
-        baseline_environment = _selected_environment(baseline_reader.execution().metadata)
-        baseline_entities = baseline_reader.entity_counts()
-        baseline_operations = baseline_reader.operation_counts()
-        baseline_errors = baseline_reader.operation_error_counts()
-        baseline_concurrency = baseline_reader.operation_max_concurrency()
-        baseline_durations = baseline_reader.operation_duration_totals()
-        baseline_edges = _all_edge_counts(baseline_reader)
-        baseline_structural_edges = _structural_edge_keys(baseline_reader)
-        baseline_structural_parents = _structural_entity_parent_keys(baseline_reader)
-    with RunpackReader(candidate_path) as candidate_reader:
-        candidate_environment = _selected_environment(candidate_reader.execution().metadata)
-        candidate_entities = candidate_reader.entity_counts()
-        candidate_operations = candidate_reader.operation_counts()
-        candidate_errors = candidate_reader.operation_error_counts()
-        candidate_concurrency = candidate_reader.operation_max_concurrency()
-        candidate_durations = candidate_reader.operation_duration_totals()
-        candidate_edges = _all_edge_counts(candidate_reader)
-        candidate_structural_edges = _structural_edge_keys(candidate_reader)
-        candidate_structural_parents = _structural_entity_parent_keys(candidate_reader)
+def compare_readers(
+    baseline_reader: RunpackReader, candidate_reader: RunpackReader
+) -> ExecutionDiff:
+    """Compare two runs using one stable snapshot of each artifact."""
+    baseline_summary = inspect_reader(baseline_reader)
+    candidate_summary = inspect_reader(candidate_reader)
+    baseline_analysis = analyze_reader(baseline_reader, baseline_summary)
+    candidate_analysis = analyze_reader(candidate_reader, candidate_summary)
+    baseline_environment = _selected_environment(baseline_reader.execution().metadata)
+    baseline_entities = baseline_reader.entity_counts()
+    baseline_operations = baseline_reader.operation_counts()
+    baseline_errors = baseline_reader.operation_error_counts()
+    baseline_concurrency = baseline_reader.operation_max_concurrency()
+    baseline_durations = baseline_reader.operation_duration_totals()
+    baseline_edges = _all_edge_counts(baseline_reader)
+    baseline_structural_edges = _structural_edge_keys(baseline_reader)
+    baseline_structural_parents = _structural_entity_parent_keys(baseline_reader)
+    candidate_environment = _selected_environment(candidate_reader.execution().metadata)
+    candidate_entities = candidate_reader.entity_counts()
+    candidate_operations = candidate_reader.operation_counts()
+    candidate_errors = candidate_reader.operation_error_counts()
+    candidate_concurrency = candidate_reader.operation_max_concurrency()
+    candidate_durations = candidate_reader.operation_duration_totals()
+    candidate_edges = _all_edge_counts(candidate_reader)
+    candidate_structural_edges = _structural_edge_keys(candidate_reader)
+    candidate_structural_parents = _structural_entity_parent_keys(candidate_reader)
 
     exit_equivalent = _known_equivalence(baseline_summary.exit_code, candidate_summary.exit_code)
     output_equivalent = _output_equivalence(
@@ -581,7 +610,9 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
     if baseline_summary.id == candidate_summary.id:
         match_level: Literal["exact", "structural", "aggregate"] = "exact"
     elif (
-        baseline_entities.keys() == candidate_entities.keys()
+        baseline_summary.missing_causal_references == 0
+        and candidate_summary.missing_causal_references == 0
+        and baseline_entities.keys() == candidate_entities.keys()
         and baseline_operations.keys() == candidate_operations.keys()
         and baseline_edges.keys() == candidate_edges.keys()
         and baseline_structural_edges == candidate_structural_edges
@@ -602,6 +633,10 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         candidate_missing_causal_references=candidate_summary.missing_causal_references,
         baseline_dropped_attribute_count=baseline_summary.dropped_attribute_count,
         candidate_dropped_attribute_count=candidate_summary.dropped_attribute_count,
+        baseline_stdout_relay_error=baseline_summary.stdout_relay_error,
+        baseline_stderr_relay_error=baseline_summary.stderr_relay_error,
+        candidate_stdout_relay_error=candidate_summary.stdout_relay_error,
+        candidate_stderr_relay_error=candidate_summary.stderr_relay_error,
         baseline_incomplete_streams=_incomplete_streams(baseline_summary),
         candidate_incomplete_streams=_incomplete_streams(candidate_summary),
         outcome=_outcome(
@@ -610,6 +645,8 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
             stderr_equivalent,
             error_equivalent,
         ),
+        baseline_exit_code=baseline_summary.exit_code,
+        candidate_exit_code=candidate_summary.exit_code,
         exit_code_equivalent=exit_equivalent,
         output_equivalent=output_equivalent,
         stderr_equivalent=stderr_equivalent,
@@ -657,3 +694,13 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         edge_count_changes=_edge_changes(baseline_edges, candidate_edges),
         environment_changes=_environment_changes(baseline_environment, candidate_environment),
     )
+
+
+def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff:
+    baseline_path = resolve_runpack_path(baseline_path)
+    candidate_path = resolve_runpack_path(candidate_path)
+    with (
+        RunpackReader(baseline_path) as baseline_reader,
+        RunpackReader(candidate_path) as candidate_reader,
+    ):
+        return compare_readers(baseline_reader, candidate_reader)

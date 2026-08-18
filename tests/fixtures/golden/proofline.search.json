@@ -1,0 +1,43 @@
+{
+  "counterexample": {
+    "experiment": {
+      "baseline_exit_code": 0,
+      "baseline_runpack": "/artifacts/baseline.runpack",
+      "candidate_exit_code": 1,
+      "candidate_runpack": "/artifacts/candidate.runpack",
+      "document_type": "proofline.experiment",
+      "format_version": "1",
+      "verification": {
+        "baseline_id": "baseline-1",
+        "candidate_id": "candidate-1",
+        "claim_count": 2,
+        "document_type": "proofline.verification",
+        "format_version": "1",
+        "passed": false,
+        "results": [
+          {
+            "contract": "latency",
+            "expected": "at most 10%",
+            "name": "wall time",
+            "observed": "5%",
+            "status": "pass",
+            "type": "relative_change"
+          },
+          {
+            "contract": "output",
+            "expected": "equal",
+            "name": "stdout",
+            "observed": "candidate stdout incomplete",
+            "status": "unverifiable",
+            "type": "output_equal"
+          }
+        ]
+      }
+    },
+    "parameters": {"batches": 4, "workers": 2},
+    "shrink_budget_exhausted": true
+  },
+  "document_type": "proofline.search",
+  "format_version": "1",
+  "max_examples": 7
+}

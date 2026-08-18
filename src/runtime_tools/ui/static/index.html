@@ -16,7 +16,18 @@
     </header>
 
     <main>
-      <section id="summary" class="summary" aria-label="Execution summary"></section>
+      <section id="proofline" class="proofline hidden" aria-label="Proofline contract evidence">
+        <div class="section-heading">
+          <div>
+            <p id="proofline-eyebrow" class="eyebrow">PROOFLINE / VERIFIED</p>
+            <h2 id="proofline-heading">Runtime contract findings</h2>
+          </div>
+          <div id="proofline-summary" class="proofline-summary"></div>
+        </div>
+        <div id="proofline-findings" class="proofline-findings"></div>
+      </section>
+
+      <section id="summary" class="summary" aria-label="Execution summary" tabindex="-1"></section>
 
       <section class="analysis-shell" aria-label="Execution analysis">
         <div class="section-heading">

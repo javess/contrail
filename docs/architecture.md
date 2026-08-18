@@ -66,7 +66,25 @@ additive minor versions. Version 1.1 adds optional attachments while version 1
 core tables remain readable. Runpacks use SQLite's DELETE journal mode so a
 completed artifact is one portable file; readers reject WAL-mode databases that
 may depend on unshipped sidecars. Executable schema triggers are also rejected
-before inspection or enrichment.
+before inspection or enrichment. The exact read and write support rules are in
+the [compatibility policy](compatibility.md).
+
+Each logical inspection, comparison, UI payload, and contract verification uses
+one SQLite read snapshot per artifact. Size checks, normalized facts, and final
+verdicts therefore cannot combine different committed versions of one runpack.
+Enrichment is held to the same rule: it copies one validated, descriptor-bound
+source snapshot into a private artifact, then derives source-dependent adapter
+facts from that copy before mutation. Replacing the source pathname cannot
+combine one execution generation with correlations or time-window decisions
+from another.
+
+Explained Proofline generation also streams SHA-256 over that same open file
+descriptor and records the byte size for both snapshots. When the retained UI
+loads the report, it opens and hashes each supplied runpack once, verifies those
+bindings, and uses the same descriptor-bound SQLite snapshots for RunDiff and
+policy replay. A pathname replacement therefore cannot move validation,
+identity, analysis, and replay onto different file generations. Ordinary
+non-explained output does not compute or expose these byte identities.
 
 ## Package direction
 
@@ -81,6 +99,21 @@ capture adapters --> core model/storage <-- analysis packages
 Core cannot import capture or analysis code. Analyses may share query helpers,
 but they must return structured facts before rendering prose. LLMs and hosted
 services are outside the core and are never required for capture or analysis.
+
+The distribution enforces that direction as four internal layers:
+
+```text
+foundation <- adapters <- analyses <- presentation
+```
+
+Foundation owns the normalized model, artifact and storage safety,
+serialization, and shared support. Adapters translate external evidence.
+Analyses derive structured facts. Presentation owns the package facade, CLIs,
+reports, demo, and local UI. A layer may import itself or anything to its left;
+the package facade is for external consumers and is not an internal dependency.
+`tools/check_architecture.py` checks both this direction and internal import
+cycles in CI. See [Python development](development.md) for the concrete module
+classification and validation workflow.
 
 ## Scale strategy
 
@@ -97,6 +130,17 @@ not stored by default because they commonly contain secrets. Version 1 records
 only selected non-sensitive environment metadata plus output byte counts and
 hashes. Bounded output content and raw OTLP input require explicit CLI flags;
 normal inspect and UI paths do not render their content.
+
+The normalized execution deliberately stores the exact command arguments and
+resolved working directory. Users must keep credentials out of argv and path
+names before sharing a runpack. Selected environment and output hashes are
+behavioral identities, not a secrecy mechanism; low-entropy values may be
+guessable.
+
+OTLP log enrichment is an explicit content import, not a redaction boundary.
+Log bodies and attributes become normalized event evidence and may be rendered
+by queries or UI details. Sensitive log fields must be scrubbed before import or
+before the enriched runpack is shared.
 
 Local capture identifies only these selected environment variables by SHA-256,
 never plaintext: `CI`, `CUDA_VISIBLE_DEVICES`, locale/timezone settings,

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import math
+import time
 from pathlib import Path
 from typing import Never
 
@@ -18,6 +20,7 @@ class AnnotationError(ValueError):
 _MAX_TIMESTAMP_NS = (1 << 63) - 1
 MAX_ANNOTATION_STREAM_BYTES = 64 * 1024 * 1024
 MAX_ANNOTATION_RECORDS = 200_000
+ANNOTATION_LOCK_TIMEOUT_SECONDS = 1.0
 _RECORD_FIELDS = {
     "event_start": {"record", "id", "kind", "name", "timestamp_ns", "parent_id", "attributes"},
     "event_end": {"record", "id", "timestamp_ns", "error"},
@@ -85,6 +88,30 @@ def _timestamp(record: dict[str, JsonValue]) -> int:
     return value
 
 
+def _flock(descriptor: int, operation: int) -> None:
+    while True:
+        try:
+            fcntl.flock(descriptor, operation)
+            return
+        except InterruptedError:
+            continue
+
+
+def _lock_for_read(descriptor: int) -> None:
+    deadline = time.monotonic() + ANNOTATION_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            return
+        except InterruptedError:
+            continue
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AnnotationError("timed out waiting for captured annotations") from None
+            time.sleep(min(0.01, remaining))
+
+
 def load_annotations(
     path: Path, *, entity_id: str
 ) -> tuple[tuple[Event, ...], tuple[CausalEdge, ...]]:
@@ -98,7 +125,11 @@ def load_annotations(
     end_lines: dict[str, int] = {}
     try:
         with path.open("rb") as stream:
-            raw = stream.read(MAX_ANNOTATION_STREAM_BYTES + 1)
+            _lock_for_read(stream.fileno())
+            try:
+                raw = stream.read(MAX_ANNOTATION_STREAM_BYTES + 1)
+            finally:
+                _flock(stream.fileno(), fcntl.LOCK_UN)
     except OSError as exc:
         raise AnnotationError("could not read captured annotations") from exc
     if len(raw) > MAX_ANNOTATION_STREAM_BYTES:

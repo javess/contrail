@@ -1,17 +1,34 @@
 from __future__ import annotations
 
 import json
+import uuid
+from collections.abc import Callable
+from itertools import permutations
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from runtime_tools import kubernetes
 from runtime_tools.batchscope import analyze_runpack
+from runtime_tools.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.inspect import inspect_runpack
-from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
+from runtime_tools.kubernetes import (
+    KubernetesImportError,
+    KubernetesImportResult,
+    import_kubernetes_snapshot,
+)
 from runtime_tools.model import CausalEdge, Entity, Event, Execution
 from runtime_tools.otel import import_otlp_json
 from runtime_tools.storage import RunpackReader, RunpackWriter
+
+
+def _trace_id(label: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-trace:{label}").hex
+
+
+def _span_id(label: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-span:{label}").hex[:16]
 
 
 def _metadata(name: str, uid: str, **extra: object) -> dict[str, object]:
@@ -38,8 +55,8 @@ def test_kubernetes_snapshot_enriches_and_correlates_otel_runpack(tmp_path: Path
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "work",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("work"),
                                         "name": "work",
                                         "startTimeUnixNano": "2000000000",
                                         "endTimeUnixNano": "8000000000",
@@ -178,6 +195,87 @@ def test_kubernetes_snapshot_enriches_and_correlates_otel_runpack(tmp_path: Path
         for edge in edges
     )
     assert base.is_file()
+
+
+def test_kubernetes_correlations_use_the_copied_runpack_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.runpack"
+    replacement = tmp_path / "replacement.runpack"
+    snapshot = tmp_path / "kubernetes.json"
+    output = tmp_path / "output.runpack"
+    for path, execution_name, correlated_entity_id in (
+        (source, "snapshot-a", "service-a"),
+        (replacement, "snapshot-b", "service-b"),
+    ):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(execution_name, execution_name, 0, 10, (), str(tmp_path), 0, None, {})
+            )
+            writer.add_entities(
+                tuple(
+                    Entity(
+                        entity_id,
+                        "service",
+                        entity_id,
+                        None,
+                        {"k8s.pod.uid": "pod-race"} if entity_id == correlated_entity_id else {},
+                    )
+                    for entity_id in ("service-a", "service-b")
+                )
+            )
+            writer.add_events(
+                tuple(
+                    Event(
+                        f"root-{suffix}",
+                        "operation",
+                        f"root-{suffix}",
+                        f"service-{suffix}",
+                        1,
+                        2,
+                        "test",
+                        None,
+                        None,
+                        {},
+                    )
+                    for suffix in ("a", "b")
+                )
+            )
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("worker", "pod-race"),
+                        "spec": {"containers": []},
+                        "status": {},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def replace_source_then_enrich(
+        source_path: Path,
+        output_path: Path,
+        operation: Callable[[RunpackWriter], KubernetesImportResult],
+    ) -> KubernetesImportResult:
+        replacement.replace(source_path)
+        return real_enrich_copy(source_path, output_path, operation)
+
+    monkeypatch.setattr(kubernetes, "enrich_copy", replace_source_then_enrich)
+
+    result = import_kubernetes_snapshot(source, snapshot, output)
+
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+        correlations = tuple(edge for edge in reader.causal_edges() if edge.kind == "correlates")
+    assert execution.id == "snapshot-b"
+    assert result.correlation_count == 1
+    assert {edge.target_event_id for edge in correlations} == {"root-b"}
 
 
 def test_kubernetes_completion_only_evidence_expands_execution_bounds(tmp_path: Path) -> None:
@@ -577,8 +675,8 @@ def test_kubernetes_snapshot_rejects_timezone_ambiguous_timestamps(tmp_path: Pat
                             {
                                 "spans": [
                                     {
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                         "startTimeUnixNano": "1",
                                         "endTimeUnixNano": "2",
                                     }
@@ -738,6 +836,78 @@ def test_kubernetes_enrichment_rejects_duplicate_event_uids(tmp_path: Path) -> N
     assert not output.exists()
 
 
+@pytest.mark.parametrize("order", tuple(permutations(("first-event", "second-event", "pod"))))
+def test_kubernetes_enrichment_rejects_uids_shared_by_workloads_and_events(
+    tmp_path: Path,
+    order: tuple[str, str, str],
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "cross-kind-duplicate.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    pod = {
+        "kind": "Pod",
+        "metadata": _metadata("worker", "shared"),
+        "spec": {"containers": []},
+        "status": {},
+    }
+    items_by_name = {
+        "first-event": {
+            "kind": "Event",
+            "metadata": _metadata("first", "shared"),
+            "involvedObject": {"uid": "shared"},
+        },
+        "second-event": {
+            "kind": "Event",
+            "metadata": _metadata("second", "shared"),
+            "involvedObject": {"uid": "shared"},
+        },
+        "pod": pod,
+    }
+    items = [items_by_name[name] for name in order]
+    snapshot.write_text(json.dumps({"items": items}), encoding="utf-8")
+
+    with pytest.raises(KubernetesImportError, match="duplicate Kubernetes object uid: shared"):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_kubernetes_enrichment_reports_the_first_duplicate_uid_deterministically(
+    tmp_path: Path,
+    reverse: bool,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "multiple-duplicates.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    items = [
+        {
+            "kind": "Event",
+            "metadata": _metadata("event-one", "z-duplicate"),
+            "involvedObject": {"uid": "missing"},
+        },
+        {
+            "kind": "Event",
+            "metadata": _metadata("event-two", "z-duplicate"),
+            "involvedObject": {"uid": "missing"},
+        },
+        {"kind": "Node", "metadata": _metadata("node-one", "a-duplicate"), "status": {}},
+        {"kind": "Node", "metadata": _metadata("node-two", "a-duplicate"), "status": {}},
+    ]
+    snapshot.write_text(
+        json.dumps({"items": list(reversed(items)) if reverse else items}), encoding="utf-8"
+    )
+
+    with pytest.raises(KubernetesImportError, match="duplicate Kubernetes object uid: a-duplicate"):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()
+
+
 @pytest.mark.parametrize(
     ("items", "message"),
     (
@@ -859,6 +1029,49 @@ def test_kubernetes_snapshot_keeps_partially_terminated_pods_open(tmp_path: Path
                                     "name": "running",
                                     "state": {"running": {"startedAt": "1970-01-01T00:00:00Z"}},
                                 },
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_kubernetes_snapshot(base, snapshot, output)
+
+    with RunpackReader(output) as reader:
+        pod = next(event for event in reader.events() if event.kind == "workload.pod")
+    assert pod.finished_at_ns is None
+
+
+def test_kubernetes_snapshot_keeps_pods_with_missing_container_statuses_open(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "incomplete-statuses.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("worker", "pod"),
+                        "spec": {
+                            "containers": [
+                                {"name": "reported", "resources": {}},
+                                {"name": "omitted", "resources": {}},
+                            ]
+                        },
+                        "status": {
+                            "containerStatuses": [
+                                {
+                                    "name": "reported",
+                                    "state": {"terminated": {"finishedAt": "1970-01-01T00:00:01Z"}},
+                                }
                             ]
                         },
                     }
@@ -1174,8 +1387,7 @@ def test_kubernetes_snapshot_rejects_malformed_relationship_text(
         assert isinstance(spec, dict)
         containers = spec["containers"]
         assert isinstance(containers, list)
-        container = containers[0]
-        assert isinstance(container, dict)
+        container = cast(dict[str, object], containers[0])
         if case == "container":
             container["name"] = {"unexpected": "object"}
         else:

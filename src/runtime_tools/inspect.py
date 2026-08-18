@@ -7,6 +7,7 @@ import shlex
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from runtime_tools.json_support import output_document
 from runtime_tools.model import Event, JsonValue
 from runtime_tools.storage import RunpackReader
 from runtime_tools.terminal import terminal_text
@@ -35,9 +36,11 @@ class ExecutionSummary:
     stdout_bytes: int | None
     stdout_sha256: str | None
     stdout_complete: bool | None
+    stdout_relay_error: str | None
     stderr_bytes: int | None
     stderr_sha256: str | None
     stderr_complete: bool | None
+    stderr_relay_error: str | None
     annotation_error: str | None
     missing_causal_references: int | None
     dropped_attribute_count: int | None
@@ -46,7 +49,7 @@ class ExecutionSummary:
     def as_json_value(self) -> dict[str, JsonValue]:
         value = asdict(self)
         value["command"] = list(self.command)
-        return value
+        return output_document("runtime.inspect", value)
 
 
 def _nested_output(metadata: dict[str, JsonValue], stream: str, field: str) -> str | int | None:
@@ -60,57 +63,68 @@ def _nested_output(metadata: dict[str, JsonValue], stream: str, field: str) -> s
     return value if isinstance(value, (str, int)) else None
 
 
+def inspect_reader(reader: RunpackReader) -> ExecutionSummary:
+    """Summarize one run from the reader's stable snapshot."""
+    manifest = reader.manifest()
+    execution = reader.execution()
+    measurements = reader.first_measurement_values(
+        (
+            ("process.cpu.user", "s"),
+            ("process.cpu.system", "s"),
+            ("process.memory.peak", "By"),
+        )
+    )
+    peak_memory = _peak_memory_bytes(measurements.get(("process.memory.peak", "By")))
+    wall_time = (
+        (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
+        if execution.finished_at_ns is not None
+        else None
+    )
+    return ExecutionSummary(
+        schema_version=manifest["schema_version"],
+        producer_version=manifest.get("producer_version", "unknown"),
+        id=execution.id,
+        name=execution.name,
+        command=execution.command,
+        working_directory=execution.working_directory,
+        revision=execution.revision,
+        started_at_ns=execution.started_at_ns,
+        finished_at_ns=execution.finished_at_ns,
+        exit_code=execution.exit_code,
+        wall_time_seconds=wall_time,
+        cpu_user_seconds=_nonnegative(measurements.get(("process.cpu.user", "s"))),
+        cpu_system_seconds=_nonnegative(measurements.get(("process.cpu.system", "s"))),
+        peak_memory_bytes=peak_memory,
+        stdout_bytes=_as_int(_nested_output(execution.metadata, "stdout", "bytes")),
+        stdout_sha256=_as_sha256(_nested_output(execution.metadata, "stdout", "sha256")),
+        stdout_complete=_stream_complete(execution.metadata, "stdout"),
+        stdout_relay_error=_as_nonempty_text(
+            _nested_output(execution.metadata, "stdout", "relay_error")
+        ),
+        stderr_bytes=_as_int(_nested_output(execution.metadata, "stderr", "bytes")),
+        stderr_sha256=_as_sha256(_nested_output(execution.metadata, "stderr", "sha256")),
+        stderr_complete=_stream_complete(execution.metadata, "stderr"),
+        stderr_relay_error=_as_nonempty_text(
+            _nested_output(execution.metadata, "stderr", "relay_error")
+        ),
+        annotation_error=_annotation_error(execution.metadata),
+        missing_causal_references=_missing_causal_references(execution.metadata),
+        dropped_attribute_count=_dropped_attribute_count(execution.metadata),
+        record_counts=reader.counts(),
+    )
+
+
 def inspect_runpack(path: Path) -> ExecutionSummary:
     with RunpackReader(path) as reader:
-        manifest = reader.manifest()
-        execution = reader.execution()
-        measurements = reader.first_measurement_values(
-            (
-                ("process.cpu.user", "s"),
-                ("process.cpu.system", "s"),
-                ("process.memory.peak", "By"),
-            )
-        )
-        peak_memory = _peak_memory_bytes(measurements.get(("process.memory.peak", "By")))
-        wall_time = (
-            (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
-            if execution.finished_at_ns is not None
-            else None
-        )
-        return ExecutionSummary(
-            schema_version=manifest["schema_version"],
-            producer_version=manifest.get("producer_version", "unknown"),
-            id=execution.id,
-            name=execution.name,
-            command=execution.command,
-            working_directory=execution.working_directory,
-            revision=execution.revision,
-            started_at_ns=execution.started_at_ns,
-            finished_at_ns=execution.finished_at_ns,
-            exit_code=execution.exit_code,
-            wall_time_seconds=wall_time,
-            cpu_user_seconds=_nonnegative(measurements.get(("process.cpu.user", "s"))),
-            cpu_system_seconds=_nonnegative(measurements.get(("process.cpu.system", "s"))),
-            peak_memory_bytes=peak_memory,
-            stdout_bytes=_as_int(_nested_output(execution.metadata, "stdout", "bytes")),
-            stdout_sha256=_as_sha256(_nested_output(execution.metadata, "stdout", "sha256")),
-            stdout_complete=_stream_complete(execution.metadata, "stdout"),
-            stderr_bytes=_as_int(_nested_output(execution.metadata, "stderr", "bytes")),
-            stderr_sha256=_as_sha256(_nested_output(execution.metadata, "stderr", "sha256")),
-            stderr_complete=_stream_complete(execution.metadata, "stderr"),
-            annotation_error=_annotation_error(execution.metadata),
-            missing_causal_references=_missing_causal_references(execution.metadata),
-            dropped_attribute_count=_dropped_attribute_count(execution.metadata),
-            record_counts=reader.counts(),
-        )
+        return inspect_reader(reader)
 
 
-def render_causal_tree(path: Path) -> str:
-    with RunpackReader(path) as reader:
-        events = reader.events()
-        all_edges = reader.causal_edges()
-        entity_names = {entity.id: entity.name for entity in reader.entities()}
-        inconsistency_count = reader.clock_inconsistency_count()
+def render_causal_tree_reader(reader: RunpackReader) -> str:
+    """Render causal structure from the reader's stable snapshot."""
+    events = reader.events()
+    all_edges = reader.causal_edges()
+    entity_names = {entity.id: entity.name for entity in reader.entities()}
+    inconsistency_count = reader.clock_inconsistency_count()
     edges = tuple(edge for edge in all_edges if edge.kind == "parent")
     other_edges = tuple(edge for edge in all_edges if edge.kind != "parent")
     by_id = {event.id: event for event in events}
@@ -200,6 +214,11 @@ def render_causal_tree(path: Path) -> str:
     return "\n".join(lines)
 
 
+def render_causal_tree(path: Path) -> str:
+    with RunpackReader(path) as reader:
+        return render_causal_tree_reader(reader)
+
+
 def _event_duration(event: Event) -> str:
     if event.started_at_ns is None or event.finished_at_ns is None:
         return "duration unknown"
@@ -226,6 +245,10 @@ def _as_sha256(value: str | int | None) -> str | None:
     if len(decoded) != 32:
         return None
     return value.lower()
+
+
+def _as_nonempty_text(value: str | int | None) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _nonnegative(value: float | None) -> float | None:
@@ -292,10 +315,12 @@ def _stream_complete(metadata: dict[str, JsonValue], stream: str) -> bool | None
     stream_data = output.get(stream)
     if not isinstance(stream_data, dict):
         return None
-    inherited = stream_data.get("pipe_open_after_exit")
+    if "pipe_open_after_exit" not in stream_data:
+        return True
+    inherited = stream_data["pipe_open_after_exit"]
     if inherited is True:
         return False
-    if inherited is None or inherited is False:
+    if inherited is False:
         return True
     return None
 
@@ -303,9 +328,7 @@ def _stream_complete(metadata: dict[str, JsonValue], stream: str) -> bool | None
 def render_summary(summary: ExecutionSummary, output_format: str) -> str:
     if output_format == "json":
         return json.dumps(summary.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
-    duration = (
-        "in progress" if summary.wall_time_seconds is None else f"{summary.wall_time_seconds:.3f}s"
-    )
+    duration = _format_runtime(summary)
     peak = (
         "unknown" if summary.peak_memory_bytes is None else _format_bytes(summary.peak_memory_bytes)
     )
@@ -328,6 +351,8 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
         f"memory:   {peak} peak",
         f"stdout:   {stdout}",
         f"stderr:   {stderr}",
+        _relay_error_summary("stdout", summary.stdout_relay_error),
+        _relay_error_summary("stderr", summary.stderr_relay_error),
         (
             f"annotations: ignored ({terminal_text(summary.annotation_error)})"
             if summary.annotation_error
@@ -345,6 +370,10 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
         ),
     ]
     return "\n".join(line for line in lines if line is not None)
+
+
+def _relay_error_summary(stream: str, error: str | None) -> str | None:
+    return f"{stream} relay: failed ({terminal_text(error)})" if error is not None else None
 
 
 def _causality_summary(missing_references: int | None) -> str | None:
@@ -366,7 +395,17 @@ def _semantic_completeness_summary(dropped_attributes: int | None) -> str | None
 def _format_outcome(summary: ExecutionSummary) -> str:
     if summary.exit_code is None:
         return "in progress" if summary.finished_at_ns is None else "unknown (no exit status)"
+    if summary.exit_code < 0:
+        return f"failed (signal {-summary.exit_code})"
     return "success (exit 0)" if summary.exit_code == 0 else f"failed (exit {summary.exit_code})"
+
+
+def _format_runtime(summary: ExecutionSummary) -> str:
+    if summary.wall_time_seconds is not None:
+        return f"{summary.wall_time_seconds:.3f}s"
+    if summary.finished_at_ns is None and summary.exit_code is None:
+        return "in progress"
+    return "unknown"
 
 
 def _format_cpu(summary: ExecutionSummary) -> str:

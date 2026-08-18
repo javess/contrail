@@ -8,9 +8,10 @@ from pathlib import Path
 from statistics import median
 from typing import Literal
 
-from runtime_tools.inspect import inspect_runpack
+from runtime_tools.inspect import ExecutionSummary, inspect_reader
+from runtime_tools.json_support import output_document
 from runtime_tools.model import CausalEdge, Event, JsonValue
-from runtime_tools.storage import RunpackReader
+from runtime_tools.storage import RunpackReader, resolve_runpack_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,15 @@ class Throughput:
 
 
 @dataclass(frozen=True, slots=True)
+class _ProgressSample:
+    timestamp_ns: int
+    uncertainty_ns: int | None
+    sequence: int | None
+    completed: float
+    total: float
+
+
+@dataclass(frozen=True, slots=True)
 class Bottleneck:
     classification: str
     evidence: str
@@ -98,15 +108,18 @@ class BatchAnalysis:
     bottlenecks: tuple[Bottleneck, ...]
 
     def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "execution_id": self.execution_id,
-            "name": self.name,
-            "total_seconds": self.total_seconds,
-            "lifecycle": [phase.as_json_value() for phase in self.lifecycle],
-            "critical_path": self.critical_path.as_json_value() if self.critical_path else None,
-            "throughput": self.throughput.as_json_value() if self.throughput else None,
-            "bottlenecks": [item.as_json_value() for item in self.bottlenecks],
-        }
+        return output_document(
+            "batchscope.inspect",
+            {
+                "execution_id": self.execution_id,
+                "name": self.name,
+                "total_seconds": self.total_seconds,
+                "lifecycle": [phase.as_json_value() for phase in self.lifecycle],
+                "critical_path": self.critical_path.as_json_value() if self.critical_path else None,
+                "throughput": self.throughput.as_json_value() if self.throughput else None,
+                "bottlenecks": [item.as_json_value() for item in self.bottlenecks],
+            },
+        )
 
 
 def _duration_ns(event: Event) -> int:
@@ -294,8 +307,9 @@ def _throughput(
     for edge in edges:
         if edge.kind == "parent":
             parents_by_target.setdefault(edge.target_event_id, set()).add(edge.source_event_id)
-    samples_by_series: dict[tuple[str, str], list[tuple[int, float, float]]] = {}
+    samples_by_series: dict[tuple[str, str], list[_ProgressSample]] = {}
     entities_by_series: dict[tuple[str, str], set[str | None]] = {}
+    clock_domains_by_series: dict[tuple[str, str], set[str | None]] = {}
     for event in events:
         if event.kind != "progress" or event.started_at_ns is None:
             continue
@@ -313,24 +327,33 @@ def _throughput(
                 return None
             else:
                 series = ("entity", event.entity_id or "unowned")
-            samples_by_series.setdefault(series, []).append((event.started_at_ns, *values))
+            samples_by_series.setdefault(series, []).append(
+                _ProgressSample(
+                    event.started_at_ns,
+                    event.uncertainty_ns,
+                    event.sequence,
+                    *values,
+                )
+            )
             entities_by_series.setdefault(series, set()).add(event.entity_id)
+            clock_domains_by_series.setdefault(series, set()).add(event.clock_domain)
     if len(samples_by_series) != 1:
         return None
     series, samples = next(iter(samples_by_series.items()))
+    if len(clock_domains_by_series[series]) != 1:
+        return None
+    progress_clock_domain = next(iter(clock_domains_by_series[series]))
     series_entities = entities_by_series[series]
-    samples_by_timestamp: dict[int, tuple[float, float]] = {}
-    for timestamp_ns, completed, total in samples:
-        previous = samples_by_timestamp.get(timestamp_ns)
-        if previous is not None and previous != (completed, total):
-            return None
-        samples_by_timestamp[timestamp_ns] = (completed, total)
-    samples = [
-        (timestamp_ns, *values) for timestamp_ns, values in sorted(samples_by_timestamp.items())
-    ]
+    ordered_samples = _ordered_progress_samples(
+        samples,
+        use_sequence=len(series_entities) == 1 and None not in series_entities,
+    )
+    if ordered_samples is None:
+        return None
+    samples = ordered_samples
     latest = samples[-1]
     rate = _sample_rate(samples)
-    remaining = max(0.0, latest[2] - latest[1])
+    remaining = max(0.0, latest.total - latest.completed)
     series_event_ids: set[str] | None = None
     series_finished_at_ns = execution_finished_at_ns
     if series[0] == "parent":
@@ -354,6 +377,8 @@ def _throughput(
         for event in events
         if event.kind == "stage"
         and event.finished_at_ns is not None
+        and progress_clock_domain is not None
+        and event.clock_domain == progress_clock_domain
         and len(series_entities) == 1
         and event.entity_id in series_entities
         and (series_event_ids is None or event.id in series_event_ids)
@@ -368,20 +393,24 @@ def _throughput(
     post_compute_seconds: float | None = None
     post_compute_rate: float | None = None
     if compute_finished_at_ns is not None:
-        before_compute = [sample for sample in samples if sample[0] <= compute_finished_at_ns]
+        before_compute = [
+            sample for sample in samples if sample.timestamp_ns <= compute_finished_at_ns
+        ]
         if before_compute:
             sample = before_compute[-1]
-            remaining_at_compute = max(0.0, sample[2] - sample[1])
+            remaining_at_compute = max(0.0, sample.total - sample.completed)
         if series_finished_at_ns is not None:
             post_compute_seconds = max(
                 0.0, (series_finished_at_ns - compute_finished_at_ns) / 1_000_000_000
             )
-        after_compute = [sample for sample in samples if sample[0] >= compute_finished_at_ns]
+        after_compute = [
+            sample for sample in samples if sample.timestamp_ns >= compute_finished_at_ns
+        ]
         post_compute_rate = _sample_rate(after_compute)
     estimated_drain = 0.0 if remaining == 0 else _finite_ratio(remaining, rate)
     return Throughput(
-        latest[1],
-        latest[2],
+        latest.completed,
+        latest.total,
         rate,
         remaining,
         estimated_drain,
@@ -418,18 +447,62 @@ def _progress_values(completed: object, total: object) -> tuple[float, float] | 
     return completed_value, total_value
 
 
-def _sample_rate(samples: list[tuple[int, float, float]]) -> float | None:
+def _ordered_progress_samples(
+    samples: list[_ProgressSample],
+    *,
+    use_sequence: bool,
+) -> list[_ProgressSample] | None:
+    sequences = [sample.sequence for sample in samples]
+    if (
+        use_sequence
+        and all(sequence is not None for sequence in sequences)
+        and len(set(sequences)) == len(sequences)
+    ):
+        return sorted(samples, key=lambda sample: sample.sequence or 0)
+
+    samples_by_timestamp: dict[int, _ProgressSample] = {}
+    for sample in samples:
+        previous = samples_by_timestamp.get(sample.timestamp_ns)
+        if previous is not None:
+            if (previous.completed, previous.total) != (sample.completed, sample.total):
+                return None
+            uncertainty_ns = max(previous.uncertainty_ns or 0, sample.uncertainty_ns or 0)
+            samples_by_timestamp[sample.timestamp_ns] = _ProgressSample(
+                sample.timestamp_ns,
+                uncertainty_ns,
+                None,
+                sample.completed,
+                sample.total,
+            )
+        else:
+            samples_by_timestamp[sample.timestamp_ns] = sample
+    ordered = [samples_by_timestamp[timestamp] for timestamp in sorted(samples_by_timestamp)]
+    return ordered if _timestamps_establish_order(ordered) else None
+
+
+def _timestamps_establish_order(samples: list[_ProgressSample]) -> bool:
+    return all(
+        previous.timestamp_ns + (previous.uncertainty_ns or 0)
+        < current.timestamp_ns - (current.uncertainty_ns or 0)
+        for previous, current in zip(samples, samples[1:], strict=False)
+    )
+
+
+def _sample_rate(samples: list[_ProgressSample]) -> float | None:
     if len(samples) < 2:
         return None
-    first_total = samples[0][2]
-    if any(sample[2] != first_total for sample in samples[1:]):
+    first_total = samples[0].total
+    if any(sample.total != first_total for sample in samples[1:]):
         return None
     if any(
-        current[1] < previous[1] for previous, current in zip(samples, samples[1:], strict=False)
+        current.completed < previous.completed
+        for previous, current in zip(samples, samples[1:], strict=False)
     ):
         return None
-    elapsed = (samples[-1][0] - samples[0][0]) / 1_000_000_000
-    delta = samples[-1][1] - samples[0][1]
+    if not _timestamps_establish_order(samples):
+        return None
+    elapsed = (samples[-1].timestamp_ns - samples[0].timestamp_ns) / 1_000_000_000
+    delta = samples[-1].completed - samples[0].completed
     return _finite_ratio(delta, elapsed)
 
 
@@ -478,6 +551,16 @@ def _kubernetes_workload_events(
     return jobs, pods, containers
 
 
+def _complete_cohort_start(events: tuple[Event, ...]) -> int | None:
+    starts = [event.started_at_ns for event in events if event.started_at_ns is not None]
+    return min(starts) if len(starts) == len(events) and starts else None
+
+
+def _complete_cohort_finish(events: tuple[Event, ...]) -> int | None:
+    finishes = [event.finished_at_ns for event in events if event.finished_at_ns is not None]
+    return max(finishes) if len(finishes) == len(events) and finishes else None
+
+
 def _lifecycle(
     events: tuple[Event, ...], edges: tuple[CausalEdge, ...], total: float | None
 ) -> tuple[LifecyclePhase, ...]:
@@ -500,26 +583,11 @@ def _lifecycle(
         return explicit
     jobs, pods, containers = _kubernetes_workload_events(events, edges)
     if jobs and pods:
-        job_start = min(
-            (event.started_at_ns for event in jobs if event.started_at_ns is not None),
-            default=None,
-        )
-        job_finish = max(
-            (event.finished_at_ns for event in jobs if event.finished_at_ns is not None),
-            default=None,
-        )
-        pod_start = min(
-            (event.started_at_ns for event in pods if event.started_at_ns is not None),
-            default=None,
-        )
-        container_start = min(
-            (event.started_at_ns for event in containers if event.started_at_ns is not None),
-            default=None,
-        )
-        container_finish = max(
-            (event.finished_at_ns for event in containers if event.finished_at_ns is not None),
-            default=None,
-        )
+        job_start = _complete_cohort_start(jobs)
+        job_finish = _complete_cohort_finish(jobs)
+        pod_start = _complete_cohort_start(pods)
+        container_start = _complete_cohort_start(containers)
+        container_finish = _complete_cohort_finish(containers)
         boundaries = (
             ("provisioning", job_start, pod_start),
             ("starting", pod_start, container_start),
@@ -531,19 +599,41 @@ def _lifecycle(
             for name, start, finish in boundaries
             if start is not None and finish is not None and finish > start
         )
-        if phases:
-            return phases
+        return phases
     return (LifecyclePhase("executing", total, "derived"),) if total is not None else ()
 
 
+def _selected_kubernetes_emitted_event_ids(
+    events: tuple[Event, ...], edges: tuple[CausalEdge, ...]
+) -> set[str] | None:
+    has_jobs = any(event.kind == "workload.job" for event in events)
+    has_pods = any(event.kind == "workload.pod" for event in events)
+    jobs, pods, containers = _kubernetes_workload_events(events, edges)
+    if not jobs or not pods:
+        return None if not has_jobs or not has_pods else set()
+    selected_lifecycle_ids = {event.id for event in (*jobs, *pods, *containers)}
+    return {
+        edge.target_event_id
+        for edge in edges
+        if edge.kind == "emits" and edge.source_event_id in selected_lifecycle_ids
+    }
+
+
 def _bottlenecks(
-    events: tuple[Event, ...], critical: CriticalPath | None, total: float | None
+    events: tuple[Event, ...],
+    edges: tuple[CausalEdge, ...],
+    critical: CriticalPath | None,
+    total: float | None,
 ) -> tuple[Bottleneck, ...]:
     if total is None or total <= 0:
         return ()
     findings: list[Bottleneck] = []
+    selected_kubernetes_event_ids = _selected_kubernetes_emitted_event_ids(events, edges)
     failed_scheduling_count = sum(
-        event.kind == "kubernetes.event" and event.name == "FailedScheduling" for event in events
+        event.kind == "kubernetes.event"
+        and event.name == "FailedScheduling"
+        and (selected_kubernetes_event_ids is None or event.id in selected_kubernetes_event_ids)
+        for event in events
     )
     if failed_scheduling_count:
         noun = "event" if failed_scheduling_count == 1 else "events"
@@ -563,6 +653,11 @@ def _bottlenecks(
         for event in events
         if event.kind == "run" and _has_complete_interval(event)
     )
+    events_by_id = {event.id: event for event in events}
+    parents_by_target: dict[str, set[str]] = {}
+    for edge in edges:
+        if edge.kind == "parent":
+            parents_by_target.setdefault(edge.target_event_id, set()).add(edge.source_event_id)
     for event in events:
         concurrency = event.attributes.get("concurrency")
         if (
@@ -573,15 +668,21 @@ def _bottlenecks(
         ):
             continue
         duration = _duration_ns(event) / 1_000_000_000
-        enclosing_run_durations = tuple(
-            (finish - start) / 1_000_000_000
-            for start, finish in run_intervals
-            if event.started_at_ns is not None
-            and event.finished_at_ns is not None
-            and start <= event.started_at_ns
-            and finish >= event.finished_at_ns
+        causal_run_found, comparison_window = _causal_run_window(
+            event.id, events_by_id, parents_by_target
         )
-        comparison_window = min(enclosing_run_durations, default=total)
+        if causal_run_found and comparison_window is None:
+            continue
+        if comparison_window is None:
+            enclosing_run_durations = tuple(
+                (finish - start) / 1_000_000_000
+                for start, finish in run_intervals
+                if event.started_at_ns is not None
+                and event.finished_at_ns is not None
+                and start <= event.started_at_ns
+                and finish >= event.finished_at_ns
+            )
+            comparison_window = min(enclosing_run_durations, default=total)
         if comparison_window > 0 and duration / comparison_window >= 0.25:
             findings.append(
                 Bottleneck(
@@ -621,6 +722,37 @@ def _bottlenecks(
     return tuple(findings)
 
 
+def _causal_run_window(
+    event_id: str,
+    events_by_id: dict[str, Event],
+    parents_by_target: dict[str, set[str]],
+) -> tuple[bool, float | None]:
+    """Return the nearest unambiguous causal run duration, when one exists."""
+    seen = {event_id}
+    frontier = {event_id}
+    while frontier:
+        parents = {
+            parent_id
+            for child_id in frontier
+            for parent_id in parents_by_target.get(child_id, ())
+            if parent_id not in seen
+        }
+        if not parents:
+            return False, None
+        runs = [
+            events_by_id[parent_id]
+            for parent_id in parents
+            if events_by_id[parent_id].kind == "run"
+        ]
+        if runs:
+            if len(runs) != 1 or not _has_complete_interval(runs[0]):
+                return True, None
+            return True, _duration_ns(runs[0]) / 1_000_000_000
+        seen.update(parents)
+        frontier = parents
+    return False, None
+
+
 def _straggler_tail(events: tuple[Event, ...], total: float) -> Bottleneck | None:
     cohorts: dict[tuple[str, str, str], list[Event]] = {}
     for event in events:
@@ -657,12 +789,12 @@ def _straggler_tail(events: tuple[Event, ...], total: float) -> Bottleneck | Non
     )
 
 
-def analyze_runpack(path: Path) -> BatchAnalysis:
-    summary = inspect_runpack(path)
-    with RunpackReader(path) as reader:
-        events = reader.events()
-        edges = reader.causal_edges()
-        clock_inconsistent = reader.clock_inconsistency_count() > 0
+def analyze_reader(reader: RunpackReader, summary: ExecutionSummary | None = None) -> BatchAnalysis:
+    """Analyze one run from the reader's stable snapshot."""
+    summary = inspect_reader(reader) if summary is None else summary
+    events = reader.events()
+    edges = reader.causal_edges()
+    clock_inconsistent = reader.clock_inconsistency_count() > 0
     events = tuple(event for event in events if event.kind != "log.record")
     event_ids = {event.id for event in events}
     edges = tuple(
@@ -689,5 +821,11 @@ def analyze_runpack(path: Path) -> BatchAnalysis:
         _lifecycle(events, edges, summary.wall_time_seconds),
         critical,
         _throughput(events, edges, summary.finished_at_ns),
-        _bottlenecks(events, critical, summary.wall_time_seconds),
+        _bottlenecks(events, edges, critical, summary.wall_time_seconds),
     )
+
+
+def analyze_runpack(path: Path) -> BatchAnalysis:
+    path = resolve_runpack_path(path)
+    with RunpackReader(path) as reader:
+        return analyze_reader(reader)

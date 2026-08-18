@@ -11,9 +11,10 @@ runtime query run.runpack \
 
 The default output cap is 1,000 rows. `--limit` can raise it to at most 100,000.
 SQL statement text is limited to 1 MiB and must be valid UTF-8.
-Separately, the engine interrupts a query after 25 million SQLite virtual-machine
-steps. This bounds expensive aggregation and recursive queries even when they
-produce few rows. Individual SQLite values are limited to 4 MiB and the encoded
+Artifact validation and the requested statement share a limit of 25 million
+SQLite virtual-machine steps. This bounds expensive validation, aggregation,
+and recursive queries even when they produce few rows. Individual SQLite values
+are limited to 4 MiB and the encoded
 result, including column metadata and row framing, is limited to 16 MiB, so a
 small row count cannot create unbounded output. Each output renderer enforces
 the same limit after formatting, preventing repeated JSONL keys or table padding
@@ -37,4 +38,5 @@ column is a BLOB and may contain secrets. JSON attributes use the
 `attributes_json` column. SQLite's JSON functions can inspect those attributes
 when the local SQLite build enables them. Queries are single statements; both
 the read-only connection and a SQLite authorizer block writes, `ATTACH`, and
-other side effects.
+other side effects. The authorizer also denies `load_extension` even if a host
+SQLite connection has extension loading enabled.

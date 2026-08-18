@@ -2,17 +2,28 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from runtime_tools import otel
 from runtime_tools.batchscope import analyze_runpack
+from runtime_tools.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.inspect import inspect_runpack
 from runtime_tools.model import Entity, Event, Execution
-from runtime_tools.otel import OtelImportError, import_otlp_logs
+from runtime_tools.otel import OtelImportError, OtelLogImportResult, import_otlp_logs
 from runtime_tools.rundiff import compare_runpacks
-from runtime_tools.storage import RunpackReader, RunpackWriter
+from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
+
+
+def _trace_id(label: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-trace:{label}").hex
+
+
+def _span_id(label: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-span:{label}").hex[:16]
 
 
 def _base_runpack(path: Path, working_directory: Path) -> None:
@@ -23,7 +34,7 @@ def _base_runpack(path: Path, working_directory: Path) -> None:
         writer.add_entity(Entity("api", "service", "api", None, {"service.name": "api"}))
         writer.add_event(
             Event(
-                "otel:trace:span",
+                f"otel:{_trace_id('trace')}:{_span_id('span')}",
                 "server.request",
                 "request",
                 "api",
@@ -32,7 +43,7 @@ def _base_runpack(path: Path, working_directory: Path) -> None:
                 "otel-resource-0",
                 None,
                 None,
-                {"otel.trace_id": "trace", "otel.span_id": "span"},
+                {"otel.trace_id": _trace_id("trace"), "otel.span_id": _span_id("span")},
             )
         )
 
@@ -63,8 +74,8 @@ def test_otlp_logs_enrich_known_spans_and_bound_timestamped_records(tmp_path: Pa
                                 "attributes": [
                                     {"key": "request.id", "value": {"stringValue": "42"}}
                                 ],
-                                "traceId": "trace",
-                                "spanId": "span",
+                                "traceId": _trace_id("trace").upper(),
+                                "spanId": _span_id("span").upper(),
                             },
                             {
                                 "timeUnixNano": "20",
@@ -100,15 +111,54 @@ def test_otlp_logs_enrich_known_spans_and_bound_timestamped_records(tmp_path: Pa
         "otel.scope.attributes": {"schema": "stable"},
         "otel.scope.name": "example.logger",
         "otel.scope.version": "2.0",
-        "otel.span_id": "span",
-        "otel.trace_id": "trace",
+        "otel.span_id": _span_id("span"),
+        "otel.trace_id": _trace_id("trace"),
         "request.id": "42",
     }
-    assert (edge.source_event_id, edge.kind) == ("otel:trace:span", "emits")
+    assert (edge.source_event_id, edge.kind) == (
+        f"otel:{_trace_id('trace')}:{_span_id('span')}",
+        "emits",
+    )
     assert len(attachments) == 1
     assert attachments[0].content == logs.read_bytes()
     with RunpackReader(source) as reader:
         assert all(event.kind != "log.record" for event in reader.events())
+
+
+def test_otlp_logs_preserve_exponent_timestamp_nanoseconds(tmp_path: Path) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    timestamp_ns = 1_725_000_000_000_000_001
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution(
+                "run",
+                "run",
+                timestamp_ns - 1,
+                timestamp_ns + 1,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {},
+            )
+        )
+    logs.write_text(
+        '{"resourceLogs":[{"scopeLogs":[{"logRecords":[{'
+        '"timeUnixNano":1.725000000000000001e18,'
+        '"severityNumber":9.0'
+        "}]}]}]}",
+        encoding="utf-8",
+    )
+
+    import_otlp_logs(source, logs, output)
+
+    with RunpackReader(output) as reader:
+        log = next(event for event in reader.events() if event.kind == "log.record")
+    assert log.started_at_ns == timestamp_ns
+    assert log.finished_at_ns == timestamp_ns
+    assert log.attributes["log.severity_number"] == 9
 
 
 def test_otlp_logs_reject_malformed_records_outside_the_run_window(tmp_path: Path) -> None:
@@ -281,8 +331,8 @@ def test_otlp_logs_accumulate_missing_span_references(tmp_path: Path) -> None:
                                 "logRecords": [
                                     {
                                         "timeUnixNano": "5",
-                                        "traceId": "missing-trace",
-                                        "spanId": "missing-span",
+                                        "traceId": _trace_id("missing-trace"),
+                                        "spanId": _span_id("missing-span"),
                                     }
                                 ]
                             }
@@ -374,6 +424,73 @@ def test_otlp_logs_create_service_entities_for_unmatched_resources(tmp_path: Pat
     assert log.attributes["log.body"] == 3
 
 
+@pytest.mark.parametrize(
+    ("incoming_namespace", "expected_new_entity_count"),
+    (("production", 0), ("staging", 1)),
+)
+def test_otlp_logs_match_services_by_explicit_namespace(
+    tmp_path: Path,
+    incoming_namespace: str,
+    expected_new_entity_count: int,
+) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 1, 10, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(
+            Entity(
+                "production-api",
+                "service",
+                "api",
+                None,
+                {"service.name": "api", "service.namespace": "production"},
+            )
+        )
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {"stringValue": "api"},
+                                },
+                                {
+                                    "key": "service.namespace",
+                                    "value": {"stringValue": incoming_namespace},
+                                },
+                            ]
+                        },
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "5",
+                                        "body": {"stringValue": "namespaced log"},
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_logs(source, logs, output)
+
+    with RunpackReader(output) as reader:
+        log = next(event for event in reader.events() if event.kind == "log.record")
+        owner = next(entity for entity in reader.entities() if entity.id == log.entity_id)
+    assert result.new_entity_count == expected_new_entity_count
+    assert owner.attributes["service.namespace"] == incoming_namespace
+    assert (owner.id == "production-api") is (incoming_namespace == "production")
+
+
 def test_otlp_logs_use_exact_span_ownership_when_resource_identity_is_missing(
     tmp_path: Path,
 ) -> None:
@@ -392,8 +509,8 @@ def test_otlp_logs_use_exact_span_ownership_when_resource_identity_is_missing(
                                     {
                                         "timeUnixNano": "5",
                                         "body": {"stringValue": "correlated"},
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                     }
                                 ]
                             }
@@ -450,13 +567,178 @@ def test_otlp_logs_can_add_distinct_documents_with_the_same_record_indexes(
             encoding="utf-8",
         )
 
-    import_otlp_logs(source, first_logs, first_output)
-    import_otlp_logs(first_output, second_logs, second_output)
+    first_result = import_otlp_logs(source, first_logs, first_output)
+    second_result = import_otlp_logs(first_output, second_logs, second_output)
 
     with RunpackReader(second_output) as reader:
         logs = tuple(event for event in reader.events() if event.kind == "log.record")
+        services = {entity.id: entity for entity in reader.entities() if entity.kind == "service"}
+    assert (first_result.new_entity_count, second_result.new_entity_count) == (1, 1)
     assert {event.name for event in logs} == {"first", "second"}
     assert len({event.id for event in logs}) == 2
+    assert len({event.entity_id for event in logs}) == 2
+    assert {services[event.entity_id].name for event in logs if event.entity_id is not None} == {
+        "unknown-service"
+    }
+
+
+def test_otlp_logs_reuse_nameless_service_identity_for_the_same_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    first_output = tmp_path / "first.runpack"
+    independent_output = tmp_path / "independent.runpack"
+    replay_output = tmp_path / "replay.runpack"
+    _base_runpack(source, tmp_path)
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "scopeLogs": [
+                            {"logRecords": [{"timeUnixNano": "4", "body": {"stringValue": "same"}}]}
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_otlp_logs(source, logs, first_output)
+    import_otlp_logs(source, logs, independent_output)
+
+    with RunpackReader(first_output) as reader:
+        first_service = next(
+            entity for entity in reader.entities() if entity.name == "unknown-service"
+        )
+    with RunpackReader(independent_output) as reader:
+        independent_service = next(
+            entity for entity in reader.entities() if entity.name == "unknown-service"
+        )
+    assert independent_service.id == first_service.id
+
+    with pytest.raises(RunpackError, match="UNIQUE constraint failed: events.id"):
+        import_otlp_logs(first_output, logs, replay_output)
+    assert not replay_output.exists()
+
+
+def test_otlp_logs_keep_same_named_services_in_distinct_namespaces_across_enrichments(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "base.runpack"
+    first_logs = tmp_path / "blue.json"
+    second_logs = tmp_path / "green.json"
+    first_output = tmp_path / "blue.runpack"
+    second_output = tmp_path / "green.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 1, 10, (), str(tmp_path), 0, None, {}))
+    for path, timestamp, namespace in (
+        (first_logs, "4", "blue"),
+        (second_logs, "6", "green"),
+    ):
+        path.write_text(
+            json.dumps(
+                {
+                    "resourceLogs": [
+                        {
+                            "resource": {
+                                "attributes": [
+                                    {
+                                        "key": "service.name",
+                                        "value": {"stringValue": "api"},
+                                    },
+                                    {
+                                        "key": "service.namespace",
+                                        "value": {"stringValue": namespace},
+                                    },
+                                ]
+                            },
+                            "scopeLogs": [
+                                {
+                                    "logRecords": [
+                                        {
+                                            "timeUnixNano": timestamp,
+                                            "body": {"stringValue": namespace},
+                                        }
+                                    ]
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    first_result = import_otlp_logs(source, first_logs, first_output)
+    second_result = import_otlp_logs(first_output, second_logs, second_output)
+
+    assert first_result.new_entity_count == 1
+    assert second_result.new_entity_count == 1
+    with RunpackReader(second_output) as reader:
+        logs = tuple(event for event in reader.events() if event.kind == "log.record")
+        services = {entity.id: entity for entity in reader.entities() if entity.kind == "service"}
+    assert len({event.entity_id for event in logs}) == 2
+    assert {
+        (services[event.entity_id].name, services[event.entity_id].attributes["service.namespace"])
+        for event in logs
+        if event.entity_id is not None
+    } == {("api", "blue"), ("api", "green")}
+
+
+def test_otlp_logs_keep_correlating_to_spans_across_sequential_enrichments(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "base.runpack"
+    first_logs = tmp_path / "first.json"
+    second_logs = tmp_path / "second.json"
+    first_output = tmp_path / "first.runpack"
+    second_output = tmp_path / "second.runpack"
+    _base_runpack(source, tmp_path)
+    for path, timestamp, body in (
+        (first_logs, "4", "first"),
+        (second_logs, "6", "second"),
+    ):
+        path.write_text(
+            json.dumps(
+                {
+                    "resourceLogs": [
+                        {
+                            "scopeLogs": [
+                                {
+                                    "logRecords": [
+                                        {
+                                            "timeUnixNano": timestamp,
+                                            "body": {"stringValue": body},
+                                            "traceId": _trace_id("trace"),
+                                            "spanId": _span_id("span"),
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    first_result = import_otlp_logs(source, first_logs, first_output)
+    second_result = import_otlp_logs(first_output, second_logs, second_output)
+
+    assert (first_result.edge_count, first_result.missing_span_count) == (1, 0)
+    assert (second_result.edge_count, second_result.missing_span_count) == (1, 0)
+    assert second_result.new_entity_count == 0
+    span_event_id = f"otel:{_trace_id('trace')}:{_span_id('span')}"
+    with RunpackReader(second_output) as reader:
+        logs = tuple(event for event in reader.events() if event.kind == "log.record")
+        correlations = tuple(edge for edge in reader.causal_edges() if edge.kind == "emits")
+        services = tuple(entity for entity in reader.entities() if entity.kind == "service")
+    assert {edge.source_event_id for edge in correlations} == {span_event_id}
+    assert {edge.target_event_id for edge in correlations} == {event.id for event in logs}
+    assert [service.name for service in services] == ["api"]
 
 
 def test_otlp_logs_preserve_ambiguous_service_resources_without_guessing(tmp_path: Path) -> None:
@@ -567,7 +849,7 @@ def test_otlp_logs_reject_partial_trace_correlation_without_publishing(tmp_path:
                                     {
                                         "timeUnixNano": "5",
                                         "body": {"stringValue": "invalid"},
-                                        "traceId": "trace",
+                                        "traceId": _trace_id("trace"),
                                     }
                                 ]
                             }
@@ -596,8 +878,8 @@ def test_otlp_logs_reject_invalid_identifier_unicode_at_the_adapter_boundary(
     record = {
         "timeUnixNano": "5",
         "body": {"stringValue": "invalid"},
-        "traceId": "trace",
-        "spanId": "span",
+        "traceId": _trace_id("trace"),
+        "spanId": _span_id("span"),
         field: "bad-\ud800",
     }
     logs.write_text(
@@ -606,6 +888,40 @@ def test_otlp_logs_reject_invalid_identifier_unicode_at_the_adapter_boundary(
     )
 
     with pytest.raises(OtelImportError, match=f"log {field} must be valid UTF-8"):
+        import_otlp_logs(source, logs, output)
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("traceId", "0" * 32, "log traceId must not be all zero"),
+        ("spanId", "0" * 16, "log spanId must not be all zero"),
+    ),
+)
+def test_otlp_logs_reject_zero_correlation_identifiers_without_publishing(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    record = {
+        "timeUnixNano": "5",
+        "traceId": _trace_id("trace"),
+        "spanId": _span_id("span"),
+        field: value,
+    }
+    logs.write_text(
+        json.dumps({"resourceLogs": [{"scopeLogs": [{"logRecords": [record]}]}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match=message):
         import_otlp_logs(source, logs, output)
 
     assert not output.exists()
@@ -642,8 +958,8 @@ def test_otlp_logs_do_not_masquerade_as_operations_or_critical_work(tmp_path: Pa
                                     {
                                         "timeUnixNano": "5",
                                         "body": {"stringValue": "diagnostic message"},
-                                        "traceId": "trace",
-                                        "spanId": "span",
+                                        "traceId": _trace_id("trace"),
+                                        "spanId": _span_id("span"),
                                     }
                                 ]
                             }
@@ -666,3 +982,62 @@ def test_otlp_logs_do_not_masquerade_as_operations_or_critical_work(tmp_path: Pa
     assert baseline_analysis.critical_path is not None
     assert enriched_analysis.critical_path is not None
     assert enriched_analysis.critical_path.event_ids == baseline_analysis.critical_path.event_ids
+
+
+def test_otlp_logs_plan_against_the_copied_source_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.runpack"
+    replacement = tmp_path / "replacement.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("a", "A", 0, 2_000_000_000, (), str(tmp_path), 0, None, {}))
+    with RunpackWriter(replacement) as writer:
+        writer.add_execution(Execution("b", "B", 0, 500_000_000, (), str(tmp_path), 0, None, {}))
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "1000000000",
+                                        "body": {"stringValue": "only valid for A"},
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def replace_then_enrich(
+        source_path: Path,
+        output_path: Path,
+        operation: Callable[[RunpackWriter], OtelLogImportResult],
+    ) -> OtelLogImportResult:
+        replacement.replace(source_path)
+        return real_enrich_copy(source_path, output_path, operation)
+
+    monkeypatch.setattr(otel, "enrich_copy", replace_then_enrich)
+
+    result = import_otlp_logs(source, logs, output)
+
+    assert result.event_count == 0
+    assert result.dropped_outside_window == 1
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+        log_records = tuple(event for event in reader.events() if event.kind == "log.record")
+    assert (execution.id, execution.name, execution.finished_at_ns) == (
+        "b",
+        "B",
+        500_000_000,
+    )
+    assert log_records == ()

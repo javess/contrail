@@ -9,8 +9,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from runtime_tools.json_support import output_document
 from runtime_tools.model import JsonValue
-from runtime_tools.storage import RunpackReader
+from runtime_tools.storage import RunpackError, validated_runpack_connection
 from runtime_tools.terminal import terminal_text
 
 
@@ -32,15 +33,22 @@ _ALLOWED_SQLITE_ACTIONS = {
     sqlite3.SQLITE_RECURSIVE,
     sqlite3.SQLITE_SELECT,
 }
+_DENIED_SQLITE_FUNCTIONS = {"load_extension"}
 
 
 def _authorize_read(
     action: int,
     _argument_one: str | None,
-    _argument_two: str | None,
+    argument_two: str | None,
     _database: str | None,
     _source: str | None,
 ) -> int:
+    if (
+        action == sqlite3.SQLITE_FUNCTION
+        and argument_two is not None
+        and argument_two.casefold() in _DENIED_SQLITE_FUNCTIONS
+    ):
+        return sqlite3.SQLITE_DENY
     return sqlite3.SQLITE_OK if action in _ALLOWED_SQLITE_ACTIONS else sqlite3.SQLITE_DENY
 
 
@@ -51,11 +59,14 @@ class QueryResult:
     truncated: bool
 
     def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "columns": list(self.columns),
-            "rows": [list(row) for row in self.rows],
-            "truncated": self.truncated,
-        }
+        return output_document(
+            "runtime.query",
+            {
+                "columns": list(self.columns),
+                "rows": [list(row) for row in self.rows],
+                "truncated": self.truncated,
+            },
+        )
 
 
 def _value(value: object) -> JsonValue:
@@ -108,9 +119,6 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
         raise QueryError("query limit must be positive")
     if limit > MAX_QUERY_ROWS:
         raise QueryError(f"query limit cannot exceed {MAX_QUERY_ROWS}")
-    with RunpackReader(path) as reader:
-        reader.execution()
-    uri = f"{path.resolve().as_uri()}?mode=ro"
     completed_steps = 0
     work_limit_reached = False
 
@@ -123,11 +131,11 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
         return 0
 
     try:
-        with sqlite3.connect(uri, uri=True) as connection:
+        with validated_runpack_connection(path) as connection:
             connection.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, MAX_QUERY_SQL_BYTES)
             connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_QUERY_CELL_BYTES)
-            connection.set_authorizer(_authorize_read)
             connection.set_progress_handler(enforce_work_limit, _QUERY_PROGRESS_INTERVAL)
+            connection.set_authorizer(_authorize_read)
             cursor = connection.execute(sql)
             if cursor.description is None:
                 raise QueryError("query must return rows")
@@ -157,6 +165,12 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
                         f"query result exceeded the byte limit of {MAX_QUERY_RESULT_BYTES}"
                     )
                 rows.append(row)
+    except RunpackError as exc:
+        if work_limit_reached:
+            raise QueryError(
+                f"query exceeded the work limit of {MAX_QUERY_VM_STEPS} SQLite steps"
+            ) from exc
+        raise
     except sqlite3.Error as exc:
         if work_limit_reached:
             raise QueryError(
@@ -173,7 +187,7 @@ def render_query(result: QueryResult, output_format: str) -> str:
         )
     if output_format == "jsonl":
         return _join_bounded_lines(
-            json.dumps(dict(zip(result.columns, row, strict=True)), allow_nan=False, sort_keys=True)
+            json.dumps(dict(zip(result.columns, row, strict=True)), allow_nan=False)
             for row in result.rows
         )
     rendered_columns = [terminal_text(column) for column in result.columns]
@@ -183,8 +197,7 @@ def render_query(result: QueryResult, output_format: str) -> str:
         for index, value in enumerate(row):
             widths[index] = min(60, max(widths[index], len(value)))
     header = "  ".join(
-        column[: widths[index]].ljust(widths[index])
-        for index, column in enumerate(rendered_columns)
+        _table_cell(column, widths[index]) for index, column in enumerate(rendered_columns)
     )
     divider = "  ".join("-" * width for width in widths)
 
@@ -192,13 +205,17 @@ def render_query(result: QueryResult, output_format: str) -> str:
         yield header
         yield divider
         for row in rendered_rows:
-            yield "  ".join(
-                value[: widths[index]].ljust(widths[index]) for index, value in enumerate(row)
-            )
+            yield "  ".join(_table_cell(value, widths[index]) for index, value in enumerate(row))
         if result.truncated:
             yield "… result truncated"
 
     return _join_bounded_lines(lines())
+
+
+def _table_cell(value: str, width: int) -> str:
+    if len(value) > width:
+        return f"{value[: width - 1]}…"
+    return value.ljust(width)
 
 
 def _bounded_rendered_output(value: str) -> str:

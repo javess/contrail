@@ -41,6 +41,7 @@ def test_local_pipeline_demonstrates_equivalent_output_and_runtime_regression(
     assert [phase.name for phase in analysis.lifecycle] == ["read", "transform", "persist"]
     assert any(item.classification == "serialized_stage" for item in analysis.bottlenecks)
     statuses = {result.type: result.status for result in verification.results}
+    assert statuses["exit_code_equivalent"] == "pass"
     assert statuses["output_equivalent"] == "pass"
     assert statuses["forbid_new_dependency"] == "fail"
     assert statuses["max_operation_count"] == "fail"

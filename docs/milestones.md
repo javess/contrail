@@ -3,10 +3,11 @@
 Each milestone ends in a demonstrable vertical slice over the same `.runpack`.
 Later work may refine earlier schemas only through explicit versioning.
 
-The repository currently has executable local slices through milestone 10,
-including the release-gate pipeline and drain examples. These milestones define
-the bounded 0.1.0 scope; they do not imply production-scale telemetry storage,
-hosted services, GPU analysis, or richer execution-environment adapters.
+The repository has executable local slices through milestone 10. Version 0.9
+freezes the supported runpack, machine-output, CLI, contract, and annotation
+surfaces in preparation for 1.0. These milestones do not imply
+production-scale telemetry storage, hosted services, GPU analysis, or richer
+execution-environment adapters.
 
 ## 0. Architecture
 
