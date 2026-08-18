@@ -9,7 +9,7 @@ from typing import Literal
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.inspect import ExecutionSummary, inspect_runpack
 from runtime_tools.model import JsonValue
-from runtime_tools.storage import RunpackReader
+from runtime_tools.storage import RunpackError, RunpackReader
 
 type Outcome = Literal["equivalent", "different", "unknown"]
 
@@ -421,14 +421,27 @@ def _all_edge_counts(reader: RunpackReader) -> dict[tuple[str, str, str, str, st
 
 def _selected_environment(metadata: dict[str, JsonValue]) -> dict[str, str]:
     environment = metadata.get("environment")
+    if environment is None:
+        return {}
     if not isinstance(environment, dict):
-        return {}
+        raise RunpackError("execution environment metadata must be an object")
     selected = environment.get("selected_value_sha256")
-    if not isinstance(selected, dict):
+    if selected is None:
         return {}
-    return {
-        variable: identity for variable, identity in selected.items() if isinstance(identity, str)
-    }
+    if not isinstance(selected, dict):
+        raise RunpackError("selected environment identities must be an object")
+    result: dict[str, str] = {}
+    for variable, identity in selected.items():
+        if not variable or not isinstance(identity, str) or len(identity) != 64:
+            raise RunpackError(f"invalid selected environment identity: {variable}")
+        try:
+            decoded = bytes.fromhex(identity)
+        except ValueError as exc:
+            raise RunpackError(f"invalid selected environment identity: {variable}") from exc
+        if len(decoded) != 32:
+            raise RunpackError(f"invalid selected environment identity: {variable}")
+        result[variable] = identity.lower()
+    return result
 
 
 def _environment_changes(

@@ -7,11 +7,13 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from runtime_tools import record_process
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.rundiff.report import render_diff
-from runtime_tools.storage import RunpackReader, RunpackWriter
+from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
 
 _STDOUT_IDENTITY = "a" * 64
 _STDERR_IDENTITY = "b" * 64
@@ -433,17 +435,17 @@ def test_compare_runpacks_reports_selected_environment_drift_without_hashes(
         (
             baseline,
             {
-                "CI": "baseline-ci-hash",
-                "LANG": "same-hash",
-                "TZ": "baseline-tz-hash",
+                "CI": "a" * 64,
+                "LANG": "b" * 64,
+                "TZ": "c" * 64,
             },
         ),
         (
             candidate,
             {
-                "LANG": "same-hash",
-                "PYTHONHASHSEED": "candidate-seed-hash",
-                "TZ": "candidate-tz-hash",
+                "LANG": "b" * 64,
+                "PYTHONHASHSEED": "d" * 64,
+                "TZ": "e" * 64,
             },
         ),
     )
@@ -473,13 +475,58 @@ def test_compare_runpacks_reports_selected_environment_drift_without_hashes(
     ]
     assert "Environment changes" in report
     assert "  PYTHONHASHSEED: added" in report
-    assert "baseline-tz-hash" not in report
+    assert "c" * 64 not in report
     assert json.loads(render_diff(diff, "json"))["environment_changes"][2] == {
         "baseline_present": True,
         "candidate_present": True,
         "change_kind": "changed",
         "variable": "TZ",
     }
+
+
+def test_compare_runpacks_normalizes_environment_identity_case(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, identity in ((baseline, "A" * 64), (candidate, "a" * 64)):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(
+                    path.stem,
+                    path.stem,
+                    0,
+                    1,
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    {"environment": {"selected_value_sha256": {"CI": identity}}},
+                )
+            )
+
+    assert compare_runpacks(baseline, candidate).environment_changes == ()
+
+
+def test_compare_runpacks_rejects_malformed_environment_identities(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, identity in ((baseline, "not-a-sha256"), (candidate, "a" * 64)):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(
+                    path.stem,
+                    path.stem,
+                    0,
+                    1,
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    {"environment": {"selected_value_sha256": {"CI": identity}}},
+                )
+            )
+
+    with pytest.raises(RunpackError, match="invalid selected environment identity: CI"):
+        compare_runpacks(baseline, candidate)
 
 
 def test_compare_runpacks_keeps_incomplete_output_identity_unknown(tmp_path: Path) -> None:
