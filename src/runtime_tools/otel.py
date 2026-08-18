@@ -356,6 +356,8 @@ def import_otlp_json(
             scope_group = _as_object(raw_scope_spans, "scopeSpans entry")
             scope = _as_object(scope_group.get("scope", {}), "scope")
             scope_name = _semantic_name(scope.get("name"), "span scope name", default="")
+            scope_version = _semantic_name(scope.get("version"), "span scope version", default="")
+            scope_attributes = _attributes(scope.get("attributes", []))
             spans = _as_list(scope_group.get("spans", []), "spans")
             if spans:
                 dropped_attribute_count = _bounded_count_total(
@@ -388,6 +390,10 @@ def import_otlp_json(
                         "otel.scope.name": scope_name,
                     }
                 )
+                if scope_version:
+                    attributes["otel.scope.version"] = scope_version
+                if scope_attributes:
+                    attributes["otel.scope.attributes"] = scope_attributes
                 if parent_span_id:
                     attributes["otel.parent_span_id"] = parent_span_id
                     parent_references.append((trace_id, parent_span_id, event_id))
@@ -628,6 +634,8 @@ def import_otlp_logs(
             scope_group = _as_object(raw_scope_logs, "scopeLogs entry")
             scope = _as_object(scope_group.get("scope", {}), "scope")
             scope_name = _semantic_name(scope.get("name"), "log scope name", default="")
+            scope_version = _semantic_name(scope.get("version"), "log scope version", default="")
+            scope_attributes = _attributes(scope.get("attributes", []))
             log_records = _as_list(scope_group.get("logRecords", []), "logRecords")
             scope_event_count = 0
             for record_index, raw_log_record in enumerate(log_records):
@@ -667,6 +675,10 @@ def import_otlp_logs(
                 attributes["log.body"] = body
                 if scope_name:
                     attributes["otel.scope.name"] = scope_name
+                if scope_version:
+                    attributes["otel.scope.version"] = scope_version
+                if scope_attributes:
+                    attributes["otel.scope.attributes"] = scope_attributes
                 severity_text = record.get("severityText")
                 if severity_text is not None:
                     if not isinstance(severity_text, str):

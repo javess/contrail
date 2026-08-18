@@ -26,7 +26,11 @@ def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: P
                         "resource": {"attributes": [_attribute("service.name", "gateway")]},
                         "scopeSpans": [
                             {
-                                "scope": {"name": "demo.http"},
+                                "scope": {
+                                    "name": "demo.http",
+                                    "version": "1.2.3",
+                                    "attributes": [_attribute("schema", "stable")],
+                                },
                                 "spans": [
                                     {
                                         "traceId": "trace-1",
@@ -93,6 +97,8 @@ def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: P
         assert events["GET /items"].kind == "server.request"
         assert events["SELECT items"].kind == "client.request"
         assert events["GET /items"].attributes["http.request.method"] == "GET"
+        assert events["GET /items"].attributes["otel.scope.version"] == "1.2.3"
+        assert events["GET /items"].attributes["otel.scope.attributes"] == {"schema": "stable"}
         assert reader.clock_inconsistency_count() == 1
 
     tree = render_causal_tree(output)

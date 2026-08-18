@@ -49,7 +49,11 @@ def test_otlp_logs_enrich_known_spans_and_bound_timestamped_records(tmp_path: Pa
                 },
                 "scopeLogs": [
                     {
-                        "scope": {"name": "example.logger"},
+                        "scope": {
+                            "name": "example.logger",
+                            "version": "2.0",
+                            "attributes": [{"key": "schema", "value": {"stringValue": "stable"}}],
+                        },
                         "logRecords": [
                             {
                                 "timeUnixNano": "5",
@@ -92,7 +96,9 @@ def test_otlp_logs_enrich_known_spans_and_bound_timestamped_records(tmp_path: Pa
     assert log.attributes == {
         "log.body": "accepted",
         "log.severity_text": "INFO",
+        "otel.scope.attributes": {"schema": "stable"},
         "otel.scope.name": "example.logger",
+        "otel.scope.version": "2.0",
         "otel.span_id": "span",
         "otel.trace_id": "trace",
         "request.id": "42",
