@@ -195,6 +195,8 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "run.summary.cpu_user_seconds + run.summary.cpu_system_seconds" in javascript
     assert "const cpuTime = finiteNumber(rawCpuTime) ? rawCpuTime : null" in javascript
     assert "Duration shifts" in javascript
+    assert "Math.abs(item.candidate_seconds - item.baseline_seconds) >= .001" in javascript
+    assert "No duration changes of at least 1 ms" in javascript
     assert "stderr_equivalent" in javascript
     assert "operation_errors_equivalent" in javascript
     assert "nsToSeconds(event.duration_ns)" in javascript

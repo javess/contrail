@@ -1,7 +1,7 @@
 const state = { data: null, runIndex: 0, zoom: 1, entity: "", kind: "" };
 
 const finiteNumber = value => typeof value === "number" && Number.isFinite(value);
-const fmtDuration = seconds => !finiteNumber(seconds) ? "unknown" : seconds < 1 ? `${(seconds * 1000).toFixed(1)} ms` : `${seconds.toFixed(3)} s`;
+const fmtDuration = seconds => !finiteNumber(seconds) ? "unknown" : seconds < .001 ? `${(seconds * 1e6).toFixed(1)} µs` : seconds < 1 ? `${(seconds * 1000).toFixed(1)} ms` : `${seconds.toFixed(3)} s`;
 const fmtBytes = bytes => !finiteNumber(bytes) ? "unknown" : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1048576).toFixed(1)} MiB`;
 const fmtNumber = value => !finiteNumber(value) ? "unknown" : new Intl.NumberFormat().format(value);
 const fmtRate = value => !finiteNumber(value) ? "unknown" : `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)}/s`;
@@ -88,7 +88,7 @@ function renderComparison() {
   const errors = diff.operation_error_count_changes.slice(0, 5).map(item => `<p><span class="positive">${item.baseline} → ${item.candidate}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No failed-operation changes</p>";
   const entities = diff.entity_count_changes.slice(0, 5).map(item => `<p>${escapeHtml(item.change_kind.toUpperCase())} <span class="positive">${item.baseline} → ${item.candidate}</span> ${escapeHtml(item.entity_name)} [${escapeHtml(item.entity_kind)}]</p>`).join("") || "<p>No entity changes</p>";
   const concurrency = diff.operation_concurrency_changes.slice(0, 5).map(item => `<p><span class="positive">${item.baseline} → ${item.candidate}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No concurrency changes</p>";
-  const durations = diff.operation_duration_changes.slice(0, 5).map(item => `<p><span class="positive">${fmtDuration(item.baseline_seconds)} → ${fmtDuration(item.candidate_seconds)}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No duration changes</p>";
+  const durations = diff.operation_duration_changes.filter(item => Math.abs(item.candidate_seconds - item.baseline_seconds) >= .001).slice(0, 5).map(item => `<p><span class="positive">${fmtDuration(item.baseline_seconds)} → ${fmtDuration(item.candidate_seconds)}</span> ${escapeHtml(item.entity_name)} :: ${escapeHtml(item.operation_name)}</p>`).join("") || "<p>No duration changes of at least 1 ms</p>";
   const edges = diff.edge_count_changes.slice(0, 5).map(item => `<p>${escapeHtml(item.change_kind.toUpperCase())} ${escapeHtml(item.source_name)} → ${escapeHtml(item.target_name)}</p>`).join("") || "<p>No dependency changes</p>";
   const environment = diff.environment_changes.slice(0, 5).map(item => `${escapeHtml(item.variable)} (${escapeHtml(item.change_kind)})`).join(", ") || "no selected drift";
   const annotationWarnings = [["Baseline", diff.baseline_annotation_error], ["Candidate", diff.candidate_annotation_error]].filter(([, error]) => error).map(([side, error]) => `<p class="evidence-warning">${side} annotations ignored: ${escapeHtml(error)}</p>`).join("");
