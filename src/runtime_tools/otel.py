@@ -556,6 +556,7 @@ def import_otlp_logs(
 ) -> OtelLogImportResult:
     """Add bounded OTLP/JSON log records to an existing execution."""
     document, raw_document = _load_document(source)
+    source_identity = hashlib.sha256(raw_document).hexdigest()
     resource_logs = _as_list(document.get("resourceLogs"), "resourceLogs")
     with RunpackReader(runpack) as reader:
         execution = reader.execution()
@@ -662,7 +663,10 @@ def import_otlp_logs(
                     "otel:log:"
                     + uuid.uuid5(
                         uuid.NAMESPACE_URL,
-                        f"{execution.id}:{resource_index}:{scope_index}:{record_index}",
+                        (
+                            f"{execution.id}:{source_identity}:"
+                            f"{resource_index}:{scope_index}:{record_index}"
+                        ),
                     ).hex
                 )
                 event_entity_id = entity_id
@@ -735,7 +739,7 @@ def import_otlp_logs(
             writer.add_attachments(
                 (
                     Attachment(
-                        id="raw:otlp-logs:" + hashlib.sha256(raw_document).hexdigest(),
+                        id="raw:otlp-logs:" + source_identity,
                         kind="raw",
                         name=source.name,
                         media_type="application/json",

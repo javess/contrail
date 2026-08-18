@@ -251,6 +251,50 @@ def test_otlp_logs_create_service_entities_for_unmatched_resources(tmp_path: Pat
     assert log.attributes["log.body"] == 3
 
 
+def test_otlp_logs_can_add_distinct_documents_with_the_same_record_indexes(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "base.runpack"
+    first_logs = tmp_path / "first.json"
+    second_logs = tmp_path / "second.json"
+    first_output = tmp_path / "first.runpack"
+    second_output = tmp_path / "second.runpack"
+    _base_runpack(source, tmp_path)
+    for path, timestamp, body in (
+        (first_logs, "4", "first"),
+        (second_logs, "6", "second"),
+    ):
+        path.write_text(
+            json.dumps(
+                {
+                    "resourceLogs": [
+                        {
+                            "scopeLogs": [
+                                {
+                                    "logRecords": [
+                                        {
+                                            "timeUnixNano": timestamp,
+                                            "body": {"stringValue": body},
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    import_otlp_logs(source, first_logs, first_output)
+    import_otlp_logs(first_output, second_logs, second_output)
+
+    with RunpackReader(second_output) as reader:
+        logs = tuple(event for event in reader.events() if event.kind == "log.record")
+    assert {event.name for event in logs} == {"first", "second"}
+    assert len({event.id for event in logs}) == 2
+
+
 def test_otlp_logs_preserve_ambiguous_service_resources_without_guessing(tmp_path: Path) -> None:
     source = tmp_path / "base.runpack"
     logs = tmp_path / "logs.json"
