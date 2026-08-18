@@ -554,6 +554,67 @@ def test_throughput_does_not_guess_between_multiple_parent_scopes(tmp_path: Path
     assert analysis.throughput is None
 
 
+def test_throughput_uses_the_progress_entity_compute_boundary(tmp_path: Path) -> None:
+    runpack = tmp_path / "scoped-compute.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 100, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entities(
+            (
+                Entity("worker", "worker", "worker", None, {}),
+                Entity("other", "service", "other", None, {}),
+            )
+        )
+        writer.add_events(
+            (
+                Event("compute", "stage", "compute", "worker", 0, 40, "test", None, None, {}),
+                Event(
+                    "other-compute",
+                    "stage",
+                    "compute",
+                    "other",
+                    0,
+                    80,
+                    "test",
+                    None,
+                    None,
+                    {},
+                ),
+                Event(
+                    "progress-a",
+                    "progress",
+                    "progress",
+                    "worker",
+                    20,
+                    20,
+                    "test",
+                    None,
+                    None,
+                    {"completed": 20, "total": 100},
+                ),
+                Event(
+                    "progress-b",
+                    "progress",
+                    "progress",
+                    "worker",
+                    60,
+                    60,
+                    "test",
+                    None,
+                    None,
+                    {"completed": 60, "total": 100},
+                ),
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.throughput is not None
+    assert analysis.throughput.compute_finished_at_ns == 40
+    assert analysis.throughput.remaining_at_compute_completion == 80
+
+
 def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> None:
     runpack = tmp_path / "clock-skew.runpack"
     with RunpackWriter(runpack) as writer:

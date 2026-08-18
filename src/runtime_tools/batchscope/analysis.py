@@ -293,6 +293,7 @@ def _throughput(
         if edge.kind == "parent":
             parents_by_target.setdefault(edge.target_event_id, set()).add(edge.source_event_id)
     samples_by_series: dict[tuple[str, str], list[tuple[int, float, float]]] = {}
+    entities_by_series: dict[tuple[str, str], set[str | None]] = {}
     for event in events:
         if event.kind != "progress" or event.started_at_ns is None:
             continue
@@ -311,9 +312,11 @@ def _throughput(
             else:
                 series = ("entity", event.entity_id or "unowned")
             samples_by_series.setdefault(series, []).append((event.started_at_ns, *values))
+            entities_by_series.setdefault(series, set()).add(event.entity_id)
     if len(samples_by_series) != 1:
         return None
-    samples = next(iter(samples_by_series.values()))
+    series, samples = next(iter(samples_by_series.items()))
+    series_entities = entities_by_series[series]
     samples.sort()
     latest = samples[-1]
     rate = _sample_rate(samples)
@@ -323,6 +326,8 @@ def _throughput(
         for event in events
         if event.kind == "stage"
         and event.finished_at_ns is not None
+        and len(series_entities) == 1
+        and event.entity_id in series_entities
         and (
             "compute" in event.name.lower()
             or event.attributes.get("phase") == "compute"
