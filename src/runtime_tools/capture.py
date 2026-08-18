@@ -417,7 +417,10 @@ def record_process(
                 assert isinstance(capture_metadata, dict)
                 metadata = {
                     **metadata,
-                    "capture": {**capture_metadata, "annotation_error": str(exc)},
+                    "capture": {
+                        **capture_metadata,
+                        "annotation_error": terminal_text(exc),
+                    },
                 }
             measurements = (
                 Measurement("process.wall_time", wall_seconds, "s", finished_at_ns, entity_id, {}),

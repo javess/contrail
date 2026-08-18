@@ -20,6 +20,7 @@ from typing import Any, cast
 import pytest
 
 from runtime_tools import CaptureError, capture, inspect_runpack, record_process, storage
+from runtime_tools.annotations import AnnotationError
 from runtime_tools.inspect import render_summary
 from runtime_tools.model import (
     Attachment,
@@ -546,6 +547,31 @@ def test_record_process_normalizes_publication_failures_and_cleans_temporary_fil
 
     assert not output.exists()
     assert not tuple(tmp_path.glob(".unpublished.runpack.tmp-*"))
+
+
+def test_record_process_bounds_annotation_diagnostics_without_losing_core_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "annotation-diagnostic.runpack"
+
+    def fail_annotations(path: Path, *, entity_id: str) -> None:
+        raise AnnotationError("x" * 10_000)
+
+    monkeypatch.setattr(capture, "load_annotations", fail_annotations)
+
+    exit_code = record_process(
+        (sys.executable, "-c", "pass"),
+        output,
+        name="annotation-diagnostic",
+    )
+
+    summary = inspect_runpack(output)
+    assert exit_code == 0
+    assert summary.annotation_error is not None
+    assert len(summary.annotation_error) == 4_096
+    assert summary.annotation_error.endswith("…")
+    assert summary.record_counts["events"] == 1
 
 
 def test_record_process_terminates_child_when_capture_is_interrupted(
