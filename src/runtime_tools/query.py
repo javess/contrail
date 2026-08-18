@@ -92,6 +92,8 @@ def _column_names(description: tuple[tuple[object, ...], ...]) -> tuple[str, ...
 def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
     if not sql.strip():
         raise QueryError("SQL query cannot be empty")
+    if not isinstance(limit, int) or isinstance(limit, bool):
+        raise QueryError("query limit must be an integer")
     if limit <= 0:
         raise QueryError("query limit must be positive")
     if limit > MAX_QUERY_ROWS:

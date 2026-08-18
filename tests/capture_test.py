@@ -133,6 +133,16 @@ def test_record_process_rejects_unbounded_output_capture(tmp_path: Path) -> None
         )
 
 
+def test_record_process_rejects_boolean_output_limits(tmp_path: Path) -> None:
+    with pytest.raises(CaptureError, match="capture output limit must be an integer"):
+        record_process(
+            (sys.executable, "-c", "pass"),
+            tmp_path / "boolean-limit.runpack",
+            name="boolean-limit",
+            capture_output_limit=True,
+        )
+
+
 def test_record_process_hashes_selected_environment_values(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -220,6 +220,10 @@ def record_process(
     """Run ``command``, write ``output``, and return the process exit code."""
     if not command:
         raise CaptureError("a command is required")
+    if capture_output_limit is not None and (
+        not isinstance(capture_output_limit, int) or isinstance(capture_output_limit, bool)
+    ):
+        raise CaptureError("capture output limit must be an integer")
     if capture_output_limit is not None and capture_output_limit <= 0:
         raise CaptureError("capture output limit must be positive")
     if capture_output_limit is not None and capture_output_limit > MAX_CAPTURE_OUTPUT_BYTES:

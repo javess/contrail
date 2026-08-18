@@ -159,6 +159,11 @@ def test_timeline_rejects_oversized_artifact_before_analysis(tmp_path: Path) -> 
         build_timeline_payload(runpack, event_limit=1)
 
 
+def test_timeline_rejects_boolean_limits_before_loading_artifacts(tmp_path: Path) -> None:
+    with pytest.raises(TimelineError, match="timeline limits must be integers"):
+        build_timeline_payload(tmp_path / "missing.runpack", event_limit=True)
+
+
 def test_timeline_rejects_oversized_edge_sets_before_analysis(tmp_path: Path) -> None:
     runpack = tmp_path / "run.runpack"
     record_process(

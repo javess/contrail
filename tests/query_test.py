@@ -82,6 +82,9 @@ def test_runpack_query_rejects_excessive_output_limits(tmp_path: Path) -> None:
     with pytest.raises(QueryError, match="query limit cannot exceed 100000"):
         query_runpack(runpack, "SELECT name FROM events", limit=100_001)
 
+    with pytest.raises(QueryError, match="query limit must be an integer"):
+        query_runpack(runpack, "SELECT name FROM events", limit=True)
+
 
 def test_runpack_query_stops_read_only_work_that_exceeds_its_budget(tmp_path: Path) -> None:
     runpack = tmp_path / "query.runpack"

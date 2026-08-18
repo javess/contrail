@@ -172,15 +172,18 @@ def build_timeline_payload(
     text_byte_limit: int = MAX_TIMELINE_TEXT_BYTES,
     payload_byte_limit: int = MAX_TIMELINE_PAYLOAD_BYTES,
 ) -> dict[str, JsonValue]:
-    if (
-        event_limit <= 0
-        or entity_limit <= 0
-        or edge_limit <= 0
-        or measurement_limit <= 0
-        or json_byte_limit <= 0
-        or text_byte_limit <= 0
-        or payload_byte_limit <= 0
-    ):
+    limits = (
+        event_limit,
+        entity_limit,
+        edge_limit,
+        measurement_limit,
+        json_byte_limit,
+        text_byte_limit,
+        payload_byte_limit,
+    )
+    if any(not isinstance(limit, int) or isinstance(limit, bool) for limit in limits):
+        raise TimelineError("timeline limits must be integers")
+    if any(limit <= 0 for limit in limits):
         raise TimelineError("timeline limits must be positive")
     runs: list[JsonValue] = [
         _run_value(

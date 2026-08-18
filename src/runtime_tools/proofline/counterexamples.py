@@ -135,6 +135,8 @@ def search_counterexample(
     max_examples: int = 25,
     cwd: Path | None = None,
 ) -> CounterexampleResult | None:
+    if not isinstance(max_examples, int) or isinstance(max_examples, bool):
+        raise ContractError("max_examples must be an integer")
     if max_examples <= 0:
         raise ContractError("max_examples must be positive")
     if max_examples > MAX_COUNTEREXAMPLE_EXAMPLES:

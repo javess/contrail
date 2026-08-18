@@ -239,6 +239,17 @@ def test_counterexample_search_caps_example_count_before_loading_parameters(
             max_examples=1_001,
         )
 
+    with pytest.raises(ContractError, match="max_examples must be an integer"):
+        search_counterexample(
+            tmp_path / "contract.yaml",
+            tmp_path / "missing-parameters.yaml",
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("workload.py"),
+            output_dir=tmp_path / "output",
+            max_examples=True,
+        )
+
 
 def test_counterexample_search_hard_limits_distinct_experiment_runs(
     tmp_path: Path,
