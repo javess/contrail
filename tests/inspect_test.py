@@ -95,3 +95,44 @@ def test_inspection_preserves_base_measurements_after_additive_enrichment(
     summary = inspect_runpack(runpack)
 
     assert summary.peak_memory_bytes == 100
+
+
+def test_inspection_keeps_invalid_summary_evidence_unknown(tmp_path: Path) -> None:
+    runpack = tmp_path / "invalid-summary.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution(
+                "run",
+                "run",
+                0,
+                10,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {
+                    "output": {
+                        "stdout": {"bytes": True, "sha256": ""},
+                        "stderr": {"bytes": -1, "sha256": "identity"},
+                    }
+                },
+            )
+        )
+        writer.add_measurements(
+            (
+                Measurement("process.wall_time", -1.0, "s", 10, None, {}),
+                Measurement("process.cpu.user", -1.0, "s", 10, None, {}),
+                Measurement("process.cpu.system", -1.0, "s", 10, None, {}),
+                Measurement("process.memory.peak", -1.0, "By", 10, None, {}),
+            )
+        )
+
+    summary = inspect_runpack(runpack)
+
+    assert summary.wall_time_seconds == 10 / 1_000_000_000
+    assert summary.cpu_user_seconds is None
+    assert summary.cpu_system_seconds is None
+    assert summary.peak_memory_bytes is None
+    assert summary.stdout_bytes is None
+    assert summary.stdout_sha256 is None
+    assert summary.stderr_bytes is None

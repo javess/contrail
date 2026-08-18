@@ -59,8 +59,8 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
         measurements: dict[str, float] = {}
         for item in reader.measurements():
             measurements.setdefault(item.name, item.value)
-        peak_memory = measurements.get("process.memory.peak")
-        wall_time = measurements.get("process.wall_time")
+        peak_memory = _nonnegative(measurements.get("process.memory.peak"))
+        wall_time = _nonnegative(measurements.get("process.wall_time"))
         if wall_time is None and execution.finished_at_ns is not None:
             wall_time = (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
         return ExecutionSummary(
@@ -75,8 +75,8 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             finished_at_ns=execution.finished_at_ns,
             exit_code=execution.exit_code,
             wall_time_seconds=wall_time,
-            cpu_user_seconds=measurements.get("process.cpu.user"),
-            cpu_system_seconds=measurements.get("process.cpu.system"),
+            cpu_user_seconds=_nonnegative(measurements.get("process.cpu.user")),
+            cpu_system_seconds=_nonnegative(measurements.get("process.cpu.system")),
             peak_memory_bytes=int(peak_memory) if peak_memory is not None else None,
             stdout_bytes=_as_int(_nested_output(execution.metadata, "stdout", "bytes")),
             stdout_sha256=_as_str(_nested_output(execution.metadata, "stdout", "sha256")),
@@ -155,11 +155,15 @@ def _event_duration(event: Event) -> str:
 
 
 def _as_int(value: str | int | None) -> int | None:
-    return value if isinstance(value, int) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
 def _as_str(value: str | int | None) -> str | None:
-    return value if isinstance(value, str) else None
+    return value if isinstance(value, str) and value else None
+
+
+def _nonnegative(value: float | None) -> float | None:
+    return value if value is not None and value >= 0 else None
 
 
 def render_summary(summary: ExecutionSummary, output_format: str) -> str:
