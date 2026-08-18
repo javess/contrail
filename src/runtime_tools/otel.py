@@ -843,7 +843,7 @@ def import_otlp_logs(
             )
 
     def append(writer: RunpackWriter) -> OtelLogImportResult:
-        if dropped_attribute_count:
+        if dropped_attribute_count or missing_spans:
             metadata = execution.metadata.copy()
             raw_otel_metadata = metadata.get("otel")
             if raw_otel_metadata is None:
@@ -852,14 +852,24 @@ def import_otlp_logs(
                 otel_metadata = raw_otel_metadata.copy()
             else:
                 raise OtelImportError("existing execution otel metadata must be an object")
-            otel_metadata["dropped_attribute_count"] = _bounded_count_total(
-                _nonnegative_count(
-                    otel_metadata.get("dropped_attribute_count"),
-                    "existing dropped OTLP attributes",
-                ),
-                dropped_attribute_count,
-                "dropped OTLP attributes",
-            )
+            if dropped_attribute_count:
+                otel_metadata["dropped_attribute_count"] = _bounded_count_total(
+                    _nonnegative_count(
+                        otel_metadata.get("dropped_attribute_count"),
+                        "existing dropped OTLP attributes",
+                    ),
+                    dropped_attribute_count,
+                    "dropped OTLP attributes",
+                )
+            if missing_spans:
+                otel_metadata["missing_log_span_count"] = _bounded_count_total(
+                    _nonnegative_count(
+                        otel_metadata.get("missing_log_span_count"),
+                        "existing missing OTLP log span references",
+                    ),
+                    missing_spans,
+                    "missing OTLP log span references",
+                )
             metadata["otel"] = otel_metadata
             writer.set_execution_metadata(execution.id, metadata)
         writer.add_entities(entities)

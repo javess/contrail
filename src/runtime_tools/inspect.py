@@ -253,7 +253,7 @@ def _missing_causal_references(metadata: dict[str, JsonValue]) -> int | None:
     if not isinstance(otel, dict):
         return None
     total = 0
-    for key in ("missing_parent_count", "missing_link_count"):
+    for key in ("missing_parent_count", "missing_link_count", "missing_log_span_count"):
         value = otel.get(key, 0)
         if (
             not isinstance(value, int)

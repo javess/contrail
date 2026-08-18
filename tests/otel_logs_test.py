@@ -228,6 +228,45 @@ def test_otlp_logs_accumulate_exporter_dropped_attributes(tmp_path: Path) -> Non
     assert inspect_runpack(output).dropped_attribute_count == 14
 
 
+def test_otlp_logs_accumulate_missing_span_references(tmp_path: Path) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    with sqlite3.connect(source) as connection:
+        row = connection.execute("SELECT metadata_json FROM executions").fetchone()
+        metadata = json.loads(row[0])
+        metadata["otel"] = {"missing_parent_count": 2}
+        connection.execute("UPDATE executions SET metadata_json = ?", (json.dumps(metadata),))
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "5",
+                                        "traceId": "missing-trace",
+                                        "spanId": "missing-span",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_logs(source, logs, output)
+
+    assert result.missing_span_count == 1
+    assert inspect_runpack(output).missing_causal_references == 3
+
+
 @pytest.mark.parametrize("severity", (True, "INVALID", -1, 1.5, 25))
 def test_otlp_logs_reject_invalid_severity_numbers(
     tmp_path: Path,
