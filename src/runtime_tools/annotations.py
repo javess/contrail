@@ -161,6 +161,12 @@ def load_annotations(
         target_id = _string(record, "target_id")
         if source_id in known_ids and target_id in known_ids:
             edges.append(CausalEdge(source_id, target_id, _string(record, "relation"), 1.0, {}))
+    edge_identities: set[tuple[str, str, str]] = set()
+    for edge in edges:
+        identity = (edge.source_event_id, edge.target_event_id, edge.kind)
+        if identity in edge_identities:
+            raise AnnotationError("duplicate annotation causal edge")
+        edge_identities.add(identity)
     events.sort(key=lambda item: (item.started_at_ns or -1, item.id))
     return tuple(events), tuple(edges)
 

@@ -166,6 +166,32 @@ Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_text(
     assert summary.record_counts["events"] == 1
 
 
+def test_record_process_preserves_core_capture_for_duplicate_annotation_links(
+    tmp_path: Path,
+) -> None:
+    workload = tmp_path / "duplicate-link.py"
+    workload.write_text(
+        """
+from runtime_tools import runtime
+
+source = runtime.event("source")
+target = runtime.event("target")
+runtime.link(source, target)
+runtime.link(source, target)
+""".strip(),
+        encoding="utf-8",
+    )
+    output = tmp_path / "duplicate-link.runpack"
+
+    exit_code = record_process((sys.executable, str(workload)), output, name="duplicate-link")
+
+    summary = inspect_runpack(output)
+    assert exit_code == 0
+    assert summary.annotation_error == "duplicate annotation causal edge"
+    assert summary.record_counts["events"] == 1
+    assert summary.record_counts["causal_edges"] == 0
+
+
 def test_annotation_writer_completes_short_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
