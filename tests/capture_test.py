@@ -316,6 +316,7 @@ def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None
         (cast(Any, [sys.executable]), "command must be a tuple of strings"),
         (("",), "command executable must be non-empty"),
         (("bad\0command",), "command arguments cannot contain NUL bytes"),
+        (("bad-\udcff",), "command arguments must be valid UTF-8"),
     ),
 )
 def test_record_process_rejects_invalid_command_shapes_before_creating_artifacts(
@@ -330,6 +331,28 @@ def test_record_process_rejects_invalid_command_shapes_before_creating_artifacts
 
     assert not output.exists()
     assert not tuple(tmp_path.glob(".invalid-command.*"))
+
+
+@pytest.mark.parametrize(
+    ("name", "message"),
+    (
+        (cast(Any, True), "capture name must be a non-empty string"),
+        ("", "capture name must be a non-empty string"),
+        ("bad-\udcff", "capture name must be valid UTF-8"),
+    ),
+)
+def test_record_process_rejects_invalid_names_before_creating_artifacts(
+    tmp_path: Path,
+    name: str,
+    message: str,
+) -> None:
+    output = tmp_path / "invalid-name.runpack"
+
+    with pytest.raises(CaptureError, match=message):
+        record_process((sys.executable, "-c", "pass"), output, name=name)
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".invalid-name.*"))
 
 
 def test_record_process_normalizes_publication_failures_and_cleans_temporary_files(

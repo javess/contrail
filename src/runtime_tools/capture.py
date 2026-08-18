@@ -226,6 +226,17 @@ def record_process(
         raise CaptureError("command executable must be non-empty")
     if any("\0" in item for item in command):
         raise CaptureError("command arguments cannot contain NUL bytes")
+    try:
+        for item in command:
+            item.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise CaptureError("command arguments must be valid UTF-8") from exc
+    if not isinstance(name, str) or not name:
+        raise CaptureError("capture name must be a non-empty string")
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise CaptureError("capture name must be valid UTF-8") from exc
     if capture_output_limit is not None and (
         not isinstance(capture_output_limit, int) or isinstance(capture_output_limit, bool)
     ):
