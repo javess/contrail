@@ -28,9 +28,13 @@ function renderSwitcher() {
 function renderSummary() {
   const run = currentRun();
   const critical = run.analysis.critical_path;
+  const cpuTime = run.summary.cpu_user_seconds == null || run.summary.cpu_system_seconds == null
+    ? null
+    : run.summary.cpu_user_seconds + run.summary.cpu_system_seconds;
   const values = [
     ["Outcome", run.summary.exit_code == null ? "No exit evidence" : `Exit ${run.summary.exit_code}`],
     ["Wall time", fmtDuration(run.summary.wall_time_seconds)],
+    ["CPU time", fmtDuration(cpuTime)],
     ["Peak memory", fmtBytes(run.summary.peak_memory_bytes)],
     ["Critical path", critical ? fmtDuration(critical.duration_seconds) : "unavailable"],
     ["Path active", critical ? fmtDuration(critical.active_seconds) : "unavailable"],

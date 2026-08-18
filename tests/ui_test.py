@@ -147,6 +147,7 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "renderAnalysis()" in javascript
     assert "Path waiting" in javascript
     assert "diff.cpu_time.baseline" in javascript
+    assert "run.summary.cpu_user_seconds + run.summary.cpu_system_seconds" in javascript
     assert "Duration shifts" in javascript
     assert "stderr_equivalent" in javascript
     assert "operation_errors_equivalent" in javascript
