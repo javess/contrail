@@ -5,6 +5,7 @@ import io
 import json
 import sqlite3
 import sys
+import time
 from collections.abc import Buffer
 from pathlib import Path
 from typing import Any, cast
@@ -144,6 +145,42 @@ def test_record_process_drains_output_after_relay_failure(tmp_path: Path) -> Non
     assert stdout_metadata["bytes"] == content_size
     assert stdout_metadata["sha256"] == hashlib.sha256(b"x" * content_size).hexdigest()
     assert stdout_metadata["relay_error"] == "BrokenPipeError: consumer closed"
+
+
+def test_record_process_does_not_wait_for_descendants_holding_output_pipes(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "inherited-pipe.runpack"
+    started = time.monotonic()
+
+    exit_code = record_process(
+        (
+            sys.executable,
+            "-c",
+            (
+                "import subprocess, sys; "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(1.5)']); "
+                "print('parent complete')"
+            ),
+        ),
+        output,
+        name="inherited-pipe",
+    )
+
+    elapsed = time.monotonic() - started
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+    output_metadata = execution.metadata["output"]
+    assert isinstance(output_metadata, dict)
+    stdout_metadata = output_metadata["stdout"]
+    stderr_metadata = output_metadata["stderr"]
+    assert isinstance(stdout_metadata, dict)
+    assert isinstance(stderr_metadata, dict)
+    assert exit_code == 0
+    assert elapsed < 1.0
+    assert stdout_metadata["bytes"] == len(b"parent complete\n")
+    assert stdout_metadata["pipe_open_after_exit"] is True
+    assert stderr_metadata["pipe_open_after_exit"] is True
 
 
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:

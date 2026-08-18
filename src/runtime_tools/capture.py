@@ -6,8 +6,10 @@ import hashlib
 import os
 import platform
 import resource
+import select
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -34,6 +36,7 @@ class CaptureError(ValueError):
 
 
 MAX_CAPTURE_OUTPUT_BYTES = 64 * 1024 * 1024
+MAX_POST_EXIT_DRAIN_BYTES = 1024 * 1024
 _IDENTIFIED_ENVIRONMENT_VARIABLES = (
     "CI",
     "CUDA_VISIBLE_DEVICES",
@@ -54,6 +57,7 @@ class OutputDigest:
     captured: bytes | None
     truncated: bool
     relay_error: str | None
+    pipe_open_after_exit: bool
 
 
 def _git_revision(cwd: Path) -> str | None:
@@ -76,12 +80,19 @@ def _pump(
     source: BinaryIO,
     sink: BinaryIO | None,
     capture_limit: int | None,
+    process_done: threading.Event,
 ) -> OutputDigest:
     digest = hashlib.sha256()
     byte_count = 0
     captured = bytearray() if capture_limit is not None else None
     relay_error: str | None = None
-    while chunk := source.read(64 * 1024):
+    pipe_open_after_exit = False
+    post_exit_bytes = 0
+    descriptor = source.fileno()
+    os.set_blocking(descriptor, False)
+
+    def consume(chunk: bytes) -> None:
+        nonlocal byte_count, relay_error, sink
         digest.update(chunk)
         byte_count += len(chunk)
         if captured is not None:
@@ -95,12 +106,40 @@ def _pump(
             except Exception as exc:
                 relay_error = f"{type(exc).__name__}: {exc}"
                 sink = None
+
+    while True:
+        if process_done.is_set():
+            try:
+                chunk = os.read(descriptor, 64 * 1024)
+            except BlockingIOError:
+                pipe_open_after_exit = True
+                break
+            if not chunk:
+                break
+            consume(chunk)
+            post_exit_bytes += len(chunk)
+            if post_exit_bytes >= MAX_POST_EXIT_DRAIN_BYTES:
+                pipe_open_after_exit = True
+                break
+            continue
+        readable, _, _ = select.select((descriptor,), (), (), 0.05)
+        if not readable:
+            continue
+        try:
+            chunk = os.read(descriptor, 64 * 1024)
+        except BlockingIOError:
+            continue
+        if not chunk:
+            break
+        consume(chunk)
+
     return OutputDigest(
         byte_count=byte_count,
         sha256=digest.hexdigest(),
         captured=bytes(captured) if captured is not None else None,
         truncated=captured is not None and byte_count > len(captured),
         relay_error=relay_error,
+        pipe_open_after_exit=pipe_open_after_exit,
     )
 
 
@@ -111,6 +150,8 @@ def _output_metadata(digest: OutputDigest) -> dict[str, JsonValue]:
     }
     if digest.relay_error is not None:
         metadata["relay_error"] = digest.relay_error
+    if digest.pipe_open_after_exit:
+        metadata["pipe_open_after_exit"] = True
     return metadata
 
 
@@ -229,10 +270,18 @@ def record_process(
                 raise CaptureError("failed to capture process output")
             stdout_pipe = cast(BinaryIO, process.stdout)
             stderr_pipe = cast(BinaryIO, process.stderr)
+            process_done = threading.Event()
             with ThreadPoolExecutor(max_workers=2) as executor:
-                stdout_result = executor.submit(_pump, stdout_pipe, stdout, capture_output_limit)
-                stderr_result = executor.submit(_pump, stderr_pipe, stderr, capture_output_limit)
-                exit_code, process_usage = _wait_with_usage(process)
+                stdout_result = executor.submit(
+                    _pump, stdout_pipe, stdout, capture_output_limit, process_done
+                )
+                stderr_result = executor.submit(
+                    _pump, stderr_pipe, stderr, capture_output_limit, process_done
+                )
+                try:
+                    exit_code, process_usage = _wait_with_usage(process)
+                finally:
+                    process_done.set()
                 stdout_digest = stdout_result.result()
                 stderr_digest = stderr_result.result()
 

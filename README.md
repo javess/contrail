@@ -31,6 +31,11 @@ included in the artifact by default. A small documented allowlist of
 behavior-relevant environment variables is represented only by value hashes so
 environment drift can be detected without storing the values.
 
+Capture ends when the recorded process exits. If a detached descendant keeps an
+inherited stdout or stderr pipe open, Contrail drains buffered output without
+waiting for that descendant and records `pipe_open_after_exit` in the stream
+metadata so the output identity is not overstated.
+
 Output content can be included explicitly as bounded binary attachments. This
 may capture secrets, so it is opt-in; each stream stores at most the configured
 prefix plus its original byte count and truncation state:
