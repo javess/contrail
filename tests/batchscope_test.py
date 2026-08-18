@@ -301,6 +301,35 @@ def test_batchscope_labels_a_single_process_path_as_observed(tmp_path: Path) -> 
     assert analysis.critical_path.certainty == "observed"
 
 
+@pytest.mark.parametrize("missing_count", (1, "invalid"))
+def test_missing_causal_evidence_makes_critical_path_inferred(
+    tmp_path: Path,
+    missing_count: int | str,
+) -> None:
+    runpack = tmp_path / "incomplete-causality.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution(
+                "incomplete",
+                "incomplete",
+                0,
+                100,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {"otel": {"missing_parent_count": missing_count}},
+            )
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("work", "operation", "work", 0, 100))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.certainty == "inferred"
+
+
 def test_critical_path_does_not_subtract_sequential_sibling_intervals(tmp_path: Path) -> None:
     runpack = tmp_path / "siblings.runpack"
     with RunpackWriter(runpack) as writer:

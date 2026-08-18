@@ -172,6 +172,7 @@ def _critical_path(
     total: float | None,
     *,
     clock_inconsistent: bool,
+    causality_complete: bool,
 ) -> CriticalPath | None:
     nodes = {event.id: event for event in events}
     if not any(_has_complete_interval(event) for event in events):
@@ -277,6 +278,7 @@ def _critical_path(
             and edges_observed
             and timing_complete
             and shared_clock_domain
+            and causality_complete
             and not clock_inconsistent
             and not cycle_detected
             else "inferred"
@@ -675,6 +677,7 @@ def analyze_runpack(path: Path) -> BatchAnalysis:
         edge_values,
         summary.wall_time_seconds,
         clock_inconsistent=clock_inconsistent,
+        causality_complete=summary.missing_causal_references == 0,
     )
     return BatchAnalysis(
         summary.id,
