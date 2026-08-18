@@ -807,6 +807,16 @@ class RunpackReader:
             for row in rows
         }
 
+    def entity_counts(self) -> dict[tuple[str, str], int]:
+        rows = self._execute(
+            """
+            SELECT kind, name, count(*) AS entity_count
+            FROM entities
+            GROUP BY kind, name
+            """
+        ).fetchall()
+        return {(row["kind"], row["name"]): int(row["entity_count"]) for row in rows}
+
     def operation_duration_totals(self) -> dict[tuple[str, str, str, str], float]:
         rows = self._execute(
             """

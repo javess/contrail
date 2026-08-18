@@ -63,6 +63,13 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
             f"  {_format_change(diff.peak_memory, _bytes)}",
         )
     )
+    if diff.entity_count_changes:
+        lines.extend(("", "Entity changes"))
+        lines.extend(
+            f"  {change.entity_name} [{change.entity_kind}]: "
+            f"{change.baseline:,} → {change.candidate:,} ({change.change_kind})"
+            for change in diff.entity_count_changes
+        )
     if diff.operation_count_changes:
         lines.extend(("", "Operation count changes"))
         for index, change in enumerate(diff.operation_count_changes, 1):
@@ -119,12 +126,18 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
             f"  {change.variable}: {change.change_kind}" for change in diff.environment_changes
         )
     if (
-        not diff.operation_count_changes
+        not diff.entity_count_changes
+        and not diff.operation_count_changes
         and not diff.operation_concurrency_changes
         and not diff.operation_duration_changes
         and not diff.edge_count_changes
     ):
-        lines.extend(("", "No structural, concurrency, duration, or operation-count changes."))
+        lines.extend(
+            (
+                "",
+                "No entity, structural, concurrency, duration, or operation-count changes.",
+            )
+        )
     return "\n".join(lines)
 
 

@@ -85,6 +85,7 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "Evidence warning" in javascript
     assert "diff.candidate_annotation_error" in javascript
     assert "diff.environment_changes" in javascript
+    assert "diff.entity_count_changes" in javascript
     assert "diff.operation_concurrency_changes" in javascript
     assert "diff.baseline_incomplete_streams" in javascript
     assert "Remaining after compute" in javascript

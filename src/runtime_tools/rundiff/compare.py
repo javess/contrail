@@ -29,6 +29,31 @@ class ValueChange:
 
 
 @dataclass(frozen=True, slots=True)
+class EntityCountChange:
+    entity_kind: str
+    entity_name: str
+    baseline: int
+    candidate: int
+
+    @property
+    def change_kind(self) -> Literal["added", "removed", "changed"]:
+        if self.baseline == 0:
+            return "added"
+        if self.candidate == 0:
+            return "removed"
+        return "changed"
+
+    def as_json_value(self) -> dict[str, JsonValue]:
+        return {
+            "entity_kind": self.entity_kind,
+            "entity_name": self.entity_name,
+            "baseline": self.baseline,
+            "candidate": self.candidate,
+            "change_kind": self.change_kind,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class OperationCountChange:
     entity_kind: str
     entity_name: str
@@ -168,6 +193,7 @@ class ExecutionDiff:
     baseline_critical_path_certainty: str | None
     candidate_critical_path_certainty: str | None
     peak_memory: ValueChange
+    entity_count_changes: tuple[EntityCountChange, ...]
     operation_count_changes: tuple[OperationCountChange, ...]
     operation_concurrency_changes: tuple[OperationConcurrencyChange, ...]
     operation_duration_changes: tuple[OperationDurationChange, ...]
@@ -192,6 +218,9 @@ class ExecutionDiff:
             "baseline_critical_path_certainty": self.baseline_critical_path_certainty,
             "candidate_critical_path_certainty": self.candidate_critical_path_certainty,
             "peak_memory": self.peak_memory.as_json_value(),
+            "entity_count_changes": [
+                change.as_json_value() for change in self.entity_count_changes
+            ],
             "operation_count_changes": [
                 change.as_json_value() for change in self.operation_count_changes
             ],
@@ -269,6 +298,26 @@ def _operation_changes(
             change.entity_name,
             change.operation_kind,
             change.operation_name,
+        )
+    )
+    return tuple(changes)
+
+
+def _entity_changes(
+    baseline: dict[tuple[str, str], int],
+    candidate: dict[tuple[str, str], int],
+) -> tuple[EntityCountChange, ...]:
+    changes = [
+        EntityCountChange(*key, baseline.get(key, 0), candidate.get(key, 0))
+        for key in baseline.keys() | candidate.keys()
+        if baseline.get(key, 0) != candidate.get(key, 0)
+    ]
+    changes.sort(
+        key=lambda change: (
+            {"added": 0, "removed": 1, "changed": 2}[change.change_kind],
+            -abs(change.candidate - change.baseline),
+            change.entity_kind,
+            change.entity_name,
         )
     )
     return tuple(changes)
@@ -389,12 +438,14 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
     candidate_analysis = analyze_runpack(candidate_path)
     with RunpackReader(baseline_path) as baseline_reader:
         baseline_environment = _selected_environment(baseline_reader.execution().metadata)
+        baseline_entities = baseline_reader.entity_counts()
         baseline_operations = baseline_reader.operation_counts()
         baseline_concurrency = baseline_reader.operation_max_concurrency()
         baseline_durations = baseline_reader.operation_duration_totals()
         baseline_edges = _all_edge_counts(baseline_reader)
     with RunpackReader(candidate_path) as candidate_reader:
         candidate_environment = _selected_environment(candidate_reader.execution().metadata)
+        candidate_entities = candidate_reader.entity_counts()
         candidate_operations = candidate_reader.operation_counts()
         candidate_concurrency = candidate_reader.operation_max_concurrency()
         candidate_durations = candidate_reader.operation_duration_totals()
@@ -451,6 +502,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         peak_memory=_value_change(
             baseline_summary.peak_memory_bytes, candidate_summary.peak_memory_bytes
         ),
+        entity_count_changes=_entity_changes(baseline_entities, candidate_entities),
         operation_count_changes=_operation_changes(baseline_operations, candidate_operations),
         operation_concurrency_changes=_concurrency_changes(
             baseline_concurrency,

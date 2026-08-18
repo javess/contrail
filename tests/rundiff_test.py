@@ -130,6 +130,10 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
     assert diff.candidate_critical_path_certainty == "observed"
     assert diff.peak_memory.percent == 50.0
     assert [
+        (change.entity_kind, change.entity_name, change.baseline, change.candidate)
+        for change in diff.entity_count_changes
+    ] == [("service", "metadata", 0, 1)]
+    assert [
         (change.entity_name, change.operation_name, change.baseline, change.candidate)
         for change in diff.operation_count_changes
     ] == [
@@ -239,6 +243,7 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert "10.0ms → 20.0ms (+100.0%)" in text_report
     assert "Critical path (observed → observed)\n  10.0ms → 20.0ms (+100.0%)" in text_report
     assert "database :: SELECT items [client.request]" in text_report
+    assert "Entity changes\n  metadata [service]: 0 → 1 (added)" in text_report
     assert "Aggregate operation duration changes" in text_report
     assert "Observed max concurrency changes" in text_report
     assert "database :: SELECT items [client.request]\n     1 → 3 (+200.0%)" in text_report
@@ -250,6 +255,15 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert payload["stderr_equivalent"] is True
     assert payload["wall_time"]["percent"] == 100.0
     assert payload["critical_path"]["percent"] == 100.0
+    assert payload["entity_count_changes"] == [
+        {
+            "baseline": 0,
+            "candidate": 1,
+            "change_kind": "added",
+            "entity_kind": "service",
+            "entity_name": "metadata",
+        }
+    ]
     assert payload["operation_count_changes"][0]["candidate"] == 3
     assert payload["operation_duration_changes"][0]["candidate_seconds"] == 0.02
     assert payload["operation_concurrency_changes"][0]["candidate"] == 3
@@ -295,7 +309,10 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
     assert (tmp_path / "custom-baseline.runpack").is_file()
     assert compared.returncode == 0
     assert "Outcome\n  equivalent" in compared.stdout
-    assert "No structural, concurrency, duration, or operation-count changes." in compared.stdout
+    assert (
+        "No entity, structural, concurrency, duration, or operation-count changes."
+        in compared.stdout
+    )
 
 
 def test_compare_runpacks_treats_changed_stderr_as_different_behavior(tmp_path: Path) -> None:

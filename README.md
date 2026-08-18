@@ -90,8 +90,8 @@ counts, not attachment content; content remains available through an explicit
 SQL query.
 
 Compare any two runpacks with RunDiff. The text report emphasizes changed
-operation counts, observed max concurrency, aggregate duration, and runtime
-dependencies; JSON keeps the same structured facts for automation.
+entity counts, operation counts, observed max concurrency, aggregate duration,
+and runtime dependencies; JSON keeps the same structured facts for automation.
 
 ```bash
 uv run rundiff compare baseline.runpack candidate.runpack
