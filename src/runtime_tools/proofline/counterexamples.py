@@ -125,6 +125,13 @@ def _has_violation(experiment: ExperimentResult) -> bool:
     return any(result.status == "fail" for result in experiment.verification.results)
 
 
+def _temporary_search_directory() -> tempfile.TemporaryDirectory[str]:
+    try:
+        return tempfile.TemporaryDirectory(prefix="proofline-search-")
+    except OSError as exc:
+        raise ExperimentError(f"could not create temporary search directory: {exc}") from exc
+
+
 def search_counterexample(
     contract: Path,
     parameters_path: Path,
@@ -156,7 +163,7 @@ def search_counterexample(
             return cache[key]
         if len(cache) >= max_examples:
             return False
-        with tempfile.TemporaryDirectory(prefix="proofline-search-") as directory:
+        with _temporary_search_directory() as directory:
             experiment = run_experiment(
                 contract,
                 baseline_ref=baseline_ref,

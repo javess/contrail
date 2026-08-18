@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -107,6 +108,18 @@ parameters:
             workload=Path("workload.py"),
             output_dir=tmp_path / "output",
         )
+
+
+def test_counterexample_search_normalizes_temporary_directory_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise PermissionError("temporary storage denied")
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", fail)
+
+    with pytest.raises(ExperimentError, match="could not create temporary search directory"):
+        counterexamples._temporary_search_directory()
 
 
 def test_counterexample_search_rejects_duplicate_parameter_keys(tmp_path: Path) -> None:
