@@ -98,7 +98,7 @@ def load_yaml_file(path: Path, *, label: str, max_bytes: int) -> Any:
         raise YamlInputError(f"{label} must be UTF-8") from exc
     try:
         document = load_yaml(value)
+        _validate_utf8_strings(document, label)
     except RecursionError as exc:
         raise YamlInputError(f"{label} nesting is too deep") from exc
-    _validate_utf8_strings(document, label)
     return document
