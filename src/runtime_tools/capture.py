@@ -200,7 +200,11 @@ def _wait_with_usage(
 
 def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
     """Best-effort cleanup for a child when capture itself is interrupted."""
-    if process.poll() is not None:
+    try:
+        already_finished = process.poll() is not None
+    except OSError:
+        return
+    if already_finished:
         return
     try:
         process.terminate()
@@ -209,7 +213,10 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
     except subprocess.TimeoutExpired:
         pass
     except ProcessLookupError:
-        process.wait()
+        try:
+            process.wait()
+        except OSError:
+            pass
         return
     except OSError:
         return
@@ -217,7 +224,10 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
         process.kill()
         process.wait()
     except ProcessLookupError:
-        process.wait()
+        try:
+            process.wait()
+        except OSError:
+            pass
     except OSError:
         return
 

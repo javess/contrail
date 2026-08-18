@@ -379,7 +379,10 @@ def test_output_drain_retries_interrupted_select(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize("operation", ("terminate", "kill"))
-def test_process_cleanup_reaps_a_child_that_exits_during_signaling(operation: str) -> None:
+@pytest.mark.parametrize("wait_error", (False, True))
+def test_process_cleanup_reaps_a_child_that_exits_during_signaling(
+    operation: str, wait_error: bool
+) -> None:
     waits: list[float | None] = []
 
     class VanishedProcess:
@@ -398,6 +401,8 @@ def test_process_cleanup_reaps_a_child_that_exits_during_signaling(operation: st
             waits.append(timeout)
             if operation == "kill" and timeout is not None:
                 raise subprocess.TimeoutExpired("child", timeout)
+            if wait_error:
+                raise ChildProcessError
             return 0
 
     capture._terminate_and_reap(cast(subprocess.Popen[bytes], VanishedProcess()))
