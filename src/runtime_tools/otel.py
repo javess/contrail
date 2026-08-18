@@ -340,6 +340,12 @@ def import_otlp_json(
     include_raw: bool = False,
 ) -> OtelImportResult:
     """Normalize one OTLP/JSON trace export into a new runpack."""
+    if not isinstance(name, str) or not name:
+        raise OtelImportError("OTLP execution name must be a non-empty string")
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise OtelImportError("OTLP execution name must be valid UTF-8") from exc
     if output.exists():
         raise OtelImportError(f"refusing to overwrite existing runpack: {output}")
     if not output.parent.is_dir():

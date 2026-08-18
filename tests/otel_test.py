@@ -108,6 +108,26 @@ def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: P
     assert "clock inconsistencies: 1" in tree
 
 
+@pytest.mark.parametrize(
+    ("name", "message"),
+    (
+        ("", "execution name must be a non-empty string"),
+        ("bad-\udcff", "execution name must be valid UTF-8"),
+    ),
+)
+def test_otlp_json_import_validates_names_before_reading_sources(
+    tmp_path: Path,
+    name: str,
+    message: str,
+) -> None:
+    output = tmp_path / "trace.runpack"
+
+    with pytest.raises(OtelImportError, match=message):
+        import_otlp_json(tmp_path / "missing.json", output, name=name)
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_normalizes_numeric_enum_strings_and_error_status(
     tmp_path: Path,
 ) -> None:
