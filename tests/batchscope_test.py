@@ -258,6 +258,31 @@ def test_batchscope_classifies_failed_scheduling_as_capacity_starvation(
     assert finding.confidence == 0.85
 
 
+def test_batchscope_classifies_a_dominant_operation_straggler(tmp_path: Path) -> None:
+    runpack = tmp_path / "straggler.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("straggler", "straggler", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            _event(
+                f"task-{index}",
+                "operation",
+                "task",
+                index * 1_000_000,
+                90_000_000 if index == 4 else 20_000_000,
+            )
+            for index in range(5)
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    finding = next(item for item in analysis.bottlenecks if item.classification == "straggler_tail")
+    assert finding.evidence == ("task max duration 0.086s versus 0.019s median across 5 operations")
+    assert finding.confidence == 0.8
+
+
 def test_serialized_stage_uses_enclosing_logical_run_instead_of_process_startup(
     tmp_path: Path,
 ) -> None:

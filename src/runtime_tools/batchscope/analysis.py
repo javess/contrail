@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 from typing import Literal
 
 from runtime_tools.inspect import inspect_runpack
@@ -539,7 +540,46 @@ def _bottlenecks(
                 0.75,
             )
         )
+    straggler = _straggler_tail(events, total)
+    if straggler is not None:
+        findings.append(straggler)
     return tuple(findings)
+
+
+def _straggler_tail(events: tuple[Event, ...], total: float) -> Bottleneck | None:
+    cohorts: dict[tuple[str, str, str], list[Event]] = {}
+    for event in events:
+        if event.kind not in {"operation", "message.consume"} or not _has_complete_interval(event):
+            continue
+        domain = event.clock_domain or f"entity:{event.entity_id or 'unowned'}"
+        cohorts.setdefault((event.kind, event.name, domain), []).append(event)
+    candidates: list[tuple[float, str, float, float, int]] = []
+    for (_, name, _), cohort in cohorts.items():
+        if len(cohort) < 5:
+            continue
+        starts = [event.started_at_ns for event in cohort]
+        if any(value is None for value in starts):
+            continue
+        known_starts = [value for value in starts if value is not None]
+        start_spread = (max(known_starts) - min(known_starts)) / 1_000_000_000
+        if start_spread > total * 0.1:
+            continue
+        durations = [_duration_ns(event) / 1_000_000_000 for event in cohort]
+        typical = median(durations)
+        longest = max(durations)
+        excess = longest - typical
+        if typical <= 0 or longest < typical * 2.5 or excess < total * 0.1:
+            continue
+        candidates.append((excess, name, longest, typical, len(cohort)))
+    if not candidates:
+        return None
+    _, name, longest, typical, count = max(candidates)
+    return Bottleneck(
+        "straggler_tail",
+        f"{name} max duration {longest:.3f}s versus {typical:.3f}s median "
+        f"across {count} operations",
+        0.8,
+    )
 
 
 def analyze_runpack(path: Path) -> BatchAnalysis:
