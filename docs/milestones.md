@@ -3,6 +3,11 @@
 Each milestone ends in a demonstrable vertical slice over the same `.runpack`.
 Later work may refine earlier schemas only through explicit versioning.
 
+The repository currently has executable local slices through milestone 10,
+including the release-gate pipeline and drain examples. These milestones define
+the bounded 0.1.0 scope; they do not imply production-scale telemetry storage,
+hosted services, GPU analysis, or richer execution-environment adapters.
+
 ## 0. Architecture
 
 - Record the stable core, adapter boundary, artifact choice, time uncertainty,
@@ -41,7 +46,8 @@ Later work may refine earlier schemas only through explicit versioning.
 
 - Add the minimal `run`, `stage`, `progress`, `event`, and `link` API only where
   capture evidence cannot express domain work.
-- Represent annotations compatibly with OTel spans/events when OTel is present.
+- Normalize annotations into the same core events and causal edges used by the
+  OTel adapter, without creating a parallel tracing model.
 
 ## 6. BatchScope
 
