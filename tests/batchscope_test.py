@@ -512,6 +512,50 @@ def test_low_confidence_causal_edge_makes_critical_path_inferred(tmp_path: Path)
     assert analysis.critical_path.certainty == "inferred"
 
 
+def test_cross_clock_domain_critical_path_is_inferred(tmp_path: Path) -> None:
+    runpack = tmp_path / "cross-clock.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("cross-clock", "cross-clock", 0, 20_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(
+            Event(
+                "first",
+                "operation",
+                "first",
+                "worker",
+                0,
+                10_000_000,
+                "producer-clock",
+                None,
+                None,
+                {},
+            )
+        )
+        writer.add_event(
+            Event(
+                "second",
+                "operation",
+                "second",
+                "worker",
+                10_000_000,
+                20_000_000,
+                "consumer-clock",
+                None,
+                None,
+                {},
+            )
+        )
+        writer.add_causal_edge(CausalEdge("first", "second", "causes", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.duration_seconds == 0.02
+    assert analysis.critical_path.certainty == "inferred"
+
+
 def test_instant_events_preserve_causal_waiting_on_the_critical_path(tmp_path: Path) -> None:
     runpack = tmp_path / "instants.runpack"
     with RunpackWriter(runpack) as writer:

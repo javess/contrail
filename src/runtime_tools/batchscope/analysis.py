@@ -264,6 +264,8 @@ def _critical_path(
         confidence == 1.0 for confidence in selected_confidences
     )
     timing_complete = all(_has_complete_interval(nodes[event_id]) for event_id in event_ids)
+    clock_domains = {nodes[event_id].clock_domain for event_id in event_ids}
+    shared_clock_domain = len(clock_domains) == 1 and None not in clock_domains
     duration_seconds = best_path.duration_ns / 1_000_000_000
     return CriticalPath(
         duration_seconds=duration_seconds,
@@ -277,6 +279,7 @@ def _critical_path(
             if used_edge_count
             and edges_observed
             and timing_complete
+            and shared_clock_domain
             and not clock_inconsistent
             and not cycle_detected
             else "inferred"

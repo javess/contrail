@@ -59,6 +59,10 @@ Readers must not infer that a child happened after a parent solely because its
 wall-clock timestamp is larger. Impossible timestamp orderings can be reported
 as clock-skew evidence without deleting the causal relationship.
 
+BatchScope labels a critical path as observed only when every selected interval
+uses the same known clock domain. Cross-domain paths retain a best-effort
+duration but are explicitly labelled inferred.
+
 Observed maximum concurrency is calculated only among complete intervals in
 the same clock domain. RunDiff takes the maximum observed within any one domain;
 it never sums overlap across clocks that may be skewed. If any event in a
