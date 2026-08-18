@@ -915,11 +915,15 @@ class RunpackReader:
     """Reads and validates one supported runpack."""
 
     def __init__(self, path: Path) -> None:
-        if not path.is_file():
+        try:
+            resolved_path = path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise RunpackError(f"could not resolve runpack path: {path}") from exc
+        if not resolved_path.is_file():
             raise RunpackError(f"runpack does not exist: {path}")
         connection: sqlite3.Connection | None = None
         try:
-            uri = f"{path.resolve().as_uri()}?mode=ro"
+            uri = f"{resolved_path.as_uri()}?mode=ro"
             connection = sqlite3.connect(uri, uri=True)
             self._connection = connection
             self._connection.row_factory = sqlite3.Row

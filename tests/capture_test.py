@@ -731,6 +731,25 @@ def test_reader_closes_connection_when_validation_is_interrupted(
         connections[0].execute("SELECT 1")
 
 
+def test_reader_normalizes_runpack_path_resolution_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "run.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    resolve = Path.resolve
+
+    def fail_runpack_resolution(path: Path, strict: bool = False) -> Path:
+        if path == output:
+            raise RuntimeError("simulated resolution failure")
+        return resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", fail_runpack_resolution)
+
+    with pytest.raises(RunpackError, match="could not resolve runpack path"):
+        RunpackReader(output)
+
+
 def test_existing_writer_closes_connection_when_validation_is_interrupted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
