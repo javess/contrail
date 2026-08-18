@@ -8,6 +8,8 @@ from collections.abc import Callable
 from runtime_tools.rundiff.compare import EdgeCountChange, ExecutionDiff, ValueChange
 from runtime_tools.terminal import terminal_text
 
+MAX_TEXT_SECTION_ITEMS = 100
+
 
 def render_diff(diff: ExecutionDiff, output_format: str) -> str:
     if output_format == "json":
@@ -94,11 +96,12 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         lines.extend(
             f"  {terminal_text(change.entity_name)} [{terminal_text(change.entity_kind)}]: "
             f"{change.baseline:,} → {change.candidate:,} ({change.change_kind})"
-            for change in diff.entity_count_changes
+            for change in diff.entity_count_changes[:MAX_TEXT_SECTION_ITEMS]
         )
+        _append_omitted(lines, len(diff.entity_count_changes))
     if diff.operation_count_changes:
         lines.extend(("", "Operation count changes"))
-        for index, change in enumerate(diff.operation_count_changes, 1):
+        for index, change in enumerate(diff.operation_count_changes[:MAX_TEXT_SECTION_ITEMS], 1):
             percent = _percent(change.percent, change.baseline, change.candidate)
             lines.append(
                 f"  {index}. {terminal_text(change.entity_name)} :: "
@@ -106,9 +109,12 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 f"[{terminal_text(change.operation_kind)}]"
             )
             lines.append(f"     {change.baseline:,} → {change.candidate:,} {percent}")
+        _append_omitted(lines, len(diff.operation_count_changes))
     if diff.operation_error_count_changes:
         lines.extend(("", "Failed operation changes"))
-        for index, change in enumerate(diff.operation_error_count_changes, 1):
+        for index, change in enumerate(
+            diff.operation_error_count_changes[:MAX_TEXT_SECTION_ITEMS], 1
+        ):
             percent = _percent(change.percent, change.baseline, change.candidate)
             lines.append(
                 f"  {index}. {terminal_text(change.entity_name)} :: "
@@ -116,9 +122,12 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 f"[{terminal_text(change.operation_kind)}]"
             )
             lines.append(f"     {change.baseline:,} → {change.candidate:,} {percent}")
+        _append_omitted(lines, len(diff.operation_error_count_changes))
     if diff.operation_concurrency_changes:
         lines.extend(("", "Observed max concurrency changes"))
-        for index, concurrency_change in enumerate(diff.operation_concurrency_changes, 1):
+        for index, concurrency_change in enumerate(
+            diff.operation_concurrency_changes[:MAX_TEXT_SECTION_ITEMS], 1
+        ):
             percent = _percent(
                 concurrency_change.percent,
                 concurrency_change.baseline,
@@ -132,9 +141,12 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
             lines.append(
                 f"     {concurrency_change.baseline:,} → {concurrency_change.candidate:,} {percent}"
             )
+        _append_omitted(lines, len(diff.operation_concurrency_changes))
     if diff.operation_duration_changes:
         lines.extend(("", "Aggregate operation duration changes"))
-        for index, duration_change in enumerate(diff.operation_duration_changes, 1):
+        for index, duration_change in enumerate(
+            diff.operation_duration_changes[:MAX_TEXT_SECTION_ITEMS], 1
+        ):
             percent = _percent(
                 duration_change.percent,
                 duration_change.baseline_seconds,
@@ -149,6 +161,7 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 f"     {_duration(duration_change.baseline_seconds)} → "
                 f"{_duration(duration_change.candidate_seconds)} {percent}"
             )
+        _append_omitted(lines, len(diff.operation_duration_changes))
     new_edges = tuple(change for change in diff.edge_count_changes if change.change_kind == "new")
     removed_edges = tuple(
         change for change in diff.edge_count_changes if change.change_kind == "removed"
@@ -163,8 +176,9 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         lines.extend(("", "Environment changes"))
         lines.extend(
             f"  {terminal_text(change.variable)}: {change.change_kind}"
-            for change in diff.environment_changes
+            for change in diff.environment_changes[:MAX_TEXT_SECTION_ITEMS]
         )
+        _append_omitted(lines, len(diff.environment_changes))
     if (
         not diff.entity_count_changes
         and not diff.operation_count_changes
@@ -186,12 +200,19 @@ def _append_edges(lines: list[str], title: str, edges: tuple[EdgeCountChange, ..
     if not edges:
         return
     lines.extend(("", title))
-    for edge in edges:
+    for edge in edges[:MAX_TEXT_SECTION_ITEMS]:
         lines.append(
             f"  {terminal_text(edge.source_name)} → {terminal_text(edge.target_name)} "
             f"[{terminal_text(edge.relation)}]: "
             f"{edge.baseline:,} → {edge.candidate:,}"
         )
+    _append_omitted(lines, len(edges))
+
+
+def _append_omitted(lines: list[str], total: int) -> None:
+    omitted = total - MAX_TEXT_SECTION_ITEMS
+    if omitted > 0:
+        lines.append(f"  … {omitted:,} additional items omitted from text output")
 
 
 def _equivalence(value: bool | None) -> str:

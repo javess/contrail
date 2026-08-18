@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pytest
 
+import runtime_tools.rundiff.report as report_module
 from runtime_tools import record_process
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.rundiff import compare_runpacks
@@ -353,6 +354,23 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert payload["operation_error_count_changes"][0]["candidate"] == 1
     assert payload["operation_duration_changes"][0]["candidate_seconds"] == 0.02
     assert payload["operation_concurrency_changes"][0]["candidate"] == 3
+
+
+def test_rundiff_text_report_bounds_each_change_section(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=True)
+    diff = compare_runpacks(baseline, candidate)
+    monkeypatch.setattr(report_module, "MAX_TEXT_SECTION_ITEMS", 1)
+
+    report = render_diff(diff, "text")
+
+    assert "… 1 additional items omitted from text output" in report
+    assert len(json.loads(render_diff(diff, "json"))["operation_count_changes"]) == 2
 
 
 def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path: Path) -> None:
