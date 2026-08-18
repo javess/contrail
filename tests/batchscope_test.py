@@ -103,6 +103,53 @@ def test_batchscope_derives_overlap_aware_critical_path_and_throughput(tmp_path:
     assert {item.classification for item in analysis.bottlenecks} == {"serialized_stage"}
 
 
+def test_batchscope_scopes_compute_boundaries_to_the_progress_parent(tmp_path: Path) -> None:
+    runpack = tmp_path / "scoped-progress.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("scoped", "scoped", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("run-a", "run", "run-a", 0, 60_000_000),
+                _event("compute-a", "stage", "compute", 10_000_000, 50_000_000),
+                _event(
+                    "progress-a",
+                    "progress",
+                    "progress",
+                    40_000_000,
+                    40_000_000,
+                    {"completed": 50, "total": 100},
+                ),
+                _event(
+                    "progress-b",
+                    "progress",
+                    "progress",
+                    60_000_000,
+                    60_000_000,
+                    {"completed": 75, "total": 100},
+                ),
+                _event("run-b", "run", "run-b", 60_000_000, 100_000_000),
+                _event("compute-b", "stage", "compute", 70_000_000, 90_000_000),
+            )
+        )
+        writer.add_causal_edges(
+            (
+                CausalEdge("run-a", "compute-a", "parent", 1.0, {}),
+                CausalEdge("run-a", "progress-a", "parent", 1.0, {}),
+                CausalEdge("run-a", "progress-b", "parent", 1.0, {}),
+                CausalEdge("run-b", "compute-b", "parent", 1.0, {}),
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.throughput is not None
+    assert analysis.throughput.compute_finished_at_ns == 50_000_000
+    assert analysis.throughput.post_compute_seconds == 0.05
+
+
 def test_batchscope_lifecycle_does_not_double_count_nested_explicit_stages(
     tmp_path: Path,
 ) -> None:
