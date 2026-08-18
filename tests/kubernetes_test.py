@@ -1015,6 +1015,35 @@ def test_kubernetes_snapshot_normalizes_invalid_utf8(tmp_path: Path) -> None:
         )
 
 
+def test_kubernetes_snapshot_rejects_invalid_identity_unicode_at_the_adapter_boundary(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "base.runpack"
+    snapshot = tmp_path / "surrogate.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": {"name": "bad-\ud800", "uid": "pod"},
+                        "spec": {"containers": []},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KubernetesImportError, match="metadata.name must be valid UTF-8"):
+        import_kubernetes_snapshot(runpack, snapshot, output)
+
+    assert not output.exists()
+
+
 def test_kubernetes_snapshot_normalizes_excessive_document_nesting(tmp_path: Path) -> None:
     snapshot = tmp_path / "nested.json"
     snapshot.write_text("[" * 10_000 + "0" + "]" * 10_000, encoding="utf-8")

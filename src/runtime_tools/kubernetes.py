@@ -57,10 +57,18 @@ def _metadata(item: dict[str, object]) -> dict[str, object]:
     return _object(item.get("metadata", {}), "Kubernetes metadata")
 
 
+def _validate_utf8(value: str, label: str) -> str:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise KubernetesImportError(f"{label} must be valid UTF-8") from exc
+    return value
+
+
 def _required_string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise KubernetesImportError(f"{label} must be a non-empty string")
-    return value
+    return _validate_utf8(value, label)
 
 
 def _optional_string(value: object, label: str) -> str:
@@ -68,7 +76,7 @@ def _optional_string(value: object, label: str) -> str:
         return ""
     if not isinstance(value, str):
         raise KubernetesImportError(f"{label} must be a string")
-    return value
+    return _validate_utf8(value, label)
 
 
 def _kind(item: dict[str, object]) -> str:
@@ -85,7 +93,7 @@ def _namespace(metadata: dict[str, object]) -> str:
         return "default"
     if not isinstance(value, str):
         raise KubernetesImportError("metadata.namespace must be a string")
-    return value
+    return _validate_utf8(value, "metadata.namespace")
 
 
 def _uid(item: dict[str, object]) -> str:
@@ -95,7 +103,7 @@ def _uid(item: dict[str, object]) -> str:
         return f"name:{_kind(item)}:{_namespace(metadata)}:{_name(item)}"
     if not isinstance(value, str):
         raise KubernetesImportError("metadata.uid must be a string")
-    return value
+    return _validate_utf8(value, "metadata.uid")
 
 
 def _timestamp(value: object) -> int | None:
@@ -135,7 +143,11 @@ def _metadata_string_map(value: object, label: str) -> dict[str, JsonValue]:
         isinstance(key, str) and isinstance(item, str) for key, item in value.items()
     ):
         raise KubernetesImportError(f"{label} must map strings to strings")
-    return value
+    return {
+        _validate_utf8(key, label): _validate_utf8(item, label)
+        for key, item in value.items()
+        if isinstance(key, str) and isinstance(item, str)
+    }
 
 
 def _attributes(item: dict[str, object]) -> dict[str, JsonValue]:
@@ -263,7 +275,13 @@ def _resource_map(value: object) -> dict[str, JsonValue]:
         isinstance(key, str) and isinstance(item, str) for key, item in value.items()
     ):
         raise KubernetesImportError("container resource quantities must map strings to strings")
-    return value
+    return {
+        _validate_utf8(key, "container resource quantity"): _validate_utf8(
+            item, "container resource quantity"
+        )
+        for key, item in value.items()
+        if isinstance(key, str) and isinstance(item, str)
+    }
 
 
 def _container_interval(status: dict[str, object]) -> tuple[int | None, int | None]:
