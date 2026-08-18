@@ -171,4 +171,6 @@ def search_counterexample(
         output_dir=output_dir,
         cwd=repo,
     )
+    if not _has_violation(experiment):
+        raise ExperimentError("minimized counterexample did not reproduce on the preserved run")
     return CounterexampleResult(values, experiment)

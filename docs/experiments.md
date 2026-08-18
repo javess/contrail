@@ -61,8 +61,9 @@ deterministic, has no Hypothesis example database, and is bounded by
 `--max-examples` (default 25, hard limit 1,000). Parameter files contain at most
 64 integer dimensions, and every bound must fit a signed 64-bit integer. The
 final output directory is validated before the search begins and is never
-reused. Only an explicit failed claim is a counterexample; an unverifiable
-claim caused by missing evidence is not shrunk or reported as a violation.
+reused. The final preserved run must reproduce an explicit failed claim or the
+search reports an error. An unverifiable claim caused by missing evidence is
+not shrunk or reported as a violation.
 
 ```bash
 proofline search contracts.yaml \

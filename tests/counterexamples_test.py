@@ -12,7 +12,7 @@ from runtime_tools.proofline import (
     search_counterexample,
 )
 from runtime_tools.proofline.experiments import ExperimentResult
-from runtime_tools.proofline.verify import ClaimResult, VerificationReport
+from runtime_tools.proofline.verify import ClaimResult, ClaimStatus, VerificationReport
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -281,3 +281,53 @@ def test_counterexample_search_does_not_treat_unverifiable_claims_as_violations(
 
     assert result is None
     assert calls > 0
+
+
+def test_counterexample_search_rejects_a_nonreproducible_final_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(
+        "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 0\n",
+        encoding="utf-8",
+    )
+    final_output = tmp_path / "output"
+
+    def experiment(*args: object, **kwargs: object) -> ExperimentResult:
+        status: ClaimStatus = "pass" if kwargs["output_dir"] == final_output else "fail"
+        report = VerificationReport(
+            "baseline",
+            "candidate",
+            (
+                ClaimResult(
+                    "contract",
+                    "output-equivalent",
+                    "output_equivalent",
+                    status,
+                    "equivalent output",
+                    "equivalent" if status == "pass" else "different",
+                ),
+            ),
+        )
+        return ExperimentResult(
+            tmp_path / "baseline.runpack",
+            tmp_path / "candidate.runpack",
+            0,
+            0,
+            report,
+        )
+
+    monkeypatch.setattr(counterexamples, "run_experiment", experiment)
+
+    with pytest.raises(ExperimentError, match="did not reproduce"):
+        search_counterexample(
+            tmp_path / "contract.yaml",
+            parameters,
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("workload.py"),
+            output_dir=final_output,
+            max_examples=1,
+            cwd=tmp_path,
+        )
