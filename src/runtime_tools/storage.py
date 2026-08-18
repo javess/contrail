@@ -605,6 +605,10 @@ class RunpackWriter:
             if hasattr(writer, "_connection"):
                 writer._connection.close()
             raise
+        except BaseException:
+            if hasattr(writer, "_connection"):
+                writer._connection.close()
+            raise
         return writer
 
     @contextmanager
@@ -911,6 +915,10 @@ class RunpackReader:
                 connection.close()
             raise RunpackError(f"invalid runpack: {path}") from exc
         except RunpackError:
+            if connection is not None:
+                connection.close()
+            raise
+        except BaseException:
             if connection is not None:
                 connection.close()
             raise

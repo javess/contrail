@@ -454,6 +454,58 @@ def test_record_process_terminates_child_when_capture_is_interrupted(
     assert not tuple(tmp_path.glob(".interrupted.runpack.tmp-*"))
 
 
+def test_reader_closes_connection_when_validation_is_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "interrupted-reader.runpack"
+    output.touch()
+    connections: list[sqlite3.Connection] = []
+    connect = sqlite3.connect
+
+    def tracked_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        connection: sqlite3.Connection = connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    def interrupt_validation(connection: sqlite3.Connection) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+    monkeypatch.setattr(storage, "_validate_connection", interrupt_validation)
+
+    with pytest.raises(KeyboardInterrupt):
+        RunpackReader(output)
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connections[0].execute("SELECT 1")
+
+
+def test_existing_writer_closes_connection_when_validation_is_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "interrupted-writer.runpack"
+    output.touch()
+    connections: list[sqlite3.Connection] = []
+    connect = sqlite3.connect
+
+    def tracked_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        connection: sqlite3.Connection = connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    def interrupt_validation(connection: sqlite3.Connection) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+    monkeypatch.setattr(storage, "_validate_connection", interrupt_validation)
+
+    with pytest.raises(KeyboardInterrupt):
+        RunpackWriter.open_existing(output)
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connections[0].execute("SELECT 1")
+
+
 def test_reader_rejects_unknown_schema_major(tmp_path: Path) -> None:
     output = tmp_path / "future.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="future")
