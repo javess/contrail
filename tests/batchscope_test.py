@@ -559,6 +559,109 @@ def test_completed_progress_needs_no_rate_to_estimate_zero_drain(tmp_path: Path)
     assert analysis.throughput.estimated_drain_seconds == 0.0
 
 
+def test_throughput_ignores_progress_integers_outside_float_range(tmp_path: Path) -> None:
+    runpack = tmp_path / "oversized-progress.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 1, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(
+            _event(
+                "progress",
+                "progress",
+                "progress",
+                1,
+                1,
+                {"completed": 10**1000, "total": 10**1000},
+            )
+        )
+
+    assert analyze_runpack(runpack).throughput is None
+
+
+def test_throughput_omits_overflowed_rates_from_json(tmp_path: Path) -> None:
+    runpack = tmp_path / "overflowed-rate.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 1, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event(
+                    "first",
+                    "progress",
+                    "progress",
+                    0,
+                    0,
+                    {"completed": 0.0, "total": sys.float_info.max},
+                ),
+                _event(
+                    "last",
+                    "progress",
+                    "progress",
+                    1,
+                    1,
+                    {"completed": sys.float_info.max, "total": sys.float_info.max},
+                ),
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+    rendered = render_analysis(analysis, "json")
+
+    assert analysis.throughput is not None
+    assert analysis.throughput.rate_per_second is None
+    assert "Infinity" not in rendered
+
+
+def test_throughput_omits_overflowed_drain_estimates(tmp_path: Path) -> None:
+    runpack = tmp_path / "overflowed-drain.runpack"
+    finished_at_ns = (1 << 63) - 1
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution(
+                "progress",
+                "progress",
+                0,
+                finished_at_ns,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {},
+            )
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event(
+                    "first",
+                    "progress",
+                    "progress",
+                    0,
+                    0,
+                    {"completed": 0.0, "total": sys.float_info.max},
+                ),
+                _event(
+                    "last",
+                    "progress",
+                    "progress",
+                    finished_at_ns,
+                    finished_at_ns,
+                    {"completed": 1.0, "total": sys.float_info.max},
+                ),
+            )
+        )
+
+    throughput = analyze_runpack(runpack).throughput
+
+    assert throughput is not None
+    assert throughput.rate_per_second is not None
+    assert throughput.estimated_drain_seconds is None
+
+
 def test_throughput_rejects_invalid_progress_and_does_not_infer_across_resets(
     tmp_path: Path,
 ) -> None:

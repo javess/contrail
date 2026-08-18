@@ -376,7 +376,7 @@ def _throughput(
             )
         after_compute = [sample for sample in samples if sample[0] >= compute_finished_at_ns]
         post_compute_rate = _sample_rate(after_compute)
-    estimated_drain = 0.0 if remaining == 0 else (remaining / rate if rate else None)
+    estimated_drain = 0.0 if remaining == 0 else _finite_ratio(remaining, rate)
     return Throughput(
         latest[1],
         latest[2],
@@ -398,8 +398,11 @@ def _progress_values(completed: object, total: object) -> tuple[float, float] | 
         or isinstance(total, bool)
     ):
         return None
-    completed_value = float(completed)
-    total_value = float(total)
+    try:
+        completed_value = float(completed)
+        total_value = float(total)
+    except OverflowError:
+        return None
     if not (
         math.isfinite(completed_value)
         and math.isfinite(total_value)
@@ -421,7 +424,14 @@ def _sample_rate(samples: list[tuple[int, float, float]]) -> float | None:
         return None
     elapsed = (samples[-1][0] - samples[0][0]) / 1_000_000_000
     delta = samples[-1][1] - samples[0][1]
-    return delta / elapsed if elapsed > 0 and delta > 0 else None
+    return _finite_ratio(delta, elapsed)
+
+
+def _finite_ratio(numerator: float, denominator: float | None) -> float | None:
+    if denominator is None or numerator <= 0 or denominator <= 0:
+        return None
+    result = numerator / denominator
+    return result if math.isfinite(result) else None
 
 
 def _kubernetes_workload_events(
