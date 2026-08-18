@@ -333,6 +333,76 @@ def test_otlp_json_import_normalizes_asynchronous_span_links(tmp_path: Path) -> 
     assert "publish → consume [link, confidence 1.00]" in tree
 
 
+def test_otlp_json_import_reports_exporter_dropped_links_as_incomplete(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "dropped-links.json"
+    output = tmp_path / "dropped-links.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "droppedLinksCount": "2",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_json(source, output, name="dropped-links")
+
+    assert result.missing_link_count == 2
+    assert inspect_runpack(output).missing_causal_references == 2
+
+
+def test_otlp_json_import_rejects_invalid_dropped_link_counts(tmp_path: Path) -> None:
+    source = tmp_path / "invalid-dropped-links.json"
+    output = tmp_path / "invalid-dropped-links.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "droppedLinksCount": -1,
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="droppedLinksCount must be a non-negative"):
+        import_otlp_json(source, output, name="invalid")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_cyclic_parent_relationships(tmp_path: Path) -> None:
     source = tmp_path / "cycle.json"
     output = tmp_path / "cycle.runpack"

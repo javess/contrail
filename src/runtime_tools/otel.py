@@ -148,6 +148,20 @@ def _timestamp(value: object, label: str) -> int | None:
     return timestamp
 
 
+def _nonnegative_count(value: object, label: str) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        raise OtelImportError(f"{label} must be a non-negative integer")
+    try:
+        count = int(str(value))
+    except ValueError as exc:
+        raise OtelImportError(f"{label} must be a non-negative integer") from exc
+    if count < 0 or count > _MAX_RUNPACK_TIMESTAMP_NS:
+        raise OtelImportError(f"{label} must be a non-negative runpack integer")
+    return count
+
+
 def _span_kind(value: object) -> str:
     kinds = {
         0: "operation",
@@ -256,6 +270,7 @@ def import_otlp_json(
     link_references: list[tuple[str, str, str, dict[str, JsonValue]]] = []
     known_events: set[str] = set()
     trace_ids: set[str] = set()
+    dropped_link_count = 0
 
     for resource_index, raw_resource_spans in enumerate(resource_spans):
         resource_group = _as_object(raw_resource_spans, "resourceSpans entry")
@@ -302,6 +317,11 @@ def import_otlp_json(
                     attributes["otel.parent_span_id"] = parent_span_id
                     parent_references.append((trace_id, parent_span_id, event_id))
                 raw_links = _as_list(span.get("links", []), "span links")
+                dropped_link_count += _nonnegative_count(
+                    span.get("droppedLinksCount"), "span droppedLinksCount"
+                )
+                if dropped_link_count > _MAX_RUNPACK_TIMESTAMP_NS:
+                    raise OtelImportError("total dropped OTLP links exceeds the runpack range")
                 for raw_link in raw_links:
                     link = _as_object(raw_link, "span link")
                     linked_trace_id = _identifier(link.get("traceId"), "span link traceId")
@@ -360,7 +380,7 @@ def import_otlp_json(
         parent_edges.append((parent_id, child_id))
         edges.append(CausalEdge(parent_id, child_id, "parent", 1.0, {"source": "otel"}))
     _validate_parent_hierarchy(parent_edges)
-    missing_link_count = 0
+    missing_link_count = dropped_link_count
     known_links: set[tuple[str, str]] = set()
     for trace_id, span_id, target_id, attributes in link_references:
         source_id = _event_id(trace_id, span_id)
