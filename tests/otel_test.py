@@ -405,6 +405,87 @@ def test_otlp_json_import_surfaces_exporter_dropped_attributes(tmp_path: Path) -
     assert "semantics: 3 exporter-dropped OTLP attributes" in render_summary(summary, "text")
 
 
+@pytest.mark.parametrize("code", (True, -1, 3, "INVALID", ""))
+def test_otlp_json_import_rejects_invalid_span_status_codes(
+    tmp_path: Path,
+    code: object,
+) -> None:
+    source = tmp_path / "invalid-status.json"
+    output = tmp_path / "invalid-status.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "status": {"code": code},
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="unsupported OTLP span status code"):
+        import_otlp_json(source, output, name="invalid")
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("code", "normalized"),
+    ((0, "STATUS_CODE_UNSET"), ("1", "STATUS_CODE_OK"), (2, "STATUS_CODE_ERROR")),
+)
+def test_otlp_json_import_normalizes_numeric_span_status_codes(
+    tmp_path: Path,
+    code: object,
+    normalized: str,
+) -> None:
+    source = tmp_path / "status.json"
+    output = tmp_path / "status.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "status": {"code": code},
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_otlp_json(source, output, name="status")
+
+    with RunpackReader(output) as reader:
+        event = reader.events()[0]
+    assert event.attributes["otel.status.code"] == normalized
+
+
 def test_otlp_json_import_rejects_invalid_dropped_link_counts(tmp_path: Path) -> None:
     source = tmp_path / "invalid-dropped-links.json"
     output = tmp_path / "invalid-dropped-links.runpack"

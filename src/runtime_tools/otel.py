@@ -205,9 +205,20 @@ def _status_code(value: object) -> str | None:
     if "code" not in status:
         return None
     code = status["code"]
-    if isinstance(code, bool) or not isinstance(code, (int, str)) or code == "":
-        raise OtelImportError("span status code must be an integer or non-empty string")
-    return str(code)
+    codes = {
+        0: "STATUS_CODE_UNSET",
+        1: "STATUS_CODE_OK",
+        2: "STATUS_CODE_ERROR",
+        "0": "STATUS_CODE_UNSET",
+        "1": "STATUS_CODE_OK",
+        "2": "STATUS_CODE_ERROR",
+        "STATUS_CODE_UNSET": "STATUS_CODE_UNSET",
+        "STATUS_CODE_OK": "STATUS_CODE_OK",
+        "STATUS_CODE_ERROR": "STATUS_CODE_ERROR",
+    }
+    if isinstance(code, bool) or not isinstance(code, (int, str)) or code not in codes:
+        raise OtelImportError(f"unsupported OTLP span status code: {code}")
+    return codes[code]
 
 
 def _severity_number(value: object) -> int:
