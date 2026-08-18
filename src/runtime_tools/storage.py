@@ -126,11 +126,20 @@ class UnsupportedSchemaError(RunpackError):
     """Raised when a runpack uses an unsupported schema major version."""
 
 
-def _json(value: JsonValue | tuple[str, ...]) -> str:
+def _json(value: JsonValue) -> str:
     try:
-        return json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
+        normalized = _checked_json(value)
+        return json.dumps(normalized, allow_nan=False, separators=(",", ":"), sort_keys=True)
+    except RunpackError as exc:
+        raise RunpackError("invalid JSON value for runpack") from exc
     except (OverflowError, TypeError, ValueError, RecursionError) as exc:
         raise RunpackError("invalid JSON value for runpack") from exc
+
+
+def _command_json(value: object) -> str:
+    if not isinstance(value, tuple) or not all(isinstance(item, str) for item in value):
+        raise RunpackError("execution command must be a tuple of strings")
+    return _json(list(value))
 
 
 def _object(value: str) -> dict[str, JsonValue]:
@@ -373,7 +382,7 @@ class RunpackWriter:
                     execution.name,
                     started_at_ns,
                     finished_at_ns,
-                    _json(execution.command),
+                    _command_json(execution.command),
                     execution.working_directory,
                     exit_code,
                     execution.revision,

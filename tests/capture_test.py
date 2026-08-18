@@ -419,6 +419,39 @@ def test_writer_normalizes_invalid_json_values(tmp_path: Path) -> None:
         assert reader.entities() == ()
 
 
+def test_writer_rejects_json_objects_with_non_string_keys(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-json-key.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="invalid JSON value for runpack"):
+            writer.add_entity(Entity("entity", "service", "service", None, cast(Any, {1: "value"})))
+
+    with RunpackReader(output) as reader:
+        assert reader.entities() == ()
+
+
+def test_writer_rejects_invalid_execution_commands_before_writing(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-command.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="execution command must be a tuple of strings"):
+            writer.add_execution(
+                Execution(
+                    "run",
+                    "run",
+                    0,
+                    1,
+                    cast(Any, ("python", 1)),
+                    str(tmp_path),
+                    0,
+                    None,
+                    {},
+                )
+            )
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
+            reader.execution()
+
+
 def test_bulk_measurement_write_rolls_back_non_finite_values(tmp_path: Path) -> None:
     output = tmp_path / "invalid-measurement.runpack"
     with RunpackWriter(output) as writer:
