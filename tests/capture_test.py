@@ -568,6 +568,29 @@ def test_reader_rejects_runpacks_missing_required_columns(tmp_path: Path) -> Non
         RunpackReader(output)
 
 
+def test_reader_rejects_sqlite_triggers_before_they_can_mutate_enrichment(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "trigger.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="trigger")
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER delete_events_after_measurement
+            AFTER INSERT ON measurements
+            BEGIN
+                DELETE FROM events;
+            END
+            """
+        )
+
+    with pytest.raises(RunpackError, match="unsupported SQLite triggers"):
+        RunpackWriter.open_existing(output)
+
+    with sqlite3.connect(output) as connection:
+        assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+
+
 def test_reader_rejects_runpacks_without_required_identity_constraints(
     tmp_path: Path,
 ) -> None:

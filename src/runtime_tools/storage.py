@@ -503,6 +503,14 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
     missing = sorted(_REQUIRED_TABLES - tables)
     if missing:
         raise RunpackError(f"runpack is missing required tables: {', '.join(missing)}")
+    triggers = tuple(
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema WHERE type = 'trigger' ORDER BY name"
+        ).fetchall()
+    )
+    if triggers:
+        raise RunpackError(f"runpack contains unsupported SQLite triggers: {', '.join(triggers)}")
     for table, required_columns in (_REQUIRED_COLUMNS | _OPTIONAL_COLUMNS).items():
         if table not in tables:
             continue
