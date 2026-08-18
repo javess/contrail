@@ -9,6 +9,7 @@ import json
 import math
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Never
 
@@ -78,12 +79,12 @@ def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
         return boolean
     if "intValue" in value:
         try:
-            integer = int(str(value["intValue"]))
-        except ValueError as exc:
+            integer_value = _integral_decimal(value["intValue"])
+        except (InvalidOperation, ValueError) as exc:
             raise OtelImportError("OTLP intValue is invalid") from exc
-        if not _MIN_OTLP_INT <= integer <= _MAX_OTLP_INT:
+        if not _MIN_OTLP_INT <= integer_value <= _MAX_OTLP_INT:
             raise OtelImportError("OTLP intValue exceeds the signed 64-bit range")
-        return integer
+        return int(integer_value)
     if "doubleValue" in value:
         try:
             number = float(str(value["doubleValue"]))
@@ -163,32 +164,39 @@ def _semantic_name(value: object, label: str, *, default: str) -> str:
     return value or default
 
 
+def _integral_decimal(value: object) -> Decimal:
+    if isinstance(value, bool):
+        raise ValueError("boolean is not an integer")
+    number = Decimal(str(value))
+    if not number.is_finite() or number != number.to_integral_value():
+        raise ValueError("value is not a finite integer")
+    return number
+
+
 def _timestamp(value: object, label: str) -> int | None:
     if value in (None, ""):
         return None
     try:
-        timestamp = int(str(value))
-    except ValueError as exc:
+        timestamp_value = _integral_decimal(value)
+    except (InvalidOperation, ValueError) as exc:
         raise OtelImportError(f"{label} must be Unix nanoseconds") from exc
-    if timestamp < 0:
+    if timestamp_value < 0:
         raise OtelImportError(f"{label} cannot be negative")
-    if timestamp > _MAX_RUNPACK_TIMESTAMP_NS:
+    if timestamp_value > _MAX_RUNPACK_TIMESTAMP_NS:
         raise OtelImportError(f"{label} exceeds the runpack timestamp range")
-    return timestamp
+    return int(timestamp_value)
 
 
 def _nonnegative_count(value: object, label: str) -> int:
     if value is None:
         return 0
-    if isinstance(value, bool):
-        raise OtelImportError(f"{label} must be a non-negative integer")
     try:
-        count = int(str(value))
-    except ValueError as exc:
+        count_value = _integral_decimal(value)
+    except (InvalidOperation, ValueError) as exc:
         raise OtelImportError(f"{label} must be a non-negative integer") from exc
-    if count < 0 or count > _MAX_RUNPACK_TIMESTAMP_NS:
+    if count_value < 0 or count_value > _MAX_RUNPACK_TIMESTAMP_NS:
         raise OtelImportError(f"{label} must be a non-negative runpack integer")
-    return count
+    return int(count_value)
 
 
 def _bounded_count_total(current: int, value: object, label: str) -> int:

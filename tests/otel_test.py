@@ -150,6 +150,45 @@ def test_otlp_json_import_normalizes_numeric_enum_strings_and_error_status(
     assert sum(errors.values()) == 1
 
 
+def test_otlp_json_import_accepts_integral_exponent_notation(tmp_path: Path) -> None:
+    source = tmp_path / "exponents.json"
+    output = tmp_path / "exponents.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1e3",
+                                        "endTimeUnixNano": 2e3,
+                                        "attributes": [
+                                            {"key": "attempt", "value": {"intValue": "1e2"}}
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_otlp_json(source, output, name="exponents")
+
+    with RunpackReader(output) as reader:
+        event = reader.events()[0]
+    assert event.started_at_ns == 1_000
+    assert event.finished_at_ns == 2_000
+    assert event.attributes["attempt"] == 100
+
+
 @pytest.mark.parametrize(("field", "value"), (("kind", True), ("status", "invalid")))
 def test_otlp_json_import_rejects_malformed_span_semantics(
     tmp_path: Path, field: str, value: object
