@@ -29,6 +29,7 @@ APPLICATION_ID = 0x4354524C  # CTRL
 MAX_RUNPACK_JSON_BYTES = 4 * 1024 * 1024
 MAX_RUNPACK_TEXT_BYTES = 4 * 1024 * 1024
 MAX_RUNPACK_ATTACHMENT_BYTES = 64 * 1024 * 1024
+MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES = 256 * 1024 * 1024
 _MIN_INTEGER = -(1 << 63)
 _MAX_INTEGER = (1 << 63) - 1
 _REQUIRED_TABLES = {
@@ -669,13 +670,27 @@ class RunpackWriter:
             )
 
     def add_attachments(self, attachments: Iterable[Attachment]) -> None:
+        values = tuple(_attachment_values(attachment) for attachment in attachments)
+        added_bytes = 0
+        for value in values:
+            content = value[4]
+            assert isinstance(content, bytes)
+            added_bytes += len(content)
+        existing_bytes = self._connection.execute(
+            "SELECT COALESCE(sum(length(content)), 0) FROM attachments"
+        ).fetchone()[0]
+        if existing_bytes + added_bytes > MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES:
+            raise RunpackError(
+                "attachment content exceeds the "
+                f"{MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES}-byte aggregate runpack limit"
+            )
         with self._writing(), self._connection:
             self._connection.executemany(
                 """
                 INSERT INTO attachments(id, kind, name, media_type, content, attributes_json)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (_attachment_values(attachment) for attachment in attachments),
+                values,
             )
 
     def expand_execution_bounds(self, started_at_ns: int, finished_at_ns: int | None) -> None:
@@ -1194,6 +1209,14 @@ class RunpackReader:
         }
         if "attachments" not in tables:
             return ()
+        total_bytes = self._execute(
+            "SELECT COALESCE(sum(length(content)), 0) FROM attachments"
+        ).fetchone()[0]
+        if total_bytes > MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES:
+            raise RunpackError(
+                "attachment content exceeds the "
+                f"{MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES}-byte aggregate runpack limit"
+            )
         rows = self._execute(
             """
             SELECT id, kind, name, media_type, content, attributes_json

@@ -620,6 +620,46 @@ def test_reader_rejects_oversized_attachment_content(
             reader.attachments()
 
 
+def test_writer_rejects_oversized_aggregate_attachment_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "oversized-attachments-write.runpack"
+    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="aggregate runpack limit"):
+            writer.add_attachments(
+                (
+                    Attachment("first", "raw", "first", "text/plain", b"abc", {}),
+                    Attachment("second", "raw", "second", "text/plain", b"def", {}),
+                )
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.attachments() == ()
+
+
+def test_reader_rejects_oversized_aggregate_attachment_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "oversized-attachments-read.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="oversized-attachments")
+    with sqlite3.connect(output) as connection:
+        connection.executemany(
+            "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                ("first", "raw", "first", "text/plain", b"abc", "{}"),
+                ("second", "raw", "second", "text/plain", b"def", "{}"),
+            ),
+        )
+    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="aggregate runpack limit"):
+            reader.attachments()
+
+
 def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) -> None:
     output = tmp_path / "collision.runpack"
     with RunpackWriter(output) as writer:
