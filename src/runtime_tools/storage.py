@@ -35,6 +35,52 @@ _REQUIRED_TABLES = {
     "causal_edges",
     "measurements",
 }
+_REQUIRED_COLUMNS = {
+    "manifest": {"key", "value"},
+    "executions": {
+        "id",
+        "name",
+        "started_at_ns",
+        "finished_at_ns",
+        "command_json",
+        "working_directory",
+        "exit_code",
+        "revision",
+        "metadata_json",
+    },
+    "entities": {"id", "kind", "name", "parent_entity_id", "attributes_json"},
+    "events": {
+        "id",
+        "kind",
+        "name",
+        "entity_id",
+        "started_at_ns",
+        "finished_at_ns",
+        "clock_domain",
+        "uncertainty_ns",
+        "sequence",
+        "attributes_json",
+    },
+    "causal_edges": {
+        "source_event_id",
+        "target_event_id",
+        "kind",
+        "confidence",
+        "attributes_json",
+    },
+    "measurements": {
+        "id",
+        "name",
+        "value",
+        "unit",
+        "timestamp_ns",
+        "entity_id",
+        "attributes_json",
+    },
+}
+_OPTIONAL_COLUMNS = {
+    "attachments": {"id", "kind", "name", "media_type", "content", "attributes_json"}
+}
 
 _SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -295,6 +341,17 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
     missing = sorted(_REQUIRED_TABLES - tables)
     if missing:
         raise RunpackError(f"runpack is missing required tables: {', '.join(missing)}")
+    for table, required_columns in (_REQUIRED_COLUMNS | _OPTIONAL_COLUMNS).items():
+        if table not in tables:
+            continue
+        columns = {
+            str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        missing_columns = sorted(required_columns - columns)
+        if missing_columns:
+            raise RunpackError(
+                f"runpack table {table} is missing required columns: {', '.join(missing_columns)}"
+            )
     row = connection.execute("SELECT value FROM manifest WHERE key = 'schema_version'").fetchone()
     if row is None:
         raise RunpackError("runpack has no schema version")

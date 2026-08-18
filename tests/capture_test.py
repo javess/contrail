@@ -248,6 +248,19 @@ def test_reader_accepts_schema_one_without_optional_attachments(tmp_path: Path) 
     assert summary.record_counts["attachments"] == 0
 
 
+def test_reader_rejects_runpacks_missing_required_columns(tmp_path: Path) -> None:
+    output = tmp_path / "missing-column.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="missing-column")
+    with sqlite3.connect(output) as connection:
+        connection.execute("ALTER TABLE events DROP COLUMN sequence")
+
+    with pytest.raises(
+        RunpackError,
+        match="runpack table events is missing required columns: sequence",
+    ):
+        RunpackReader(output)
+
+
 def test_reader_rejects_sqlite_files_without_runpack_identity(tmp_path: Path) -> None:
     output = tmp_path / "not-a-runpack.runpack"
     with sqlite3.connect(output) as connection:
