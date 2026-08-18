@@ -37,8 +37,8 @@ class CounterexampleResult:
 
 
 def _object(value: object, label: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise ContractError(f"{label} must be an object")
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise ContractError(f"{label} must be an object with string keys")
     return value
 
 

@@ -134,6 +134,17 @@ parameters:
         )
 
 
+def test_counterexample_search_rejects_non_string_mapping_keys(tmp_path: Path) -> None:
+    parameters = tmp_path / "non-string-key.yaml"
+    parameters.write_text(
+        "parameters:\n  size:\n    type: integer\n    min: 0\n    max: 1\n    2: invalid\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="parameter size must be an object with string keys"):
+        counterexamples.load_parameters(parameters)
+
+
 @pytest.mark.parametrize(
     "document",
     (
