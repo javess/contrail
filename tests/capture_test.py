@@ -1005,6 +1005,32 @@ def test_writer_rejects_boolean_causal_confidence(tmp_path: Path) -> None:
             writer.add_causal_edge(CausalEdge("source", "target", "causes", True, {}))
 
 
+def test_writer_rejects_self_referencing_causal_edges(tmp_path: Path) -> None:
+    output = tmp_path / "self-edge.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_event(Event("event", "event", "event", None, 0, 1, None, None, None, {}))
+        with pytest.raises(RunpackError, match="cannot reference the same event twice"):
+            writer.add_causal_edge(CausalEdge("event", "event", "causes", 1.0, {}))
+
+    with RunpackReader(output) as reader:
+        assert reader.causal_edges() == ()
+
+
+def test_reader_rejects_self_referencing_causal_edges(tmp_path: Path) -> None:
+    output = tmp_path / "corrupt-self-edge.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_event(Event("event", "event", "event", None, 0, 1, None, None, None, {}))
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            "INSERT INTO causal_edges VALUES (?, ?, ?, ?, ?)",
+            ("event", "event", "causes", 1.0, "{}"),
+        )
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="cannot reference the same event twice"):
+            reader.causal_edges()
+
+
 def test_writer_rejects_boolean_measurement_timestamps(tmp_path: Path) -> None:
     output = tmp_path / "invalid-measurement-time.runpack"
     with RunpackWriter(output) as writer:

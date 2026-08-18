@@ -377,9 +377,13 @@ def _event_values(event: Event) -> tuple[object, ...]:
 
 
 def _edge_values(edge: CausalEdge) -> tuple[object, ...]:
+    source_event_id = _text_value(edge.source_event_id, "causal edge source event id")
+    target_event_id = _text_value(edge.target_event_id, "causal edge target event id")
+    if source_event_id == target_event_id:
+        raise RunpackError("causal edge cannot reference the same event twice")
     return (
-        _text_value(edge.source_event_id, "causal edge source event id"),
-        _text_value(edge.target_event_id, "causal edge target event id"),
+        source_event_id,
+        target_event_id,
         _text_value(edge.kind, "causal edge kind"),
         _confidence_value(edge.confidence),
         _json(edge.attributes),
@@ -949,20 +953,22 @@ class RunpackReader:
             ORDER BY source_event_id, target_event_id, kind
             """
         ).fetchall()
-        return tuple(
-            CausalEdge(
-                source_event_id=_required_text(
-                    row["source_event_id"], "causal edge source event id"
-                ),
-                target_event_id=_required_text(
-                    row["target_event_id"], "causal edge target event id"
-                ),
-                kind=_required_text(row["kind"], "causal edge kind"),
-                confidence=_confidence_value(row["confidence"]),
-                attributes=_object(row["attributes_json"]),
+        edges = []
+        for row in rows:
+            source_event_id = _required_text(row["source_event_id"], "causal edge source event id")
+            target_event_id = _required_text(row["target_event_id"], "causal edge target event id")
+            if source_event_id == target_event_id:
+                raise RunpackError("causal edge cannot reference the same event twice")
+            edges.append(
+                CausalEdge(
+                    source_event_id=source_event_id,
+                    target_event_id=target_event_id,
+                    kind=_required_text(row["kind"], "causal edge kind"),
+                    confidence=_confidence_value(row["confidence"]),
+                    attributes=_object(row["attributes_json"]),
+                )
             )
-            for row in rows
-        )
+        return tuple(edges)
 
     def clock_inconsistency_count(self) -> int:
         row = self._execute(
