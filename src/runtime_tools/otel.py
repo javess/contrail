@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import math
@@ -94,7 +96,16 @@ def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
         encoded = value["bytesValue"]
         if not isinstance(encoded, str):
             raise OtelImportError("OTLP bytesValue is invalid")
-        return encoded
+        try:
+            raw = encoded.encode("ascii")
+            decoded = base64.b64decode(
+                raw + b"=" * (-len(raw) % 4),
+                altchars=b"-_",
+                validate=True,
+            )
+        except (UnicodeEncodeError, binascii.Error, ValueError) as exc:
+            raise OtelImportError("OTLP bytesValue is invalid base64") from exc
+        return base64.b64encode(decoded).decode("ascii")
     if "arrayValue" in value:
         array = value["arrayValue"]
         if not isinstance(array, dict) or not isinstance(array.get("values", []), list):

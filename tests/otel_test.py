@@ -789,6 +789,83 @@ def test_otlp_json_import_rejects_out_of_range_integer_attributes(tmp_path: Path
     assert not output.exists()
 
 
+def test_otlp_json_import_canonicalizes_url_safe_unpadded_bytes_attributes(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "bytes.json"
+    output = tmp_path / "bytes.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "attributes": [
+                                            {"key": "payload", "value": {"bytesValue": "_w"}}
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_otlp_json(source, output, name="bytes")
+
+    with RunpackReader(output) as reader:
+        assert reader.events()[0].attributes["payload"] == "/w=="
+
+
+def test_otlp_json_import_rejects_invalid_bytes_attributes(tmp_path: Path) -> None:
+    source = tmp_path / "invalid-bytes.json"
+    output = tmp_path / "invalid-bytes.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "attributes": [
+                                            {
+                                                "key": "payload",
+                                                "value": {"bytesValue": "not base64!"},
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="bytesValue is invalid base64"):
+        import_otlp_json(source, output, name="invalid-bytes")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_duplicate_attribute_keys(tmp_path: Path) -> None:
     source = tmp_path / "duplicate-attribute.json"
     output = tmp_path / "duplicate-attribute.runpack"
