@@ -311,6 +311,23 @@ def test_scope_restores_parent_context_when_end_write_fails(
     assert runtime._current_event_id.get() is None
 
 
+def test_annotation_scopes_reject_reuse_without_emitting_duplicate_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records: list[dict[str, object]] = []
+    monkeypatch.setattr(runtime, "_write", records.append)
+    scope = runtime.stage("one-shot")
+
+    with scope:
+        pass
+    with pytest.raises(RuntimeError, match="annotation scopes cannot be reused"):
+        with scope:
+            pass
+
+    assert [record["record"] for record in records] == ["event_start", "event_end"]
+    assert runtime._current_event_id.get() is None
+
+
 @pytest.mark.parametrize(
     ("records", "message"),
     (

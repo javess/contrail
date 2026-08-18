@@ -53,8 +53,12 @@ class _Scope:
         self.name = name
         self.attributes = attributes
         self._token: contextvars.Token[str | None] | None = None
+        self._used = False
 
     def __enter__(self) -> EventRef:
+        if self._used:
+            raise RuntimeError("annotation scopes cannot be reused")
+        self._used = True
         parent_id = _current_event_id.get()
         _write(
             {
