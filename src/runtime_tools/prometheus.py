@@ -121,6 +121,11 @@ def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
     if root.get("status") != "success":
         raise PrometheusImportError("Prometheus response status is not success")
     data = _object(root.get("data"), "Prometheus data")
+    result_type = data.get("resultType")
+    if result_type is not None and result_type not in {"matrix", "vector"}:
+        raise PrometheusImportError(
+            "Prometheus resultType must be matrix or vector for sample import"
+        )
     result = data.get("result")
     if not isinstance(result, list):
         raise PrometheusImportError("Prometheus result must be a list")
@@ -130,6 +135,10 @@ def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
             series = _object(raw_series, "Prometheus series")
             labels = _labels(series.get("metric", {}))
             raw_values = series.get("values")
+            if result_type == "matrix" and raw_values is None:
+                raise PrometheusImportError("Prometheus matrix series requires values")
+            if result_type == "vector" and "value" not in series:
+                raise PrometheusImportError("Prometheus vector series requires value")
             if raw_values is None and "value" in series:
                 raw_values = [series["value"]]
             if not isinstance(raw_values, list):

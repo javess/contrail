@@ -107,6 +107,51 @@ def test_prometheus_response_rejects_non_finite_timestamps(tmp_path: Path) -> No
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    ("result_type", "series", "message"),
+    (
+        ("scalar", [1, "3"], "resultType must be matrix or vector"),
+        (
+            "matrix",
+            {"metric": {"__name__": "depth"}, "value": [1, "3"]},
+            "matrix series requires values",
+        ),
+        (
+            "vector",
+            {"metric": {"__name__": "depth"}, "values": [[1, "3"]]},
+            "vector series requires value",
+        ),
+    ),
+)
+def test_prometheus_response_rejects_inconsistent_result_types(
+    tmp_path: Path,
+    result_type: str,
+    series: object,
+    message: str,
+) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {"resultType": result_type, "result": [series]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match=message):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()
+
+
 def test_prometheus_response_rolls_back_samples_before_a_malformed_value(
     tmp_path: Path,
 ) -> None:
