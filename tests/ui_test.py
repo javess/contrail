@@ -151,6 +151,19 @@ def test_timeline_rejects_oversized_measurement_sets_before_analysis(tmp_path: P
         build_timeline_payload(runpack, measurement_limit=1)
 
 
+def test_timeline_rejects_large_aggregate_normalized_json_before_loading_rows(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "run.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="served")
+
+    with pytest.raises(
+        TimelineError,
+        match=r"timeline has [\d,]+ normalized JSON bytes; local UI limit is 1",
+    ):
+        build_timeline_payload(runpack, json_byte_limit=1)
+
+
 def test_local_ui_reports_invalid_bind_without_low_level_error(tmp_path: Path) -> None:
     runpack = tmp_path / "run.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="served")

@@ -14,6 +14,7 @@ MAX_TIMELINE_EVENTS = 50_000
 MAX_TIMELINE_ENTITIES = 50_000
 MAX_TIMELINE_EDGES = 200_000
 MAX_TIMELINE_MEASUREMENTS = 200_000
+MAX_TIMELINE_JSON_BYTES = 64 * 1024 * 1024
 
 
 class TimelineError(ValueError):
@@ -62,6 +63,7 @@ def _run_value(
     entity_limit: int,
     edge_limit: int,
     measurement_limit: int,
+    json_byte_limit: int,
 ) -> dict[str, JsonValue]:
     summary = inspect_runpack(path)
     with RunpackReader(path) as reader:
@@ -86,6 +88,12 @@ def _run_value(
             raise TimelineError(
                 f"timeline has {measurement_count:,} measurements; "
                 f"local UI limit is {measurement_limit:,}"
+            )
+        normalized_json_bytes = reader.normalized_json_bytes()
+        if normalized_json_bytes > json_byte_limit:
+            raise TimelineError(
+                f"timeline has {normalized_json_bytes:,} normalized JSON bytes; "
+                f"local UI limit is {json_byte_limit:,}"
             )
         entities = reader.entities()
         events = reader.events()
@@ -131,14 +139,37 @@ def build_timeline_payload(
     entity_limit: int = MAX_TIMELINE_ENTITIES,
     edge_limit: int = MAX_TIMELINE_EDGES,
     measurement_limit: int = MAX_TIMELINE_MEASUREMENTS,
+    json_byte_limit: int = MAX_TIMELINE_JSON_BYTES,
 ) -> dict[str, JsonValue]:
-    if event_limit <= 0 or entity_limit <= 0 or edge_limit <= 0 or measurement_limit <= 0:
+    if (
+        event_limit <= 0
+        or entity_limit <= 0
+        or edge_limit <= 0
+        or measurement_limit <= 0
+        or json_byte_limit <= 0
+    ):
         raise TimelineError("timeline limits must be positive")
     runs: list[JsonValue] = [
-        _run_value(baseline, event_limit, entity_limit, edge_limit, measurement_limit)
+        _run_value(
+            baseline,
+            event_limit,
+            entity_limit,
+            edge_limit,
+            measurement_limit,
+            json_byte_limit,
+        )
     ]
     comparison: JsonValue = None
     if candidate is not None:
-        runs.append(_run_value(candidate, event_limit, entity_limit, edge_limit, measurement_limit))
+        runs.append(
+            _run_value(
+                candidate,
+                event_limit,
+                entity_limit,
+                edge_limit,
+                measurement_limit,
+                json_byte_limit,
+            )
+        )
         comparison = compare_runpacks(baseline, candidate).as_json_value()
     return {"runs": runs, "comparison": comparison}

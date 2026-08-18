@@ -1154,6 +1154,27 @@ class RunpackReader:
         )
         return counts
 
+    def normalized_json_bytes(self) -> int:
+        row = self._execute(
+            """
+            SELECT CAST(total(byte_count) AS INTEGER)
+            FROM (
+                SELECT length(CAST(command_json AS BLOB))
+                     + length(CAST(metadata_json AS BLOB)) AS byte_count
+                FROM executions
+                UNION ALL
+                SELECT length(CAST(attributes_json AS BLOB)) FROM entities
+                UNION ALL
+                SELECT length(CAST(attributes_json AS BLOB)) FROM events
+                UNION ALL
+                SELECT length(CAST(attributes_json AS BLOB)) FROM causal_edges
+                UNION ALL
+                SELECT length(CAST(attributes_json AS BLOB)) FROM measurements
+            )
+            """
+        ).fetchone()
+        return int(row[0])
+
     def close(self) -> None:
         self._connection.close()
 
