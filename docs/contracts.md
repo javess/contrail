@@ -13,6 +13,8 @@ assertions:
   - type: output_equivalent
   - type: max_runtime_regression
     percent: 10
+  - type: max_cpu_time_regression
+    percent: 15
   - type: max_peak_memory_regression
     percent: 20
   - type: forbid_new_dependency
@@ -28,8 +30,9 @@ Supported assertions are intentionally mechanical:
 
 - `output_equivalent` (and the `result_equivalence` alias) compares captured
   stdout identities without storing output content;
-- `max_runtime_regression` and `max_peak_memory_regression` compare numeric
-  evidence with a percentage allowance;
+- `max_runtime_regression`, `max_cpu_time_regression`, and
+  `max_peak_memory_regression` compare numeric evidence with a percentage
+  allowance;
 - `forbid_new_dependency` fails only when the named edge was absent from the
   baseline and present in the candidate. It remains unverifiable when either
   OTLP import reports unresolved parent or link references, or exporter-dropped
@@ -40,9 +43,9 @@ Supported assertions are intentionally mechanical:
 - `max_operation_error_count` applies the same baseline-relative limit to
   explicit operation failures while allowing an observed zero-failure baseline.
 
-Output equivalence and operation assertions are also unverifiable when an OTLP
+Dependency and operation-error assertions are also unverifiable when an OTLP
 exporter reports dropped attributes. A missing semantic attribute can otherwise
-turn distinct results into apparent matches or hide an operation or failure.
+hide a dependency or explicit failure.
 
 An assertion with missing required evidence is `UNVERIFIABLE` and makes the
 verification fail. Invalid or unsupported contracts are errors rather than

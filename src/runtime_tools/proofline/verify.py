@@ -185,6 +185,8 @@ def _evaluate(
         )
     if assertion.type == "max_runtime_regression":
         return _max_regression(contract, assertion, diff.wall_time, "runtime")
+    if assertion.type == "max_cpu_time_regression":
+        return _max_regression(contract, assertion, diff.cpu_time, "CPU time")
     if assertion.type == "max_peak_memory_regression":
         return _max_regression(contract, assertion, diff.peak_memory, "peak memory")
     if assertion.type == "forbid_new_dependency":

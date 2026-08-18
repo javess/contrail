@@ -95,6 +95,26 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
                 {},
             )
         )
+        writer.add_measurements(
+            (
+                Measurement(
+                    "process.cpu.user",
+                    2.0 if candidate else 1.0,
+                    "s",
+                    finished_at_ns,
+                    "app",
+                    {},
+                ),
+                Measurement(
+                    "process.cpu.system",
+                    1.0 if candidate else 0.5,
+                    "s",
+                    finished_at_ns,
+                    "app",
+                    {},
+                ),
+            )
+        )
 
 
 def _write_contract(path: Path) -> None:
@@ -139,6 +159,24 @@ def test_proofline_evaluates_deterministic_contract_types(tmp_path: Path) -> Non
     ]
     operation = report.results[-1]
     assert operation.observed == "baseline=1, candidate=3, limit=1.2"
+
+
+def test_proofline_enforces_cpu_time_regression_limits(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "cpu-contract.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=True)
+    contract.write_text(
+        "name: cpu\nassertions:\n  - type: max_cpu_time_regression\n    percent: 50\n",
+        encoding="utf-8",
+    )
+
+    report = verify_contracts(contract, baseline, candidate)
+
+    assert report.results[0].status == "fail"
+    assert report.results[0].expected == "candidate CPU time <= baseline + 50%"
+    assert report.results[0].observed == "baseline=1.5, candidate=3, limit=2.25"
 
 
 def test_proofline_cli_returns_failure_and_machine_readable_evidence(tmp_path: Path) -> None:

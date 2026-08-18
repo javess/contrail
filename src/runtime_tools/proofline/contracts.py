@@ -15,6 +15,7 @@ _ASSERTION_FIELDS = {
     "output_equivalent": set(),
     "result_equivalence": set(),
     "max_runtime_regression": {"percent"},
+    "max_cpu_time_regression": {"percent"},
     "max_peak_memory_regression": {"percent"},
     "forbid_new_dependency": {"from", "to"},
     "max_operation_count": {"operation", "relative_to", "factor"},
