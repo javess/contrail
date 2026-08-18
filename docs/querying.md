@@ -9,8 +9,10 @@ runtime query run.runpack \
   --format table
 ```
 
-The default output cap is 1,000 rows. `--limit` can raise it to at most 100,000;
-aggregation inside SQLite is unaffected by this output safety limit.
+The default output cap is 1,000 rows. `--limit` can raise it to at most 100,000.
+Separately, the engine interrupts a query after 25 million SQLite virtual-machine
+steps. This bounds expensive aggregation and recursive queries even when they
+produce few rows.
 
 Machine-readable formats preserve column order and JSON-safe values. BLOBs and
 non-finite SQLite floats use tagged objects rather than non-standard JSON:

@@ -17,6 +17,8 @@ class QueryError(ValueError):
 
 
 MAX_QUERY_ROWS = 100_000
+MAX_QUERY_VM_STEPS = 25_000_000
+_QUERY_PROGRESS_INTERVAL = 1_000
 
 
 _ALLOWED_SQLITE_ACTIONS = {
@@ -75,15 +77,31 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
     with RunpackReader(path):
         pass
     uri = f"{path.resolve().as_uri()}?mode=ro"
+    completed_steps = 0
+    work_limit_reached = False
+
+    def enforce_work_limit() -> int:
+        nonlocal completed_steps, work_limit_reached
+        completed_steps += _QUERY_PROGRESS_INTERVAL
+        if completed_steps >= MAX_QUERY_VM_STEPS:
+            work_limit_reached = True
+            return 1
+        return 0
+
     try:
         with sqlite3.connect(uri, uri=True) as connection:
             connection.set_authorizer(_authorize_read)
+            connection.set_progress_handler(enforce_work_limit, _QUERY_PROGRESS_INTERVAL)
             cursor = connection.execute(sql)
             if cursor.description is None:
                 raise QueryError("query must return rows")
             columns = tuple(str(item[0]) for item in cursor.description)
             raw_rows = cursor.fetchmany(limit + 1)
     except sqlite3.Error as exc:
+        if work_limit_reached:
+            raise QueryError(
+                f"query exceeded the work limit of {MAX_QUERY_VM_STEPS} SQLite steps"
+            ) from exc
         raise QueryError(f"query failed: {exc}") from exc
     truncated = len(raw_rows) > limit
     rows = tuple(tuple(_value(value) for value in row) for row in raw_rows[:limit])

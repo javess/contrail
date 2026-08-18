@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from runtime_tools import record_process
-from runtime_tools.query import QueryError, query_runpack, render_query
+from runtime_tools.query import MAX_QUERY_VM_STEPS, QueryError, query_runpack, render_query
 
 
 def test_runpack_query_returns_bounded_structured_rows(tmp_path: Path) -> None:
@@ -49,6 +49,27 @@ def test_runpack_query_rejects_excessive_output_limits(tmp_path: Path) -> None:
 
     with pytest.raises(QueryError, match="query limit cannot exceed 100000"):
         query_runpack(runpack, "SELECT name FROM events", limit=100_001)
+
+
+def test_runpack_query_stops_read_only_work_that_exceeds_its_budget(tmp_path: Path) -> None:
+    runpack = tmp_path / "query.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="query")
+
+    with pytest.raises(
+        QueryError,
+        match=f"query exceeded the work limit of {MAX_QUERY_VM_STEPS} SQLite steps",
+    ):
+        query_runpack(
+            runpack,
+            """
+            WITH RECURSIVE counter(value) AS (
+                VALUES (1)
+                UNION ALL
+                SELECT value + 1 FROM counter WHERE value < 1000000000
+            )
+            SELECT max(value) FROM counter
+            """,
+        )
 
 
 def test_runpack_query_encodes_non_finite_sql_results_as_json_safe_values(
