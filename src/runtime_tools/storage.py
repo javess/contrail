@@ -215,7 +215,17 @@ def _event_values(event: Event) -> tuple[object, ...]:
 
 
 def _edge_values(edge: CausalEdge) -> tuple[object, ...]:
-    confidence = edge.confidence
+    return (
+        edge.source_event_id,
+        edge.target_event_id,
+        edge.kind,
+        _confidence_value(edge.confidence),
+        _json(edge.attributes),
+    )
+
+
+def _confidence_value(value: object) -> float:
+    confidence = value
     if (
         not isinstance(confidence, (int, float))
         or isinstance(confidence, bool)
@@ -223,13 +233,7 @@ def _edge_values(edge: CausalEdge) -> tuple[object, ...]:
         or not 0 <= confidence <= 1
     ):
         raise RunpackError("causal edge confidence must be between 0 and 1")
-    return (
-        edge.source_event_id,
-        edge.target_event_id,
-        edge.kind,
-        float(confidence),
-        _json(edge.attributes),
-    )
+    return float(confidence)
 
 
 def _measurement_values(measurement: Measurement) -> tuple[object, ...]:
@@ -665,21 +669,40 @@ class RunpackReader:
 
     def events(self) -> tuple[Event, ...]:
         rows = self._execute("SELECT * FROM events ORDER BY started_at_ns, sequence, id").fetchall()
-        return tuple(
-            Event(
-                id=row["id"],
-                kind=row["kind"],
-                name=row["name"],
-                entity_id=row["entity_id"],
-                started_at_ns=row["started_at_ns"],
-                finished_at_ns=row["finished_at_ns"],
-                clock_domain=row["clock_domain"],
-                uncertainty_ns=row["uncertainty_ns"],
-                sequence=row["sequence"],
-                attributes=_object(row["attributes_json"]),
+        events = []
+        for row in rows:
+            started_at_ns = _integer_value(
+                row["started_at_ns"], "event start timestamp", optional=True
             )
-            for row in rows
-        )
+            finished_at_ns = _integer_value(
+                row["finished_at_ns"], "event finish timestamp", optional=True
+            )
+            if (
+                started_at_ns is not None
+                and finished_at_ns is not None
+                and finished_at_ns < started_at_ns
+            ):
+                raise RunpackError("event cannot finish before it starts")
+            uncertainty_ns = _integer_value(
+                row["uncertainty_ns"], "event uncertainty", optional=True
+            )
+            if uncertainty_ns is not None and uncertainty_ns < 0:
+                raise RunpackError("event uncertainty cannot be negative")
+            events.append(
+                Event(
+                    id=row["id"],
+                    kind=row["kind"],
+                    name=row["name"],
+                    entity_id=row["entity_id"],
+                    started_at_ns=started_at_ns,
+                    finished_at_ns=finished_at_ns,
+                    clock_domain=row["clock_domain"],
+                    uncertainty_ns=uncertainty_ns,
+                    sequence=_integer_value(row["sequence"], "event sequence", optional=True),
+                    attributes=_object(row["attributes_json"]),
+                )
+            )
+        return tuple(events)
 
     def causal_edges(self) -> tuple[CausalEdge, ...]:
         rows = self._execute(
@@ -694,7 +717,7 @@ class RunpackReader:
                 source_event_id=row["source_event_id"],
                 target_event_id=row["target_event_id"],
                 kind=row["kind"],
-                confidence=row["confidence"],
+                confidence=_confidence_value(row["confidence"]),
                 attributes=_object(row["attributes_json"]),
             )
             for row in rows

@@ -266,6 +266,48 @@ def test_reader_rejects_non_finite_measurements(tmp_path: Path) -> None:
             reader.measurements()
 
 
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    (
+        ("started_at_ns", "invalid", "event start timestamp must be an integer or null"),
+        ("uncertainty_ns", "invalid", "event uncertainty must be an integer or null"),
+        ("sequence", "invalid", "event sequence must be an integer or null"),
+    ),
+)
+def test_reader_rejects_invalid_event_integer_fields(
+    tmp_path: Path, column: str, value: str, message: str
+) -> None:
+    output = tmp_path / f"invalid-event-{column}.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="invalid-event")
+    with sqlite3.connect(output) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(f"UPDATE events SET {column} = ?", (value,))
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match=message):
+            reader.events()
+
+
+def test_reader_rejects_invalid_causal_confidence(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-confidence.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_events(
+            (
+                Event("source", "event", "source", None, 0, 1, None, None, None, {}),
+                Event("target", "event", "target", None, 0, 1, None, None, None, {}),
+            )
+        )
+        writer.add_causal_edge(CausalEdge("source", "target", "causes", 1.0, {}))
+    with sqlite3.connect(output) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute("UPDATE causal_edges SET confidence = 2")
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="causal edge confidence must be between 0 and 1"):
+            reader.causal_edges()
+
+
 def test_reader_normalizes_invalid_attachment_content(tmp_path: Path) -> None:
     output = tmp_path / "invalid-attachment.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="invalid-attachment")
