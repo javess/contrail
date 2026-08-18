@@ -291,9 +291,10 @@ def _critical_path(
 def _throughput(
     events: tuple[Event, ...], edges: tuple[CausalEdge, ...], execution_finished_at_ns: int | None
 ) -> Throughput | None:
-    parent_by_target = {
-        edge.target_event_id: edge.source_event_id for edge in edges if edge.kind == "parent"
-    }
+    parents_by_target: dict[str, set[str]] = {}
+    for edge in edges:
+        if edge.kind == "parent":
+            parents_by_target.setdefault(edge.target_event_id, set()).add(edge.source_event_id)
     samples_by_series: dict[tuple[str, str], list[tuple[int, float, float]]] = {}
     for event in events:
         if event.kind != "progress" or event.started_at_ns is None:
@@ -303,10 +304,13 @@ def _throughput(
         values = _progress_values(completed, total)
         if values is not None:
             explicit_series = event.attributes.get("series")
+            parents = parents_by_target.get(event.id)
             if isinstance(explicit_series, str) and explicit_series:
                 series = ("series", explicit_series)
-            elif event.id in parent_by_target:
-                series = ("parent", parent_by_target[event.id])
+            elif parents is not None and len(parents) == 1:
+                series = ("parent", next(iter(parents)))
+            elif parents:
+                series = ("ambiguous-parent", event.id)
             else:
                 series = ("entity", event.entity_id or "unowned")
             samples_by_series.setdefault(series, []).append((event.started_at_ns, *values))

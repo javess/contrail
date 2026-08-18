@@ -528,6 +528,32 @@ def test_throughput_does_not_merge_progress_from_multiple_entities(tmp_path: Pat
     assert analysis.throughput is None
 
 
+def test_throughput_does_not_guess_between_multiple_parent_scopes(tmp_path: Path) -> None:
+    runpack = tmp_path / "ambiguous-progress-parents.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 30, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("scope-a", "run", "scope-a", 0, 30),
+                _event("scope-b", "run", "scope-b", 0, 30),
+                _event("progress-a", "progress", "progress", 10, 10, {"completed": 5, "total": 10}),
+                _event("progress-b", "progress", "progress", 20, 20, {"completed": 6, "total": 10}),
+            )
+        )
+        writer.add_causal_edges(
+            CausalEdge(parent, progress, "parent", 1.0, {})
+            for parent in ("scope-a", "scope-b")
+            for progress in ("progress-a", "progress-b")
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.throughput is None
+
+
 def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> None:
     runpack = tmp_path / "clock-skew.runpack"
     with RunpackWriter(runpack) as writer:
