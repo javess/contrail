@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from runtime_tools import kubernetes
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.inspect import inspect_runpack
 from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
@@ -652,3 +653,30 @@ def test_kubernetes_snapshot_rejects_malformed_relationship_text(
         import_kubernetes_snapshot(base, snapshot, output)
 
     assert not output.exists()
+
+
+def test_kubernetes_snapshot_rejects_oversized_sources_before_decoding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = tmp_path / "oversized.json"
+    snapshot.write_bytes(b"{" + b" " * 32 + b"}")
+    monkeypatch.setattr(kubernetes, "MAX_KUBERNETES_SNAPSHOT_BYTES", 32)
+
+    with pytest.raises(
+        KubernetesImportError,
+        match="Kubernetes snapshot exceeds the 32-byte input limit",
+    ):
+        import_kubernetes_snapshot(
+            tmp_path / "missing.runpack", snapshot, tmp_path / "output.runpack"
+        )
+
+
+def test_kubernetes_snapshot_normalizes_invalid_utf8(tmp_path: Path) -> None:
+    snapshot = tmp_path / "invalid-utf8.json"
+    snapshot.write_bytes(b"\xff")
+
+    with pytest.raises(KubernetesImportError, match="Kubernetes snapshot must be UTF-8"):
+        import_kubernetes_snapshot(
+            tmp_path / "missing.runpack", snapshot, tmp_path / "output.runpack"
+        )

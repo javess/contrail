@@ -35,6 +35,7 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MIN_RUNPACK_TIMESTAMP_NS = -(1 << 63)
 _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
 _WORKLOAD_KINDS = {"Node", "Deployment", "ReplicaSet", "Job", "Pod"}
+MAX_KUBERNETES_SNAPSHOT_BYTES = 64 * 1024 * 1024
 
 
 def _object(value: object, label: str) -> dict[str, object]:
@@ -148,11 +149,20 @@ def _reject_json_constant(value: str) -> Never:
 
 def _load(source: Path) -> list[dict[str, object]]:
     try:
-        document = json.loads(
-            source.read_text(encoding="utf-8"), parse_constant=_reject_json_constant
-        )
+        with source.open("rb") as stream:
+            raw = stream.read(MAX_KUBERNETES_SNAPSHOT_BYTES + 1)
     except OSError as exc:
         raise KubernetesImportError(f"could not read Kubernetes snapshot: {source}") from exc
+    if len(raw) > MAX_KUBERNETES_SNAPSHOT_BYTES:
+        raise KubernetesImportError(
+            f"Kubernetes snapshot exceeds the {MAX_KUBERNETES_SNAPSHOT_BYTES}-byte input limit"
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise KubernetesImportError("Kubernetes snapshot must be UTF-8") from exc
+    try:
+        document = json.loads(text, parse_constant=_reject_json_constant)
     except json.JSONDecodeError as exc:
         raise KubernetesImportError(f"invalid Kubernetes JSON at line {exc.lineno}") from exc
     except ValueError as exc:

@@ -105,8 +105,8 @@ facts above it:
 uv run runtime serve baseline.runpack --compare candidate.runpack
 ```
 
-Bounded infrastructure evidence can enrich a captured execution without
-modifying the original artifact:
+Infrastructure JSON evidence, bounded to 64 MiB per snapshot or response, can
+enrich a captured execution without modifying the original artifact:
 
 ```bash
 uv run runtime enrich-kubernetes run.runpack snapshot.json --output run-k8s.runpack

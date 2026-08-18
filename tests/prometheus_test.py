@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from runtime_tools import prometheus
 from runtime_tools.model import Entity, Execution
 from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
 from runtime_tools.storage import RunpackReader, RunpackWriter
@@ -244,3 +245,30 @@ def test_prometheus_response_rejects_non_standard_json_constants(tmp_path: Path)
         import_prometheus_response(source, response, output)
 
     assert not output.exists()
+
+
+def test_prometheus_response_rejects_oversized_sources_before_decoding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = tmp_path / "oversized.json"
+    response.write_bytes(b"{" + b" " * 32 + b"}")
+    monkeypatch.setattr(prometheus, "MAX_PROMETHEUS_RESPONSE_BYTES", 32)
+
+    with pytest.raises(
+        PrometheusImportError,
+        match="Prometheus response exceeds the 32-byte input limit",
+    ):
+        import_prometheus_response(
+            tmp_path / "missing.runpack", response, tmp_path / "output.runpack"
+        )
+
+
+def test_prometheus_response_normalizes_invalid_utf8(tmp_path: Path) -> None:
+    response = tmp_path / "invalid-utf8.json"
+    response.write_bytes(b"\xff")
+
+    with pytest.raises(PrometheusImportError, match="Prometheus response must be UTF-8"):
+        import_prometheus_response(
+            tmp_path / "missing.runpack", response, tmp_path / "output.runpack"
+        )

@@ -19,6 +19,9 @@ class PrometheusImportError(EnrichmentError):
     """Raised when Prometheus response evidence is malformed."""
 
 
+MAX_PROMETHEUS_RESPONSE_BYTES = 64 * 1024 * 1024
+
+
 @dataclass(frozen=True, slots=True)
 class PrometheusImportResult:
     sample_count: int
@@ -91,11 +94,20 @@ def _reject_json_constant(value: str) -> Never:
 
 def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
     try:
-        document = json.loads(
-            source.read_text(encoding="utf-8"), parse_constant=_reject_json_constant
-        )
+        with source.open("rb") as stream:
+            raw = stream.read(MAX_PROMETHEUS_RESPONSE_BYTES + 1)
     except OSError as exc:
         raise PrometheusImportError(f"could not read Prometheus response: {source}") from exc
+    if len(raw) > MAX_PROMETHEUS_RESPONSE_BYTES:
+        raise PrometheusImportError(
+            f"Prometheus response exceeds the {MAX_PROMETHEUS_RESPONSE_BYTES}-byte input limit"
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PrometheusImportError("Prometheus response must be UTF-8") from exc
+    try:
+        document = json.loads(text, parse_constant=_reject_json_constant)
     except json.JSONDecodeError as exc:
         raise PrometheusImportError(f"invalid Prometheus JSON at line {exc.lineno}") from exc
     except ValueError as exc:
