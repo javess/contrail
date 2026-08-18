@@ -69,6 +69,11 @@ command prints copyable recapture, gate, and local timeline commands. Edit the
 generated workload and contract to turn the demonstration into a template for
 your own runtime invariant.
 
+For application-shaped walkthroughs with several simultaneous regressions, use the
+[checkout, analytics, and inference examples](examples/complex/README.md). They preserve the
+business result while exposing retry/error amplification, dependency fan-out, serialized writes,
+and cache-fallback behavior through the same contract-to-evidence workflow.
+
 `contrail` is the primary product command. The existing `runtime`, `rundiff`,
 `batchscope`, and `proofline` executables remain compatibility entry points.
 

@@ -1,0 +1,23 @@
+name: checkout-safety
+description: Keep checkout successful without payment retries or legacy risk access.
+assertions:
+  - type: candidate_exit_success
+    name: checkout-completes
+  - type: exit_code_equivalent
+    name: exit-status-preserved
+  - type: output_equivalent
+    name: confirmation-preserved
+  - type: forbid_new_dependency
+    name: no-legacy-risk-database
+    from: python
+    to: legacy-risk-db
+  - type: max_operation_count
+    name: single-payment-authorization
+    operation: payment.authorize
+    relative_to: baseline
+    factor: 1
+  - type: max_operation_error_count
+    name: no-payment-gateway-errors
+    operation: payment.authorize
+    relative_to: baseline
+    factor: 1

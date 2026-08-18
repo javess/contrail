@@ -1,0 +1,18 @@
+name: inference-latency-safety
+description: Keep recommendation results without feature fan-out or registry fallback.
+assertions:
+  - type: candidate_exit_success
+    name: inference-completes
+  - type: exit_code_equivalent
+    name: exit-status-preserved
+  - type: output_equivalent
+    name: recommendations-preserved
+  - type: forbid_new_dependency
+    name: no-registry-fallback
+    from: python
+    to: fallback-model-registry
+  - type: max_operation_count
+    name: bounded-feature-lookups
+    operation: feature.lookup
+    relative_to: baseline
+    factor: 1.5
