@@ -70,11 +70,7 @@ def _value(value: object) -> JsonValue:
 
 
 def _encoded_size(value: JsonValue) -> int:
-    return len(
-        json.dumps(value, allow_nan=False, ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
-    )
+    return len(json.dumps(value, allow_nan=False, separators=(",", ":")).encode("utf-8"))
 
 
 def _column_names(description: tuple[tuple[object, ...], ...]) -> tuple[str, ...]:
@@ -123,7 +119,11 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
                 raise QueryError("query must return rows")
             columns = _column_names(cursor.description)
             rows: list[tuple[JsonValue, ...]] = []
-            result_bytes = 0
+            result_bytes = (
+                len(b'{"columns":')
+                + _encoded_size(list(columns))
+                + len(b',"rows":[],"truncated":false}')
+            )
             truncated = False
             while True:
                 raw_row = cursor.fetchone()
@@ -133,7 +133,7 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
                     truncated = True
                     break
                 row = tuple(_value(value) for value in raw_row)
-                result_bytes += sum(_encoded_size(value) for value in row)
+                result_bytes += _encoded_size(list(row)) + (1 if rows else 0)
                 if result_bytes > MAX_QUERY_RESULT_BYTES:
                     raise QueryError(
                         f"query result exceeded the byte limit of {MAX_QUERY_RESULT_BYTES}"
