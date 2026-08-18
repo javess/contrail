@@ -214,6 +214,32 @@ def test_proofline_rejects_unknown_contract_fields(tmp_path: Path, document: str
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 
+@pytest.mark.parametrize(
+    ("assertion", "message"),
+    (
+        ("type: max_runtime_regression", "requires fields: percent"),
+        (
+            "type: max_operation_count\n"
+            "    operation: work\n"
+            "    relative_to: candidate\n"
+            "    factor: 1",
+            "relative_to must be baseline",
+        ),
+    ),
+)
+def test_proofline_validates_assertion_fields_before_loading_runpacks(
+    tmp_path: Path, assertion: str, message: str
+) -> None:
+    contract = tmp_path / "invalid-fields.yaml"
+    contract.write_text(
+        f"name: invalid\nassertions:\n  - {assertion}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match=message):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
 def test_proofline_rejects_recursive_yaml_values(tmp_path: Path) -> None:
     contract = tmp_path / "recursive.yaml"
     contract.write_text(

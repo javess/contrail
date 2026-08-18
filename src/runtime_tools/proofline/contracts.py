@@ -82,6 +82,30 @@ def _reject_unknown_fields(value: dict[str, JsonValue], allowed: set[str], label
         raise ContractError(f"{label} contains unsupported fields: {', '.join(unknown)}")
 
 
+def _validate_assertion_fields(assertion_type: str, config: dict[str, JsonValue]) -> None:
+    required = _ASSERTION_FIELDS[assertion_type]
+    missing = sorted(required - config.keys())
+    if missing:
+        raise ContractError(f"{assertion_type} requires fields: {', '.join(missing)}")
+    for field in required:
+        value = config[field]
+        if field in {"percent", "factor"}:
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ContractError(f"{assertion_type} requires numeric {field}")
+            try:
+                number = float(value)
+            except OverflowError as exc:
+                raise ContractError(f"{assertion_type} {field} exceeds the numeric range") from exc
+            if not math.isfinite(number):
+                raise ContractError(f"{assertion_type} {field} must be finite")
+            if number < 0:
+                raise ContractError(f"{assertion_type} {field} cannot be negative")
+        elif not isinstance(value, str) or not value:
+            raise ContractError(f"{assertion_type} requires string {field}")
+    if config.get("relative_to") not in (None, "baseline"):
+        raise ContractError(f"{assertion_type} relative_to must be baseline")
+
+
 def _parse_contract(value: object, default_name: str) -> Contract:
     raw = _object(value, "contract")
     _reject_unknown_fields(raw, {"name", "description", "assertions"}, "contract")
@@ -104,6 +128,7 @@ def _parse_contract(value: object, default_name: str) -> Contract:
             {"type", "name", *_ASSERTION_FIELDS[assertion_type]},
             f"{assertion_type} assertion",
         )
+        _validate_assertion_fields(assertion_type, config)
         assertion_name_value = config.get("name", assertion_type.replace("_", "-"))
         assertion_name = _required_string(assertion_name_value, f"assertion {index} name")
         assertions.append(Assertion(assertion_type, assertion_name, config))
