@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from collections.abc import Buffer, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -476,6 +477,42 @@ def test_record_process_terminates_child_when_capture_is_interrupted(
     assert children[-1].poll() is not None
     assert not output.exists()
     assert not tuple(tmp_path.glob(".interrupted.runpack.tmp-*"))
+
+
+def test_record_process_terminates_child_when_output_pump_submission_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "pump-failure.runpack"
+    children: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+    real_submit = ThreadPoolExecutor.submit
+    submissions = 0
+
+    def tracked_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        child: subprocess.Popen[bytes] = real_popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    def fail_second_submit(executor: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal submissions
+        submissions += 1
+        if submissions == 2:
+            raise RuntimeError("simulated thread submission failure")
+        return real_submit(executor, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", tracked_popen)
+    monkeypatch.setattr(ThreadPoolExecutor, "submit", fail_second_submit)
+
+    with pytest.raises(RuntimeError, match="simulated thread submission failure"):
+        record_process(
+            (sys.executable, "-c", "import time; time.sleep(30)"),
+            output,
+            name="pump-failure",
+        )
+
+    assert children[-1].poll() is not None
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".pump-failure.runpack.tmp-*"))
 
 
 def test_reader_closes_connection_when_validation_is_interrupted(

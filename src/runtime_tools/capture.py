@@ -335,22 +335,29 @@ def record_process(
             stdout_pipe = cast(BinaryIO, process.stdout)
             stderr_pipe = cast(BinaryIO, process.stderr)
             process_done = threading.Event()
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                stdout_result = executor.submit(
-                    _pump, stdout_pipe, stdout, capture_output_limit, process_done
-                )
-                stderr_result = executor.submit(
-                    _pump, stderr_pipe, stderr, capture_output_limit, process_done
-                )
-                try:
-                    exit_code, process_usage = _wait_with_usage(process)
-                except BaseException:
-                    _terminate_and_reap(process)
-                    raise
-                finally:
-                    process_done.set()
-                stdout_digest = stdout_result.result()
-                stderr_digest = stderr_result.result()
+            try:
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    try:
+                        stdout_result = executor.submit(
+                            _pump, stdout_pipe, stdout, capture_output_limit, process_done
+                        )
+                        stderr_result = executor.submit(
+                            _pump, stderr_pipe, stderr, capture_output_limit, process_done
+                        )
+                        exit_code, process_usage = _wait_with_usage(process)
+                        process_done.set()
+                        stdout_digest = stdout_result.result()
+                        stderr_digest = stderr_result.result()
+                    except BaseException:
+                        process_done.set()
+                        _terminate_and_reap(process)
+                        raise
+                    finally:
+                        process_done.set()
+            except BaseException:
+                process_done.set()
+                _terminate_and_reap(process)
+                raise
 
             elapsed_ns = time.perf_counter_ns() - started_monotonic_ns
             finished_at_ns = started_at_ns + elapsed_ns
