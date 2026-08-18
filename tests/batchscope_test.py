@@ -184,14 +184,14 @@ def test_batchscope_cli_emits_structured_json(tmp_path: Path) -> None:
     assert payload["bottlenecks"][0]["classification"] == "serialized_stage"
 
 
-def test_batchscope_labels_an_unlinked_process_path_as_inferred(tmp_path: Path) -> None:
+def test_batchscope_labels_a_single_process_path_as_observed(tmp_path: Path) -> None:
     runpack = tmp_path / "local.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="local")
 
     analysis = analyze_runpack(runpack)
 
     assert analysis.critical_path is not None
-    assert analysis.critical_path.certainty == "inferred"
+    assert analysis.critical_path.certainty == "observed"
 
 
 def test_critical_path_does_not_subtract_sequential_sibling_intervals(tmp_path: Path) -> None:

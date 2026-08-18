@@ -179,7 +179,6 @@ def _critical_path(
     children: dict[str, list[str]] = {event_id: [] for event_id in nodes}
     confidence_by_pair: dict[tuple[str, str], float] = {}
     incoming: set[str] = set()
-    used_edge_count = 0
     for source, target, confidence in edge_values:
         if source in nodes and target in nodes:
             pair = (source, target)
@@ -187,7 +186,6 @@ def _critical_path(
                 children[source].append(target)
             confidence_by_pair[pair] = max(confidence_by_pair.get(pair, 0.0), confidence)
             incoming.add(target)
-            used_edge_count += 1
     state: dict[str, int] = {}
     memo: dict[str, _Path] = {}
     cycle_detected = False
@@ -260,9 +258,8 @@ def _critical_path(
         confidence_by_pair[(source, target)]
         for source, target in zip(event_ids, event_ids[1:], strict=False)
     )
-    edges_observed = bool(selected_confidences) and all(
-        confidence == 1.0 for confidence in selected_confidences
-    )
+    edges_observed = all(confidence == 1.0 for confidence in selected_confidences)
+    causal_structure_observed = len(nodes) == 1 or bool(selected_confidences)
     timing_complete = all(_has_complete_interval(nodes[event_id]) for event_id in event_ids)
     clock_domains = {nodes[event_id].clock_domain for event_id in event_ids}
     shared_clock_domain = len(clock_domains) == 1 and None not in clock_domains
@@ -276,7 +273,7 @@ def _critical_path(
         event_names=tuple(nodes[event_id].name for event_id in event_ids),
         certainty=(
             "observed"
-            if used_edge_count
+            if causal_structure_observed
             and edges_observed
             and timing_complete
             and shared_clock_domain
