@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import uuid
 from collections.abc import Callable
@@ -30,14 +31,14 @@ def enrich_copy[T](
     temporary_created = False
     try:
         try:
-            destination = temporary.open("xb")
+            descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError as exc:
             raise EnrichmentError(f"temporary runpack already exists: {temporary}") from exc
         except OSError as exc:
             raise EnrichmentError(f"could not create temporary runpack: {exc}") from exc
         temporary_created = True
         try:
-            with destination, source.open("rb") as source_file:
+            with os.fdopen(descriptor, "wb") as destination, source.open("rb") as source_file:
                 shutil.copyfileobj(source_file, destination)
         except OSError as exc:
             raise EnrichmentError(f"could not copy runpack for enrichment: {exc}") from exc

@@ -69,6 +69,24 @@ def test_enrichment_preserves_source_artifact_permissions(tmp_path: Path) -> Non
     assert output.stat().st_mode & 0o777 == 0o640
 
 
+def test_enrichment_keeps_temporary_evidence_private_until_publication(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    source.chmod(0o644)
+    observed_modes: list[int] = []
+
+    enrich_copy(
+        source,
+        output,
+        lambda writer: observed_modes.append(writer.path.stat().st_mode & 0o777),
+    )
+
+    assert observed_modes == [0o600]
+    assert output.stat().st_mode & 0o777 == 0o644
+
+
 def test_enrichment_can_extend_a_read_only_source_artifact(tmp_path: Path) -> None:
     source = tmp_path / "source.runpack"
     output = tmp_path / "output.runpack"
