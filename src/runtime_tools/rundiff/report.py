@@ -80,6 +80,9 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
             "Runtime",
             f"  {_format_change(diff.wall_time, _duration)}",
             "",
+            "CPU time",
+            f"  {_format_change(diff.cpu_time, _duration)}",
+            "",
             (
                 "Critical path "
                 f"({_certainty(diff.baseline_critical_path_certainty)} → "

@@ -110,6 +110,26 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
                 {},
             )
         )
+        writer.add_measurements(
+            (
+                Measurement(
+                    "process.cpu.user",
+                    2.0 if candidate else 1.0,
+                    "s",
+                    finished_at_ns,
+                    "gateway",
+                    {},
+                ),
+                Measurement(
+                    "process.cpu.system",
+                    1.0 if candidate else 0.5,
+                    "s",
+                    finished_at_ns,
+                    "gateway",
+                    {},
+                ),
+            )
+        )
 
 
 def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
@@ -130,6 +150,9 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
     assert diff.wall_time.baseline == 0.01
     assert diff.wall_time.candidate == 0.02
     assert diff.wall_time.percent == 100.0
+    assert diff.cpu_time.baseline == 1.5
+    assert diff.cpu_time.candidate == 3.0
+    assert diff.cpu_time.percent == 100.0
     assert diff.critical_path.baseline == 0.01
     assert diff.critical_path.candidate == 0.02
     assert diff.critical_path.percent == 100.0
@@ -325,6 +348,7 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     )
 
     assert "10.0ms → 20.0ms (+100.0%)" in text_report
+    assert "CPU time\n  1.500s → 3.000s (+100.0%)" in text_report
     assert "Critical path (observed → observed)\n  10.0ms → 20.0ms (+100.0%)" in text_report
     assert "database :: SELECT items [client.request]" in text_report
     assert "Entity changes\n  metadata [service]: 0 → 1 (added)" in text_report
@@ -340,6 +364,7 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert payload["stderr_equivalent"] is True
     assert payload["operation_errors_equivalent"] is False
     assert payload["wall_time"]["percent"] == 100.0
+    assert payload["cpu_time"] == {"baseline": 1.5, "candidate": 3.0, "percent": 100.0}
     assert payload["critical_path"]["percent"] == 100.0
     assert payload["entity_count_changes"] == [
         {

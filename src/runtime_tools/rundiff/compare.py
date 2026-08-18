@@ -194,6 +194,7 @@ class ExecutionDiff:
     stderr_equivalent: bool | None
     operation_errors_equivalent: bool | None
     wall_time: ValueChange
+    cpu_time: ValueChange
     critical_path: ValueChange
     baseline_critical_path_certainty: str | None
     candidate_critical_path_certainty: str | None
@@ -225,6 +226,7 @@ class ExecutionDiff:
             "stderr_equivalent": self.stderr_equivalent,
             "operation_errors_equivalent": self.operation_errors_equivalent,
             "wall_time": self.wall_time.as_json_value(),
+            "cpu_time": self.cpu_time.as_json_value(),
             "critical_path": self.critical_path.as_json_value(),
             "baseline_critical_path_certainty": self.baseline_critical_path_certainty,
             "candidate_critical_path_certainty": self.candidate_critical_path_certainty,
@@ -267,6 +269,12 @@ def _known_equivalence(baseline: object | None, candidate: object | None) -> boo
     if baseline is None or candidate is None:
         return None
     return baseline == candidate
+
+
+def _cpu_time(summary: ExecutionSummary) -> float | None:
+    if summary.cpu_user_seconds is None or summary.cpu_system_seconds is None:
+        return None
+    return summary.cpu_user_seconds + summary.cpu_system_seconds
 
 
 def _output_equivalence(
@@ -543,6 +551,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         wall_time=_value_change(
             baseline_summary.wall_time_seconds, candidate_summary.wall_time_seconds
         ),
+        cpu_time=_value_change(_cpu_time(baseline_summary), _cpu_time(candidate_summary)),
         critical_path=_value_change(
             (
                 baseline_analysis.critical_path.duration_seconds
