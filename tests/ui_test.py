@@ -34,6 +34,8 @@ def test_timeline_payload_exposes_normalized_evidence_and_comparison(tmp_path: P
     first_event = events[0]
     assert isinstance(first_event, dict)
     assert first_event["kind"] == "process.run"
+    assert first_event["clock_domain"] == "host.wall"
+    assert first_event["uncertainty_ns"] is None
     analysis = baseline_value["analysis"]
     assert isinstance(analysis, dict)
     critical_path = analysis["critical_path"]
@@ -94,6 +96,8 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "No constraint classified from available evidence" in javascript
     assert "Untimed evidence" in javascript
     assert "event.start_offset_ns != null" in javascript
+    assert "Causal links" in javascript
+    assert "Clock domain" in javascript
 
 
 def test_timeline_rejects_oversized_artifact_before_analysis(tmp_path: Path) -> None:

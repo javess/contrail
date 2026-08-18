@@ -124,8 +124,18 @@ function renderTimeline() {
 }
 
 function showDetail(event, entities) {
+  const run = currentRun();
   const entity = entities.get(event.entity_id);
-  document.querySelector("#detail").innerHTML = `<p class="eyebrow">SELECTED EVIDENCE</p><h2>${escapeHtml(event.name)}</h2><dl><dt>Entity</dt><dd>${escapeHtml(entity ? `${entity.name} / ${entity.kind}` : "unowned")}</dd><dt>Kind</dt><dd>${escapeHtml(event.kind)}</dd><dt>Start offset</dt><dd>${fmtDuration(nsToSeconds(event.start_offset_ns))}</dd><dt>Duration</dt><dd>${fmtDuration(nsToSeconds(event.duration_ns))}</dd><dt>Normalized attributes</dt><dd class="attributes">${escapeHtml(JSON.stringify(event.attributes, null, 2))}</dd></dl>`;
+  const eventNames = new Map(run.events.map(item => [item.id, item.name]));
+  const links = run.edges.filter(edge => edge.source_event_id === event.id || edge.target_event_id === event.id).map(edge => {
+    const incoming = edge.target_event_id === event.id;
+    const peerId = incoming ? edge.source_event_id : edge.target_event_id;
+    const peer = eventNames.get(peerId) || peerId;
+    return `<li><span>${incoming ? "←" : "→"}</span><strong>${escapeHtml(peer)}</strong><small>${escapeHtml(edge.kind)} · ${Math.round(edge.confidence * 100)}%</small></li>`;
+  }).join("");
+  const causalLinks = links ? `<ul class="causal-links">${links}</ul>` : "none observed";
+  const uncertainty = event.uncertainty_ns == null ? "unknown" : `${fmtNumber(event.uncertainty_ns)} ns`;
+  document.querySelector("#detail").innerHTML = `<p class="eyebrow">SELECTED EVIDENCE</p><h2>${escapeHtml(event.name)}</h2><dl><dt>Entity</dt><dd>${escapeHtml(entity ? `${entity.name} / ${entity.kind}` : "unowned")}</dd><dt>Kind</dt><dd>${escapeHtml(event.kind)}</dd><dt>Clock domain</dt><dd>${escapeHtml(event.clock_domain || "unknown")}</dd><dt>Clock uncertainty</dt><dd>${escapeHtml(uncertainty)}</dd><dt>Start offset</dt><dd>${fmtDuration(nsToSeconds(event.start_offset_ns))}</dd><dt>Duration</dt><dd>${fmtDuration(nsToSeconds(event.duration_ns))}</dd><dt>Causal links</dt><dd>${causalLinks}</dd><dt>Normalized attributes</dt><dd class="attributes">${escapeHtml(JSON.stringify(event.attributes, null, 2))}</dd></dl>`;
 }
 
 function renderAll() { renderSwitcher(); renderSummary(); renderAnalysis(); renderComparison(); renderFilters(); renderTimeline(); }

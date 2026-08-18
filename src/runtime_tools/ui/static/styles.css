@@ -108,6 +108,11 @@ select, input { margin-left: 7px; accent-color: var(--accent); background: #1011
 .detail dt { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .1em; margin-top: 16px; }
 .detail dd { margin: 5px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 .attributes { white-space: pre-wrap; color: #cbc5b9; font-size: 10px; line-height: 1.5; }
+.causal-links { list-style: none; margin: 0; padding: 0; }
+.causal-links li { display: grid; grid-template-columns: 18px 1fr; gap: 2px 5px; border-top: 1px solid #292a27; padding: 7px 0; }
+.causal-links li:first-child { border-top: 0; }
+.causal-links span { color: var(--accent); grid-row: 1 / 3; }
+.causal-links small { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
 
 @media (max-width: 900px) {
   .masthead, main { margin-right: 0; }

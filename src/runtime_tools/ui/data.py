@@ -27,6 +27,8 @@ def _event_value(event: Event, execution_start_ns: int) -> dict[str, JsonValue]:
         "entity_id": event.entity_id,
         "kind": event.kind,
         "name": event.name,
+        "clock_domain": event.clock_domain,
+        "uncertainty_ns": event.uncertainty_ns,
         "start_offset_ns": (
             started_at_ns - execution_start_ns if started_at_ns is not None else None
         ),
