@@ -899,9 +899,9 @@ class RunpackReader:
                 connection.close()
             raise
 
-    def _execute(self, sql: str) -> sqlite3.Cursor:
+    def _execute(self, sql: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
         try:
-            return self._connection.execute(sql)
+            return self._connection.execute(sql, parameters)
         except sqlite3.DatabaseError as exc:
             raise RunpackError(f"could not read runpack: {exc}") from exc
 
@@ -967,6 +967,21 @@ class RunpackReader:
             )
             for row in rows
         )
+
+    def first_measurement_values(
+        self, identities: tuple[tuple[str, str], ...]
+    ) -> dict[tuple[str, str], float]:
+        values: dict[tuple[str, str], float] = {}
+        for name, unit in identities:
+            normalized_name = _required_text(name, "measurement name")
+            normalized_unit = _required_text(unit, "measurement unit")
+            row = self._execute(
+                "SELECT value FROM measurements WHERE name = ? AND unit = ? ORDER BY id LIMIT 1",
+                (normalized_name, normalized_unit),
+            ).fetchone()
+            if row is not None:
+                values[(name, unit)] = _measurement_value(row[0])
+        return values
 
     def entities(self) -> tuple[Entity, ...]:
         rows = self._execute("SELECT * FROM entities ORDER BY id").fetchall()

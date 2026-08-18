@@ -156,6 +156,21 @@ def test_inspection_preserves_base_measurements_after_additive_enrichment(
     assert summary.peak_memory_bytes == 100
 
 
+def test_inspection_does_not_materialize_unrelated_measurement_series(tmp_path: Path) -> None:
+    runpack = tmp_path / "many-measurements.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("run", "run", 0, 10, (), str(tmp_path), 0, None, {}))
+        writer.add_measurements(
+            Measurement("unrelated", float(index), "1", index, None, {}) for index in range(10_000)
+        )
+        writer.add_measurement(Measurement("process.memory.peak", 123.0, "By", 10, None, {}))
+
+    summary = inspect_runpack(runpack)
+
+    assert summary.peak_memory_bytes == 123
+    assert summary.record_counts["measurements"] == 10_001
+
+
 def test_inspection_uses_normalized_execution_bounds_over_process_wall_measurement(
     tmp_path: Path,
 ) -> None:

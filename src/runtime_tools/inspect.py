@@ -63,9 +63,13 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
     with RunpackReader(path) as reader:
         manifest = reader.manifest()
         execution = reader.execution()
-        measurements: dict[tuple[str, str], float] = {}
-        for item in reader.measurements():
-            measurements.setdefault((item.name, item.unit), item.value)
+        measurements = reader.first_measurement_values(
+            (
+                ("process.cpu.user", "s"),
+                ("process.cpu.system", "s"),
+                ("process.memory.peak", "By"),
+            )
+        )
         peak_memory = _peak_memory_bytes(measurements.get(("process.memory.peak", "By")))
         wall_time = (
             (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
