@@ -446,11 +446,14 @@ def test_serialized_stage_uses_enclosing_logical_run_instead_of_process_startup(
     assert {item.classification for item in analysis.bottlenecks} == {"serialized_stage"}
 
 
-def test_serialized_stage_does_not_treat_boolean_concurrency_as_one(tmp_path: Path) -> None:
-    runpack = tmp_path / "boolean-concurrency.runpack"
+@pytest.mark.parametrize("concurrency", (True, 10**1000))
+def test_serialized_stage_ignores_invalid_concurrency_values(
+    tmp_path: Path, concurrency: int | bool
+) -> None:
+    runpack = tmp_path / "invalid-concurrency.runpack"
     with RunpackWriter(runpack) as writer:
         writer.add_execution(
-            Execution("boolean", "boolean", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+            Execution("invalid", "invalid", 0, 100_000_000, (), str(tmp_path), 0, None, {})
         )
         writer.add_entity(Entity("worker", "worker", "worker", None, {}))
         writer.add_event(
@@ -460,7 +463,7 @@ def test_serialized_stage_does_not_treat_boolean_concurrency_as_one(tmp_path: Pa
                 "persist",
                 0,
                 100_000_000,
-                {"concurrency": True},
+                {"concurrency": concurrency},
             )
         )
 

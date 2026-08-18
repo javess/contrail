@@ -567,7 +567,6 @@ def _bottlenecks(
             event.kind != "stage"
             or not isinstance(concurrency, (int, float))
             or isinstance(concurrency, bool)
-            or not math.isfinite(concurrency)
             or concurrency != 1
         ):
             continue
