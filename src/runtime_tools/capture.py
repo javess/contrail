@@ -295,8 +295,27 @@ def record_process(
     started_monotonic_ns = time.perf_counter_ns()
     metadata = _initial_metadata()
 
+    temporary_created = False
+    annotation_created = False
     try:
-        with RunpackWriter(temporary) as writer:
+        try:
+            annotation_descriptor = os.open(
+                annotation_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+            )
+        except FileExistsError as exc:
+            raise CaptureError(
+                f"temporary annotation file already exists: {annotation_path}"
+            ) from exc
+        except OSError as exc:
+            raise CaptureError(f"could not create temporary annotation file: {exc}") from exc
+        annotation_created = True
+        try:
+            os.close(annotation_descriptor)
+        except OSError as exc:
+            raise CaptureError(f"could not prepare temporary annotation file: {exc}") from exc
+        runpack_writer = RunpackWriter(temporary)
+        temporary_created = True
+        with runpack_writer as writer:
             writer.add_execution(
                 Execution(
                     id=execution_id,
@@ -481,8 +500,10 @@ def record_process(
         except OSError as exc:
             raise CaptureError(f"could not publish runpack {output}: {exc}") from exc
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        if temporary_created:
+            temporary.unlink(missing_ok=True)
         raise
     finally:
-        annotation_path.unlink(missing_ok=True)
+        if annotation_created:
+            annotation_path.unlink(missing_ok=True)
     return exit_code

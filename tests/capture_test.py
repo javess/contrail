@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Buffer, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -385,6 +386,46 @@ def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None
         record_process((sys.executable, "-c", "pass"), output, name="existing")
 
     assert output.read_bytes() == b"keep me"
+
+
+def test_record_process_preserves_a_colliding_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "collision.runpack"
+
+    class FixedUuid:
+        hex = "fixed"
+
+    monkeypatch.setattr(uuid, "uuid4", FixedUuid)
+    temporary = tmp_path / ".collision.runpack.tmp-fixed"
+    temporary.write_bytes(b"preserve me")
+
+    with pytest.raises(RunpackError, match="refusing to overwrite existing runpack"):
+        record_process((sys.executable, "-c", "pass"), output, name="collision")
+
+    assert temporary.read_bytes() == b"preserve me"
+    assert not (tmp_path / ".collision.runpack.annotations-fixed").exists()
+    assert not output.exists()
+
+
+def test_record_process_preserves_a_colliding_annotation_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "collision.runpack"
+
+    class FixedUuid:
+        hex = "fixed"
+
+    monkeypatch.setattr(uuid, "uuid4", FixedUuid)
+    annotations = tmp_path / ".collision.runpack.annotations-fixed"
+    annotations.write_bytes(b"preserve me")
+
+    with pytest.raises(CaptureError, match="temporary annotation file already exists"):
+        record_process((sys.executable, "-c", "pass"), output, name="collision")
+
+    assert annotations.read_bytes() == b"preserve me"
+    assert not output.exists()
+    assert not (tmp_path / ".collision.runpack.tmp-fixed").exists()
 
 
 @pytest.mark.parametrize(

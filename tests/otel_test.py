@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from runtime_tools import otel
 from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
 from runtime_tools.otel import OtelImportError, import_otlp_json
-from runtime_tools.storage import RunpackReader
+from runtime_tools.storage import RunpackError, RunpackReader
 
 
 def _attribute(key: str, value: str) -> dict[str, object]:
@@ -1349,4 +1350,47 @@ def test_otlp_json_import_normalizes_excessive_document_nesting(tmp_path: Path) 
     with pytest.raises(OtelImportError, match="OTLP JSON nesting is too deep"):
         import_otlp_json(source, output, name="nested")
 
+    assert not output.exists()
+
+
+def test_otlp_json_import_preserves_a_colliding_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "trace.json"
+    output = tmp_path / "trace.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FixedUuid:
+        hex = "fixed"
+
+    monkeypatch.setattr(uuid, "uuid4", FixedUuid)
+    temporary = tmp_path / ".trace.runpack.tmp-fixed"
+    temporary.write_bytes(b"preserve me")
+
+    with pytest.raises(RunpackError, match="refusing to overwrite existing runpack"):
+        import_otlp_json(source, output, name="collision")
+
+    assert temporary.read_bytes() == b"preserve me"
     assert not output.exists()

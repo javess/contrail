@@ -576,7 +576,6 @@ class RunpackWriter:
         except FileExistsError as exc:
             raise RunpackError(f"refusing to overwrite existing runpack: {path}") from exc
         except OSError as exc:
-            path.unlink(missing_ok=True)
             raise RunpackError(f"could not create runpack {path}: {exc}") from exc
         try:
             connection = sqlite3.connect(path)

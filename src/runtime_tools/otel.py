@@ -569,8 +569,11 @@ def import_otlp_json(
             )
         )
 
+    temporary_created = False
     try:
-        with RunpackWriter(temporary) as writer:
+        runpack_writer = RunpackWriter(temporary)
+        temporary_created = True
+        with runpack_writer as writer:
             writer.add_execution(
                 Execution(
                     id=execution_id,
@@ -615,7 +618,8 @@ def import_otlp_json(
         except OSError as exc:
             raise OtelImportError(f"could not publish runpack {output}: {exc}") from exc
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        if temporary_created:
+            temporary.unlink(missing_ok=True)
         raise
     return OtelImportResult(
         len(entities),
