@@ -94,7 +94,9 @@ SQL query.
 Compare any two runpacks with RunDiff. The text report emphasizes changed
 entity counts, operation and explicit failure counts, observed max concurrency,
 aggregate duration, CPU time, peak memory, and runtime dependencies; JSON keeps
-the same structured facts for automation.
+the same structured facts for automation. Comparisons of artifacts carrying the
+same execution ID are marked as exact identity matches; distinct executions use
+documented aggregate semantic matching.
 
 ```bash
 uv run rundiff compare baseline.runpack candidate.runpack

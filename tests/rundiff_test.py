@@ -437,6 +437,7 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
     assert recorded.stdout == "result\n"
     assert (tmp_path / "custom-baseline.runpack").is_file()
     assert compared.returncode == 0
+    assert "matching:  exact" in compared.stdout
     assert "Outcome\n  equivalent" in compared.stdout
     assert (
         "No entity, structural, error, concurrency, duration, or operation-count changes."
