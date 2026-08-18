@@ -39,11 +39,14 @@ def enrich_copy[T](
         try:
             with destination, source.open("rb") as source_file:
                 shutil.copyfileobj(source_file, destination)
-            shutil.copymode(source, temporary)
         except OSError as exc:
             raise EnrichmentError(f"could not copy runpack for enrichment: {exc}") from exc
         with RunpackWriter.open_existing(temporary) as writer:
             result = operation(writer)
+        try:
+            shutil.copymode(source, temporary)
+        except OSError as exc:
+            raise EnrichmentError(f"could not preserve runpack permissions: {exc}") from exc
         try:
             publish_without_overwrite(temporary, output)
         except FileExistsError as exc:

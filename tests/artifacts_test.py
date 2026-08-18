@@ -7,8 +7,8 @@ import pytest
 
 from runtime_tools.artifacts import publish_without_overwrite
 from runtime_tools.enrichment import EnrichmentError, enrich_copy
-from runtime_tools.model import Execution
-from runtime_tools.storage import RunpackError, RunpackWriter
+from runtime_tools.model import Entity, Execution, Measurement
+from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
 
 
 def test_artifact_publication_never_overwrites_a_concurrent_destination(tmp_path: Path) -> None:
@@ -67,6 +67,24 @@ def test_enrichment_preserves_source_artifact_permissions(tmp_path: Path) -> Non
 
     assert source.stat().st_mode & 0o777 == 0o640
     assert output.stat().st_mode & 0o777 == 0o640
+
+
+def test_enrichment_can_extend_a_read_only_source_artifact(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+    source.chmod(0o440)
+
+    def append(writer: RunpackWriter) -> None:
+        writer.add_measurement(Measurement("work", 1, "1", 1, "worker", {}))
+
+    enrich_copy(source, output, append)
+
+    assert output.stat().st_mode & 0o777 == 0o440
+    with RunpackReader(output) as reader:
+        assert [measurement.name for measurement in reader.measurements()] == ["work"]
 
 
 def test_enrichment_rejects_a_runpack_without_an_execution(tmp_path: Path) -> None:
