@@ -525,6 +525,40 @@ def test_otlp_json_import_normalizes_asynchronous_span_links(tmp_path: Path) -> 
     assert "publish → consume [link, confidence 1.00]" in tree
 
 
+def test_otlp_json_import_rejects_self_referential_span_links(tmp_path: Path) -> None:
+    source = tmp_path / "self-link.json"
+    output = tmp_path / "self-link.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "links": [{"traceId": "trace", "spanId": "span"}],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="span cannot link to itself: trace/span"):
+        import_otlp_json(source, output, name="self-link")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_reports_exporter_dropped_links_as_incomplete(
     tmp_path: Path,
 ) -> None:
