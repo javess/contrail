@@ -256,6 +256,29 @@ def test_serialized_stage_uses_enclosing_logical_run_instead_of_process_startup(
     assert {item.classification for item in analysis.bottlenecks} == {"serialized_stage"}
 
 
+def test_serialized_stage_does_not_treat_boolean_concurrency_as_one(tmp_path: Path) -> None:
+    runpack = tmp_path / "boolean-concurrency.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("boolean", "boolean", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(
+            _event(
+                "persist",
+                "stage",
+                "persist",
+                0,
+                100_000_000,
+                {"concurrency": True},
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert not any(item.classification == "serialized_stage" for item in analysis.bottlenecks)
+
+
 def test_batchscope_does_not_sum_parallel_side_branch_clients_as_a_bottleneck(
     tmp_path: Path,
 ) -> None:

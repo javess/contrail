@@ -485,6 +485,9 @@ def _bottlenecks(
         concurrency = event.attributes.get("concurrency")
         if (
             event.kind == "stage"
+            and isinstance(concurrency, (int, float))
+            and not isinstance(concurrency, bool)
+            and math.isfinite(concurrency)
             and concurrency == 1
             and comparison_window > 0
             and duration / comparison_window >= 0.25
