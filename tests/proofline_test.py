@@ -11,6 +11,8 @@ import pytest
 import runtime_tools.proofline.contracts as contracts_module
 from runtime_tools.model import Entity, Event, Execution, Measurement
 from runtime_tools.proofline import ContractError, verify_contracts
+from runtime_tools.proofline.report import render_verification
+from runtime_tools.proofline.verify import ClaimResult, VerificationReport
 from runtime_tools.storage import RunpackWriter
 
 _STDOUT_IDENTITY = "a" * 64
@@ -177,6 +179,21 @@ def test_proofline_enforces_cpu_time_regression_limits(tmp_path: Path) -> None:
     assert report.results[0].status == "fail"
     assert report.results[0].expected == "candidate CPU time <= baseline + 50%"
     assert report.results[0].observed == "baseline=1.5, candidate=3, limit=2.25"
+
+
+def test_proofline_text_report_bounds_claim_details() -> None:
+    results = tuple(
+        ClaimResult("contract", f"claim-{index}", "output_equivalent", "fail", "same", "different")
+        for index in range(101)
+    )
+    report = VerificationReport("baseline", "candidate", results)
+
+    text_report = render_verification(report, "text")
+
+    assert "claim-99" in text_report
+    assert "claim-100" not in text_report
+    assert "1 additional claims omitted from text output" in text_report
+    assert len(json.loads(render_verification(report, "json"))["results"]) == 101
 
 
 def test_proofline_cli_returns_failure_and_machine_readable_evidence(tmp_path: Path) -> None:
