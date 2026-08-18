@@ -50,6 +50,10 @@ def _resolve_runpack(path: Path) -> Path:
     return path.with_name(f"{path.name}.runpack")
 
 
+def _process_exit_status(return_code: int) -> int:
+    return 128 - return_code if return_code < 0 else return_code
+
+
 def _record(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="rundiff record")
     parser.add_argument("name")
@@ -80,7 +84,7 @@ def _record(argv: list[str]) -> int:
         print(f"rundiff: {terminal_text(exc)}", file=sys.stderr)
         return 2
     print(f"recorded {terminal_text(output)}", file=sys.stderr)
-    return exit_code
+    return _process_exit_status(exit_code)
 
 
 def main(argv: list[str] | None = None) -> int:

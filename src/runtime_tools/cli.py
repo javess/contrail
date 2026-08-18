@@ -104,6 +104,10 @@ def _binary_stream(name: str) -> BinaryIO | None:
     return getattr(stream, "buffer", None)
 
 
+def _process_exit_status(return_code: int) -> int:
+    return 128 - return_code if return_code < 0 else return_code
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -124,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
                 capture_output_limit=(args.output_limit_bytes if args.include_output else None),
             )
             print(f"recorded {terminal_text(output)}", file=sys.stderr)
-            return exit_code
+            return _process_exit_status(exit_code)
         if args.subcommand == "import-otel":
             name = args.name or args.source.stem
             output = args.output or args.source.with_suffix(".runpack")

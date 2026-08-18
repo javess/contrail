@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -553,6 +554,33 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
         "No entity, structural, error, concurrency, duration, or operation-count changes."
         in compared.stdout
     )
+
+
+def test_rundiff_record_normalizes_child_signal_exit_status(tmp_path: Path) -> None:
+    output = tmp_path / "signaled.runpack"
+
+    recorded = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "record",
+            "signaled",
+            "--output",
+            str(output),
+            "--",
+            sys.executable,
+            "-c",
+            "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert recorded.returncode == 128 + signal.SIGTERM
+    with RunpackReader(output) as reader:
+        assert reader.execution().exit_code == -signal.SIGTERM
 
 
 def test_rundiff_alias_resolution_ignores_same_named_directories(tmp_path: Path) -> None:

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import signal
 import subprocess
 import sys
 from pathlib import Path
+
+from runtime_tools.storage import RunpackReader
 
 
 def test_runtime_cli_records_then_inspects_json(tmp_path: Path) -> None:
@@ -62,6 +65,34 @@ def test_runtime_cli_records_then_inspects_json(tmp_path: Path) -> None:
         "measurements": 6,
         "attachments": 2,
     }
+
+
+def test_runtime_cli_normalizes_child_signals_without_losing_artifact_evidence(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "signaled.runpack"
+
+    recorded = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "record",
+            "--output",
+            str(output),
+            "--",
+            sys.executable,
+            "-c",
+            "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert recorded.returncode == 128 + signal.SIGTERM
+    with RunpackReader(output) as reader:
+        assert reader.execution().exit_code == -signal.SIGTERM
 
 
 def test_runtime_cli_imports_otlp_json_and_prints_causal_tree(tmp_path: Path) -> None:
