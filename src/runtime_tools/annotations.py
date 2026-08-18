@@ -169,8 +169,11 @@ def load_annotations(
     for record in links:
         source_id = _string(record, "source_id")
         target_id = _string(record, "target_id")
-        if source_id in known_ids and target_id in known_ids:
-            edges.append(CausalEdge(source_id, target_id, _string(record, "relation"), 1.0, {}))
+        relation = _string(record, "relation")
+        if source_id not in known_ids or target_id not in known_ids:
+            raise AnnotationError(f"annotation link {source_id} -> {target_id} is unresolved")
+        edges.append(CausalEdge(source_id, target_id, relation, 1.0, {}))
+    _validate_parent_hierarchy(edges)
     edge_identities: set[tuple[str, str, str]] = set()
     for edge in edges:
         identity = (edge.source_event_id, edge.target_event_id, edge.kind)
@@ -188,5 +191,26 @@ def _append_parent_edge(
     known_ids: set[str],
 ) -> None:
     parent_id = record.get("parent_id")
-    if isinstance(parent_id, str) and parent_id in known_ids:
-        edges.append(CausalEdge(parent_id, event_id, "parent", 1.0, {"source": "annotation"}))
+    if parent_id is None:
+        return
+    if not isinstance(parent_id, str) or not parent_id:
+        raise AnnotationError("annotation parent_id must be a non-empty string or null")
+    if parent_id not in known_ids:
+        raise AnnotationError(f"annotation parent event is unresolved: {parent_id}")
+    edges.append(CausalEdge(parent_id, event_id, "parent", 1.0, {"source": "annotation"}))
+
+
+def _validate_parent_hierarchy(edges: list[CausalEdge]) -> None:
+    parent_by_child = {
+        edge.target_event_id: edge.source_event_id for edge in edges if edge.kind == "parent"
+    }
+    complete: set[str] = set()
+    for child in parent_by_child:
+        trail: set[str] = set()
+        current = child
+        while current in parent_by_child and current not in complete:
+            if current in trail:
+                raise AnnotationError("annotation parent relationships contain a cycle")
+            trail.add(current)
+            current = parent_by_child[current]
+        complete.update(trail)

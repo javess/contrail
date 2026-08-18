@@ -349,6 +349,77 @@ def test_annotation_loader_rejects_conflicting_lifecycle_records(
         load_annotations(annotations, entity_id="process")
 
 
+@pytest.mark.parametrize(
+    ("records", "message"),
+    (
+        (
+            (
+                {
+                    "record": "event_instant",
+                    "id": "child",
+                    "kind": "event",
+                    "name": "child",
+                    "timestamp_ns": 1,
+                    "parent_id": "missing",
+                },
+            ),
+            "parent event is unresolved: missing",
+        ),
+        (
+            (
+                {
+                    "record": "event_instant",
+                    "id": "event",
+                    "kind": "event",
+                    "name": "event",
+                    "timestamp_ns": 1,
+                },
+                {
+                    "record": "link",
+                    "source_id": "event",
+                    "target_id": "missing",
+                    "relation": "causes",
+                },
+            ),
+            "link event -> missing is unresolved",
+        ),
+        (
+            (
+                {
+                    "record": "event_instant",
+                    "id": "first",
+                    "kind": "event",
+                    "name": "first",
+                    "timestamp_ns": 1,
+                    "parent_id": "second",
+                },
+                {
+                    "record": "event_instant",
+                    "id": "second",
+                    "kind": "event",
+                    "name": "second",
+                    "timestamp_ns": 2,
+                    "parent_id": "first",
+                },
+            ),
+            "parent relationships contain a cycle",
+        ),
+    ),
+)
+def test_annotation_loader_rejects_incomplete_or_cyclic_causality(
+    tmp_path: Path,
+    records: tuple[dict[str, object], ...],
+    message: str,
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    annotations.write_text(
+        "".join(f"{json.dumps(record)}\n" for record in records), encoding="utf-8"
+    )
+
+    with pytest.raises(AnnotationError, match=message):
+        load_annotations(annotations, entity_id="process")
+
+
 def test_annotation_loader_rejects_oversized_streams_before_decoding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
