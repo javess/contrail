@@ -30,7 +30,8 @@ Supported assertions are intentionally mechanical:
   baseline and present in the candidate. It remains unverifiable when either
   OTLP import reports unresolved parent or link references;
 - `max_operation_count` aggregates a semantic operation name across entities
-  and constrains it relative to the baseline.
+  and constrains it relative to the baseline. If neither run contains the named
+  operation, the claim is unverifiable rather than an automatic zero-count pass.
 
 An assertion with missing required evidence is `UNVERIFIABLE` and makes the
 verification fail. Invalid or unsupported contracts are errors rather than

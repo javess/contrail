@@ -277,6 +277,32 @@ assertions:
     assert report.results[0].observed == "annotation evidence incomplete"
 
 
+def test_proofline_does_not_treat_an_unobserved_operation_as_zero(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "missing-operation.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=False)
+    contract.write_text(
+        """
+name: missing-operation
+assertions:
+  - type: max_operation_count
+    operation: db.delete
+    relative_to: baseline
+    factor: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = verify_contracts(contract, baseline, candidate)
+
+    assert report.results[0].status == "unverifiable"
+    assert report.results[0].observed == "operation db.delete not observed in either run"
+
+
 def test_proofline_reports_incomplete_output_identity_as_unverifiable(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"

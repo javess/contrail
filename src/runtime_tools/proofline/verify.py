@@ -227,6 +227,14 @@ def _evaluate(
             )
         before = _operation_totals(baseline, operation)
         after = _operation_totals(candidate, operation)
+        if before == 0 and after == 0:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"candidate {operation} count <= baseline x {factor:g}",
+                f"operation {operation} not observed in either run",
+            )
         limit = before * factor
         return _result(
             contract,
