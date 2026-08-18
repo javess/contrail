@@ -212,6 +212,44 @@ def test_kubernetes_completion_only_evidence_expands_execution_bounds(tmp_path: 
     assert event.finished_at_ns == 20
 
 
+def test_kubernetes_snapshot_keeps_delimited_entity_identities_distinct(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "delimited-identities.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 10, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("first", "pod"),
+                        "spec": {"containers": [{"name": "worker"}]},
+                    },
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("second", "pod:container:worker"),
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_kubernetes_snapshot(base, snapshot, output)
+
+    with RunpackReader(output) as reader:
+        entity_ids = {entity.id for entity in reader.entities()}
+    assert {
+        "k8s:pod:pod",
+        "k8s:pod:pod:container:worker",
+        "k8s:pod:pod%3Acontainer%3Aworker",
+    } <= entity_ids
+
+
 def test_kubernetes_snapshot_preserves_deployment_owner_chains(tmp_path: Path) -> None:
     base = tmp_path / "base.runpack"
     snapshot = tmp_path / "deployment.json"

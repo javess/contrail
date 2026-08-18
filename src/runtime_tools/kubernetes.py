@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Never
+from urllib.parse import quote
 
 from runtime_tools.enrichment import EnrichmentError, enrich_copy
 from runtime_tools.json_support import reject_duplicate_object
@@ -104,6 +105,18 @@ def _uid(item: dict[str, object]) -> str:
     if not isinstance(value, str):
         raise KubernetesImportError("metadata.uid must be a string")
     return _validate_utf8(value, "metadata.uid")
+
+
+def _identity_component(value: str) -> str:
+    return quote(value, safe="")
+
+
+def _workload_entity_id(kind: str, uid: str) -> str:
+    return f"k8s:{kind.lower()}:{_identity_component(uid)}"
+
+
+def _lifecycle_event_id(uid: str) -> str:
+    return f"k8s:{_identity_component(uid)}:lifecycle"
 
 
 def _timestamp(value: object) -> int | None:
@@ -358,7 +371,7 @@ def import_kubernetes_snapshot(
             uid = _uid(item)
             if uid in entity_by_uid:
                 raise KubernetesImportError(f"duplicate Kubernetes object uid: {uid}")
-            entity_by_uid[uid] = f"k8s:{kind.lower()}:{uid}"
+            entity_by_uid[uid] = _workload_entity_id(kind, uid)
             if kind == "Node":
                 node_name = _name(item)
                 if node_name in node_uid_by_name:
@@ -389,7 +402,7 @@ def import_kubernetes_snapshot(
         if kind not in _WORKLOAD_KINDS:
             continue
         uid = _uid(item)
-        entity_id = f"k8s:{kind.lower()}:{uid}"
+        entity_id = _workload_entity_id(kind, uid)
         parent_uid = owner_by_uid[uid]
         attributes = _attributes(item)
         status = _object(item.get("status", {}), f"{kind} status")
@@ -427,7 +440,7 @@ def import_kubernetes_snapshot(
         finished = (
             _pod_finish(status) if kind == "Pod" else _timestamp(status.get("completionTime"))
         )
-        event_id = f"k8s:{uid}:lifecycle"
+        event_id = _lifecycle_event_id(uid)
         lifecycle_by_uid[uid] = event_id
         events.append(
             Event(
@@ -447,7 +460,7 @@ def import_kubernetes_snapshot(
         if kind == "Pod" and node_uid is not None:
             edges.append(
                 CausalEdge(
-                    f"k8s:{node_uid}:lifecycle",
+                    _lifecycle_event_id(node_uid),
                     event_id,
                     "hosts",
                     1.0,
@@ -495,7 +508,7 @@ def import_kubernetes_snapshot(
                     raise KubernetesImportError(f"duplicate container name: {name}")
                 container_names.add(name)
                 resources = _object(container.get("resources", {}), "container resources")
-                container_entity_id = f"{pod_entity}:container:{name}"
+                container_entity_id = f"{pod_entity}:container:{_identity_component(name)}"
                 container_status = statuses.get(name, {})
                 entities.append(
                     Entity(
@@ -563,7 +576,7 @@ def import_kubernetes_snapshot(
         involved_entity_id = entity_by_uid.get(involved_uid)
         if involved_entity_id is None:
             continue
-        event_id = f"k8s:event:{event_uid}"
+        event_id = f"k8s:event:{_identity_component(event_uid)}"
         event_timestamp = _timestamp(item.get("eventTime"))
         if event_timestamp is None:
             event_timestamp = _timestamp(_metadata(item).get("creationTimestamp"))
