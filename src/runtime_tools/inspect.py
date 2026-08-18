@@ -185,7 +185,13 @@ def _event_duration(event: Event) -> str:
 
 
 def _as_int(value: str | int | None) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+    return (
+        value
+        if isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= _MAX_COMPLETENESS_COUNT
+        else None
+    )
 
 
 def _as_sha256(value: str | int | None) -> str | None:

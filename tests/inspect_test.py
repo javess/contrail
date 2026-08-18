@@ -179,7 +179,7 @@ def test_inspection_keeps_invalid_summary_evidence_unknown(tmp_path: Path) -> No
                 {
                     "output": {
                         "stdout": {"bytes": True, "sha256": ""},
-                        "stderr": {"bytes": -1, "sha256": "identity"},
+                        "stderr": {"bytes": 1 << 63, "sha256": "a" * 64},
                     }
                 },
             )
@@ -202,7 +202,7 @@ def test_inspection_keeps_invalid_summary_evidence_unknown(tmp_path: Path) -> No
     assert summary.stdout_bytes is None
     assert summary.stdout_sha256 is None
     assert summary.stderr_bytes is None
-    assert summary.stderr_sha256 is None
+    assert summary.stderr_sha256 == "a" * 64
 
 
 def test_inspection_rejects_out_of_range_otlp_completeness_counts(tmp_path: Path) -> None:
