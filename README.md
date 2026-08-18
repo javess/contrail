@@ -63,8 +63,9 @@ uv run runtime query demo.runpack \
 
 See [querying runpacks](docs/querying.md) for schema and output details.
 
-OpenTelemetry trace exports in OTLP/JSON, bounded to 64 MiB per input, can be
-normalized into the same artifact and inspected as a causal tree:
+OpenTelemetry trace exports in OTLP/JSON, bounded to 64 MiB and 1,000,000 spans
+per input, can be normalized into the same artifact and inspected as a causal
+tree. Span links are independently limited to 1,000,000:
 
 ```bash
 uv run runtime import-otel trace.json --name checkout
@@ -72,7 +73,8 @@ uv run runtime inspect trace.runpack --tree
 ```
 
 Enrich that execution with OTLP/JSON log records without modifying the trace
-artifact:
+artifact. Log inputs have the same 64 MiB byte limit and a 1,000,000-record
+limit:
 
 ```bash
 uv run runtime enrich-otel-logs trace.runpack logs.json \
@@ -106,15 +108,18 @@ facts above it:
 uv run runtime serve baseline.runpack --compare candidate.runpack
 ```
 
-Infrastructure JSON evidence, bounded to 64 MiB per snapshot or response, can
-enrich a captured execution without modifying the original artifact:
+Infrastructure JSON evidence can enrich a captured execution without modifying
+the original artifact. Inputs are limited to 64 MiB; Kubernetes snapshots also
+allow at most 200,000 API items and 1,000,000 containers, while Prometheus
+responses allow at most 1,000,000 samples:
 
 ```bash
 uv run runtime enrich-kubernetes run.runpack snapshot.json --output run-k8s.runpack
 uv run runtime enrich-prometheus run-k8s.runpack metrics.json --output run-full.runpack
 ```
 
-Proofline evaluates explicit behavioral contracts without an LLM:
+Proofline evaluates explicit behavioral contracts without an LLM. Contract
+files are limited to 1 MiB and 1,000 assertions:
 
 ```bash
 uv run proofline verify contracts.yaml \
@@ -147,6 +152,7 @@ initial fixed-environment tradeoff.
 
 Domain work that cannot be inferred from process or OTel evidence can use the
 small annotation API. Outside `runtime record` these calls are harmless no-ops.
+Each captured annotation stream is limited to 64 MiB and 200,000 JSONL records.
 
 ```python
 from runtime_tools import runtime

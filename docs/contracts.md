@@ -3,6 +3,10 @@
 Proofline evaluates explicit YAML claims over existing baseline and candidate
 runpacks. It does not generate claims or use an LLM as an oracle.
 
+Contract files are limited to 1 MiB and 1,000 assertions across all contracts
+in the file. Duplicate keys, YAML aliases, unknown fields, unsupported
+assertions, and non-finite thresholds are rejected before runpacks are loaded.
+
 ```yaml
 name: persistence-regression
 assertions:
