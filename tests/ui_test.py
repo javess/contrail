@@ -114,6 +114,21 @@ def test_timeline_derives_an_extent_for_open_executions(tmp_path: Path) -> None:
     assert summary["wall_time_seconds"] is None
 
 
+def test_timeline_preserves_a_zero_duration_extent(tmp_path: Path) -> None:
+    runpack = tmp_path / "instant.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("instant", "instant", 100, 100, (), ".", 0, None, {}))
+        writer.add_event(Event("instant", "event", "instant", None, 100, 100, "test", None, 0, {}))
+
+    payload = build_timeline_payload(runpack)
+
+    runs = payload["runs"]
+    assert isinstance(runs, list)
+    run = runs[0]
+    assert isinstance(run, dict)
+    assert run["timeline_duration_ns"] == 0
+
+
 def test_local_ui_serves_packaged_assets_and_read_only_data(tmp_path: Path) -> None:
     runpack = tmp_path / "run.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="served")
@@ -197,6 +212,7 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "Untimed evidence" in javascript
     assert "event.start_offset_ns != null" in javascript
     assert "run.timeline_duration_ns" in javascript
+    assert "const scaleNs = timelineDurationNs > 0 ? timelineDurationNs : 1" in javascript
     assert "Causal links" in javascript
     assert "Clock domain" in javascript
     assert "Resource measurements" in javascript

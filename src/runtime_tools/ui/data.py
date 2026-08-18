@@ -72,7 +72,7 @@ def _timeline_duration_ns(
             known_ends.append(timestamp - execution_start_ns)
     if execution_finish_ns is not None:
         known_ends.append(execution_finish_ns - execution_start_ns)
-    return max(1, *known_ends)
+    return max(0, *known_ends)
 
 
 def _run_value(

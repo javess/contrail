@@ -109,7 +109,8 @@ function renderFilters() {
 
 function renderTimeline() {
   const run = currentRun();
-  const totalNs = run.timeline_duration_ns;
+  const timelineDurationNs = run.timeline_duration_ns;
+  const scaleNs = timelineDurationNs > 0 ? timelineDurationNs : 1;
   const entities = new Map(run.entities.map(entity => [entity.id, entity]));
   const visible = run.events.filter(event => (!state.entity || event.entity_id === state.entity) && (!state.kind || event.kind === state.kind));
   const timed = visible.filter(event => event.start_offset_ns != null);
@@ -125,8 +126,8 @@ function renderTimeline() {
   const lanes = [...grouped].map(([entityId, events]) => {
     const entity = entities.get(entityId) || { name: "Unowned", kind: "unknown" };
     const bars = events.map(event => {
-      const left = Math.max(0, (event.start_offset_ns || 0) / totalNs * 100);
-      const barWidth = Math.max(.15, (event.duration_ns || 0) / totalNs * 100);
+      const left = Math.max(0, (event.start_offset_ns || 0) / scaleNs * 100);
+      const barWidth = Math.max(.15, (event.duration_ns || 0) / scaleNs * 100);
       const criticalClass = criticalIds.has(event.id) ? " critical" : "";
       return `<button class="event${criticalClass}" data-id="${escapeHtml(event.id)}" data-kind="${escapeHtml(event.kind)}" style="left:${left}%;width:${barWidth}%" title="${escapeHtml(event.name)}">${escapeHtml(event.name)}</button>`;
     }).join("");
@@ -134,7 +135,7 @@ function renderTimeline() {
   }).join("");
   const untimedLane = untimed.length ? `<div class="lane untimed-lane"><div class="lane-label">Untimed evidence<small>${untimed.length} events · no fabricated position</small></div><div class="untimed-track">${untimed.map(event => `<button class="untimed-event" data-id="${escapeHtml(event.id)}" data-kind="${escapeHtml(event.kind)}">${escapeHtml(event.name)}</button>`).join("")}</div></div>` : "";
   document.querySelector("#timeline").innerHTML = `<div class="timeline-inner" style="width:${width}%">${lanes || (!untimedLane ? '<div class="lane-label">No matching events</div>' : '')}${untimedLane}</div>`;
-  const timelineSeconds = nsToSeconds(totalNs);
+  const timelineSeconds = nsToSeconds(timelineDurationNs);
   document.querySelector("#axis").innerHTML = `<span>0</span><span>${fmtDuration(timelineSeconds / 2)}</span><span>${fmtDuration(timelineSeconds)}</span>`;
   document.querySelectorAll(".event, .untimed-event").forEach(button => button.addEventListener("click", () => showDetail(visible.find(event => event.id === button.dataset.id), entities)));
 }
