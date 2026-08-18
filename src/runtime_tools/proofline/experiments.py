@@ -65,8 +65,14 @@ def _repo_root(cwd: Path) -> Path:
 
 
 def _validate_ref(ref: str) -> None:
-    if not ref or ref.startswith("-"):
+    if not isinstance(ref, str) or not ref or ref.startswith("-"):
         raise ExperimentError("Git refs must be non-empty and cannot start with '-'")
+    if "\0" in ref:
+        raise ExperimentError("Git refs cannot contain NUL bytes")
+    try:
+        ref.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ExperimentError("Git refs must be valid UTF-8") from exc
 
 
 def _resolve_commit(repo: Path, ref: str) -> str:

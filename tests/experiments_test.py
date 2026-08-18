@@ -135,6 +135,29 @@ def test_proofline_rejects_option_like_git_refs_before_creating_outputs(
     assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
 
 
+@pytest.mark.parametrize(
+    ("ref", "message"),
+    (("bad\0ref", "cannot contain NUL bytes"), ("bad-\udcff", "must be valid UTF-8")),
+)
+def test_proofline_rejects_unrepresentable_git_refs_before_loading_contracts(
+    tmp_path: Path, ref: str, message: str
+) -> None:
+    output = tmp_path / "results"
+
+    with pytest.raises(ExperimentError, match=message):
+        run_experiment(
+            tmp_path / "missing-contract.yaml",
+            baseline_ref=ref,
+            candidate_ref="main",
+            workload=Path("workload.py"),
+            workload_args=(),
+            output_dir=output,
+            cwd=tmp_path,
+        )
+
+    assert not output.exists()
+
+
 def test_proofline_validates_contracts_before_creating_worktrees_or_outputs(
     tmp_path: Path,
 ) -> None:
