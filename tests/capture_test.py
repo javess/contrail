@@ -420,6 +420,31 @@ def test_writer_reports_identity_collisions_as_runpack_errors(tmp_path: Path) ->
         assert reader.entities() == ()
 
 
+def test_writer_rejects_self_parented_entities(tmp_path: Path) -> None:
+    output = tmp_path / "self-parent.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        with pytest.raises(RunpackError, match="entity cannot be its own parent"):
+            writer.add_entity(Entity("worker", "worker", "worker", "worker", {}))
+
+    with RunpackReader(output) as reader:
+        assert reader.entities() == ()
+
+
+def test_reader_rejects_cyclic_entity_parent_relationships(tmp_path: Path) -> None:
+    output = tmp_path / "entity-cycle.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("first", "worker", "first", None, {}))
+        writer.add_entity(Entity("second", "worker", "second", "first", {}))
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE entities SET parent_entity_id = 'second' WHERE id = 'first'")
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="entity parent relationships contain a cycle"):
+            reader.entities()
+
+
 def test_writer_refuses_to_modify_an_existing_file(tmp_path: Path) -> None:
     output = tmp_path / "existing.runpack"
     output.write_bytes(b"preserve this")

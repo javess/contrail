@@ -261,6 +261,40 @@ def _execution_interval(started_at_ns: object, finished_at_ns: object) -> tuple[
     return started, finished
 
 
+def _entity_values(entity: Entity) -> tuple[object, ...]:
+    entity_id = _text_value(entity.id, "entity id")
+    parent_id = _text_value(entity.parent_entity_id, "parent entity id", optional=True)
+    if entity_id == parent_id:
+        raise RunpackError("entity cannot be its own parent")
+    return (
+        entity_id,
+        _text_value(entity.kind, "entity kind"),
+        _text_value(entity.name, "entity name"),
+        parent_id,
+        _json(entity.attributes),
+    )
+
+
+def _validate_entity_hierarchy(entities: tuple[Entity, ...]) -> None:
+    parent_by_child = {
+        entity.id: entity.parent_entity_id
+        for entity in entities
+        if entity.parent_entity_id is not None
+    }
+    complete: set[str] = set()
+    for entity_id in parent_by_child:
+        trail: set[str] = set()
+        current = entity_id
+        while current in parent_by_child and current not in complete:
+            if current in trail:
+                raise RunpackError("entity parent relationships contain a cycle")
+            trail.add(current)
+            parent = parent_by_child[current]
+            assert parent is not None
+            current = parent
+        complete.update(trail)
+
+
 def _event_values(event: Event) -> tuple[object, ...]:
     started = _integer_value(event.started_at_ns, "event start timestamp", optional=True)
     finished = _integer_value(event.finished_at_ns, "event finish timestamp", optional=True)
@@ -474,13 +508,7 @@ class RunpackWriter:
             INSERT INTO entities(id, kind, name, parent_entity_id, attributes_json)
             VALUES (?, ?, ?, ?, ?)
             """,
-                (
-                    _text_value(entity.id, "entity id"),
-                    _text_value(entity.kind, "entity kind"),
-                    _text_value(entity.name, "entity name"),
-                    _text_value(entity.parent_entity_id, "parent entity id", optional=True),
-                    _json(entity.attributes),
-                ),
+                _entity_values(entity),
             )
             self._connection.commit()
 
@@ -491,16 +519,7 @@ class RunpackWriter:
                 INSERT INTO entities(id, kind, name, parent_entity_id, attributes_json)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (
-                    (
-                        _text_value(entity.id, "entity id"),
-                        _text_value(entity.kind, "entity kind"),
-                        _text_value(entity.name, "entity name"),
-                        _text_value(entity.parent_entity_id, "parent entity id", optional=True),
-                        _json(entity.attributes),
-                    )
-                    for entity in entities
-                ),
+                (_entity_values(entity) for entity in entities),
             )
 
     def add_event(self, event: Event) -> None:
@@ -748,7 +767,7 @@ class RunpackReader:
 
     def entities(self) -> tuple[Entity, ...]:
         rows = self._execute("SELECT * FROM entities ORDER BY id").fetchall()
-        return tuple(
+        entities = tuple(
             Entity(
                 id=_required_text(row["id"], "entity id"),
                 kind=_required_text(row["kind"], "entity kind"),
@@ -760,6 +779,8 @@ class RunpackReader:
             )
             for row in rows
         )
+        _validate_entity_hierarchy(entities)
+        return entities
 
     def events(self) -> tuple[Event, ...]:
         rows = self._execute("SELECT * FROM events ORDER BY started_at_ns, sequence, id").fetchall()
