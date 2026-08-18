@@ -30,7 +30,8 @@ because their volume and query patterns differ.
 An **attachment** is optional opaque evidence such as a bounded log stream or
 raw adapter input. It carries a kind, name, media type, bytes, and JSON-safe
 attributes. Attachments are never required for normalized analysis and are not
-rendered by default because they may contain secrets.
+rendered by default because they may contain secrets. Content is limited to 64
+MiB per attachment and 256 MiB in aggregate per runpack.
 
 Attributes are JSON objects at adapter boundaries. Values must be JSON-safe;
 query-prominent concepts graduate to typed columns only after demonstrated use.

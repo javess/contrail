@@ -100,3 +100,8 @@ never plaintext: `CI`, `CUDA_VISIBLE_DEVICES`, locale/timezone settings,
 thread-pool sizing variables, and `PYTHONHASHSEED`. The capture tool's Python
 implementation and version are stored separately as non-secret controller
 metadata; they are not presented as the workload runtime.
+
+Text reports escape terminal control characters in artifact-supplied names,
+attributes, commands, and paths. Machine-readable JSON preserves the normalized
+values. Attachments remain opaque and are limited to 64 MiB each and 256 MiB in
+aggregate per runpack.

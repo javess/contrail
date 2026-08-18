@@ -28,12 +28,17 @@ Supported assertions are intentionally mechanical:
   evidence with a percentage allowance;
 - `forbid_new_dependency` fails only when the named edge was absent from the
   baseline and present in the candidate. It remains unverifiable when either
-  OTLP import reports unresolved parent or link references;
+  OTLP import reports unresolved parent or link references, or exporter-dropped
+  attributes make semantic dependency matching incomplete;
 - `max_operation_count` aggregates a semantic operation name across entities
   and constrains it relative to the baseline. If neither run contains the named
   operation, the claim is unverifiable rather than an automatic zero-count pass.
 - `max_operation_error_count` applies the same baseline-relative limit to
   explicit operation failures while allowing an observed zero-failure baseline.
+
+Output equivalence and operation assertions are also unverifiable when an OTLP
+exporter reports dropped attributes. A missing semantic attribute can otherwise
+turn distinct results into apparent matches or hide an operation or failure.
 
 An assertion with missing required evidence is `UNVERIFIABLE` and makes the
 verification fail. Invalid or unsupported contracts are errors rather than
