@@ -63,7 +63,8 @@ wall-clock timestamp is larger. Impossible timestamp orderings can be reported
 as clock-skew evidence without deleting the causal relationship.
 
 BatchScope labels a critical path as observed only when every selected interval
-uses the same known clock domain. Cross-domain paths retain a best-effort
+uses the same known clock domain and the artifact reports complete causal and
+annotation evidence. Cross-domain or incomplete paths retain a best-effort
 duration but are explicitly labelled inferred.
 
 Observed maximum concurrency is calculated only among complete intervals in
