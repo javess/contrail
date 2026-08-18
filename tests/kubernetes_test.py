@@ -173,6 +173,82 @@ def test_kubernetes_snapshot_enriches_and_correlates_otel_runpack(tmp_path: Path
     assert base.is_file()
 
 
+def test_kubernetes_snapshot_preserves_deployment_owner_chains(tmp_path: Path) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "deployment.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 4, 5, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata(
+                            "api-pod",
+                            "pod-uid",
+                            namespace="demo",
+                            creationTimestamp="1970-01-01T00:00:00.000000003Z",
+                            ownerReferences=[
+                                {"uid": "ignored-uid", "kind": "ConfigMap"},
+                                {"uid": "replicaset-uid", "kind": "ReplicaSet", "controller": True},
+                            ],
+                        ),
+                        "spec": {"containers": []},
+                        "status": {"phase": "Running"},
+                    },
+                    {
+                        "kind": "ReplicaSet",
+                        "metadata": _metadata(
+                            "api-7d9f",
+                            "replicaset-uid",
+                            namespace="demo",
+                            creationTimestamp="1970-01-01T00:00:00.000000002Z",
+                            ownerReferences=[
+                                {"uid": "deployment-uid", "kind": "Deployment", "controller": True}
+                            ],
+                        ),
+                        "spec": {"replicas": 2},
+                        "status": {"replicas": 2, "readyReplicas": 1},
+                    },
+                    {
+                        "kind": "Deployment",
+                        "metadata": _metadata(
+                            "api",
+                            "deployment-uid",
+                            namespace="demo",
+                            creationTimestamp="1970-01-01T00:00:00.000000001Z",
+                        ),
+                        "spec": {"replicas": 2},
+                        "status": {"replicas": 2, "readyReplicas": 1, "availableReplicas": 1},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_kubernetes_snapshot(base, snapshot, output)
+
+    assert (result.entity_count, result.event_count, result.edge_count) == (3, 3, 2)
+    with RunpackReader(output) as reader:
+        entities = {entity.name: entity for entity in reader.entities()}
+        events = {event.name: event for event in reader.events()}
+        edges = reader.causal_edges()
+    assert entities["api-7d9f"].parent_entity_id == entities["api"].id
+    assert entities["api-pod"].parent_entity_id == entities["api-7d9f"].id
+    assert entities["api"].attributes["k8s.replicas.desired"] == 2
+    assert entities["api"].attributes["k8s.replicas.ready"] == 1
+    assert entities["api-7d9f"].attributes["k8s.replicas.current"] == 2
+    assert events["api"].kind == "workload.deployment"
+    assert events["api-7d9f"].kind == "workload.replicaset"
+    assert {(edge.source_event_id, edge.target_event_id, edge.kind) for edge in edges} == {
+        ("k8s:deployment-uid:lifecycle", "k8s:replicaset-uid:lifecycle", "owns"),
+        ("k8s:replicaset-uid:lifecycle", "k8s:pod-uid:lifecycle", "owns"),
+    }
+
+
 def test_kubernetes_snapshot_rejects_timezone_ambiguous_timestamps(tmp_path: Path) -> None:
     trace = tmp_path / "trace.json"
     base = tmp_path / "base.runpack"

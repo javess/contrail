@@ -34,6 +34,7 @@ _RFC3339_WITHOUT_ZONE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MIN_RUNPACK_TIMESTAMP_NS = -(1 << 63)
 _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
+_WORKLOAD_KINDS = {"Node", "Deployment", "ReplicaSet", "Job", "Pod"}
 
 
 def _object(value: object, label: str) -> dict[str, object]:
@@ -140,10 +141,26 @@ def _owner_uid(item: dict[str, object]) -> str | None:
     owners = _metadata(item).get("ownerReferences", [])
     if not isinstance(owners, list):
         return None
+    fallback: str | None = None
     for owner in owners:
         if isinstance(owner, dict) and owner.get("uid"):
-            return str(owner["uid"])
-    return None
+            uid = str(owner["uid"])
+            if owner.get("controller") is True:
+                return uid
+            if fallback is None:
+                fallback = uid
+    return fallback
+
+
+def _replica_attributes(item: dict[str, object], status: dict[str, object]) -> dict[str, JsonValue]:
+    spec = _object(item.get("spec", {}), f"{item.get('kind', 'workload')} spec")
+    fields = (
+        ("k8s.replicas.desired", spec.get("replicas")),
+        ("k8s.replicas.current", status.get("replicas")),
+        ("k8s.replicas.ready", status.get("readyReplicas")),
+        ("k8s.replicas.available", status.get("availableReplicas")),
+    )
+    return {name: _integer(value, name) for name, value in fields if value is not None}
 
 
 def _pod_finish(status: dict[str, object]) -> int | None:
@@ -236,7 +253,7 @@ def import_kubernetes_snapshot(
 
     for item in items:
         kind = str(item.get("kind", ""))
-        if kind in {"Node", "Job", "Pod"}:
+        if kind in _WORKLOAD_KINDS:
             uid = _uid(item)
             entity_by_uid[uid] = f"k8s:{kind.lower()}:{uid}"
             if kind == "Node":
@@ -244,7 +261,7 @@ def import_kubernetes_snapshot(
 
     for item in items:
         kind = str(item.get("kind", ""))
-        if kind not in {"Node", "Job", "Pod"}:
+        if kind not in _WORKLOAD_KINDS:
             continue
         uid = _uid(item)
         entity_id = f"k8s:{kind.lower()}:{uid}"
@@ -265,6 +282,8 @@ def import_kubernetes_snapshot(
                     "k8s.pod.restart_count": restart_count,
                 }
             )
+        if kind in {"Deployment", "ReplicaSet"}:
+            attributes.update(_replica_attributes(item, status))
         entities.append(
             Entity(
                 entity_id,
@@ -302,6 +321,23 @@ def import_kubernetes_snapshot(
                     f"k8s:{node_uid}:lifecycle",
                     event_id,
                     "hosts",
+                    1.0,
+                    {"source": "kubernetes"},
+                )
+            )
+
+    for item in items:
+        kind = str(item.get("kind", ""))
+        if kind not in _WORKLOAD_KINDS:
+            continue
+        uid = _uid(item)
+        owner_uid = _owner_uid(item)
+        if owner_uid in lifecycle_by_uid:
+            edges.append(
+                CausalEdge(
+                    lifecycle_by_uid[owner_uid],
+                    lifecycle_by_uid[uid],
+                    "owns",
                     1.0,
                     {"source": "kubernetes"},
                 )
@@ -370,18 +406,6 @@ def import_kubernetes_snapshot(
                         {"source": "kubernetes"},
                     )
                 )
-        owner_uid = _owner_uid(item)
-        if owner_uid in lifecycle_by_uid:
-            edges.append(
-                CausalEdge(
-                    lifecycle_by_uid[owner_uid],
-                    lifecycle_by_uid[pod_uid],
-                    "owns",
-                    1.0,
-                    {"source": "kubernetes"},
-                )
-            )
-
     for item in items:
         if str(item.get("kind", "")) != "Event":
             continue
@@ -414,7 +438,14 @@ def import_kubernetes_snapshot(
 
     correlations = _correlations(runpack, lifecycle_by_uid)
     edges.extend(correlations)
-    entity_order = {"node": 0, "job": 0, "pod": 1, "container": 2}
+    entity_order = {
+        "node": 0,
+        "deployment": 0,
+        "job": 0,
+        "replicaset": 1,
+        "pod": 2,
+        "container": 3,
+    }
     entities.sort(key=lambda entity: (entity_order.get(entity.kind, 3), entity.id))
 
     def append(writer: RunpackWriter) -> KubernetesImportResult:
