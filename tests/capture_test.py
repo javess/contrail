@@ -8,6 +8,7 @@ import sys
 import time
 from collections.abc import Buffer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -61,6 +62,30 @@ def test_record_process_preserves_nonzero_exit_as_execution_outcome(tmp_path: Pa
 
     assert exit_code == 7
     assert inspect_runpack(output).exit_code == 7
+
+
+def test_record_process_anchors_execution_finish_to_monotonic_elapsed_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "monotonic.runpack"
+    wall_times = iter((100, 50))
+    monotonic_times = iter((10, 20))
+    monkeypatch.setattr(
+        capture,
+        "time",
+        SimpleNamespace(
+            time_ns=lambda: next(wall_times),
+            perf_counter_ns=lambda: next(monotonic_times),
+        ),
+    )
+
+    record_process((sys.executable, "-c", "pass"), output, name="monotonic")
+
+    summary = inspect_runpack(output)
+    assert summary.started_at_ns == 100
+    assert summary.finished_at_ns == 110
+    assert summary.wall_time_seconds == 10 / 1_000_000_000
 
 
 def test_record_process_can_store_bounded_output_explicitly(tmp_path: Path) -> None:

@@ -285,8 +285,9 @@ def record_process(
                 stdout_digest = stdout_result.result()
                 stderr_digest = stderr_result.result()
 
-            finished_at_ns = time.time_ns()
-            wall_seconds = (time.perf_counter_ns() - started_monotonic_ns) / 1_000_000_000
+            elapsed_ns = time.perf_counter_ns() - started_monotonic_ns
+            finished_at_ns = started_at_ns + elapsed_ns
+            wall_seconds = elapsed_ns / 1_000_000_000
             metadata = {
                 **metadata,
                 "output": {

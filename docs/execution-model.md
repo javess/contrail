@@ -42,6 +42,10 @@ clock domain and an uncertainty in nanoseconds. Raw source timestamps may be
 retained in attributes. A missing timestamp remains null rather than being
 fabricated.
 
+Process capture records the UTC start once and derives the finish from monotonic
+elapsed time. Host clock adjustments during a command therefore cannot make its
+execution interval run backward or disagree with its wall-time measurement.
+
 Ordering uses the strongest available evidence:
 
 1. explicit causal edges;
