@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -243,3 +244,34 @@ def test_proofline_normalizes_numeric_threshold_overflow(tmp_path: Path) -> None
 
     with pytest.raises(ContractError, match="percent exceeds the numeric range"):
         verify_contracts(contract, baseline, candidate)
+
+
+def test_proofline_keeps_structural_claims_unverifiable_after_annotation_failure(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "operation.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=True)
+    with sqlite3.connect(candidate) as connection:
+        row = connection.execute("SELECT metadata_json FROM executions").fetchone()
+        metadata = json.loads(row[0])
+        metadata["capture"] = {"annotation_error": "invalid annotation JSON on line 1"}
+        connection.execute("UPDATE executions SET metadata_json = ?", (json.dumps(metadata),))
+    contract.write_text(
+        """
+name: incomplete
+assertions:
+  - type: max_operation_count
+    operation: db.write
+    relative_to: baseline
+    factor: 1.2
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = verify_contracts(contract, baseline, candidate)
+
+    assert report.results[0].status == "unverifiable"
+    assert report.results[0].observed == "annotation evidence incomplete"

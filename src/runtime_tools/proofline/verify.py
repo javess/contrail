@@ -148,6 +148,14 @@ def _evaluate(
     if assertion.type == "forbid_new_dependency":
         source = _string(assertion.config, "from", assertion)
         target = _string(assertion.config, "to", assertion)
+        if diff.baseline_annotation_error or diff.candidate_annotation_error:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"no new dependency {source} -> {target}",
+                "annotation evidence incomplete",
+            )
         violation = next(
             (
                 edge
@@ -174,6 +182,14 @@ def _evaluate(
         factor = _number(assertion.config, "factor", assertion)
         if factor < 0:
             raise ContractError("max_operation_count factor cannot be negative")
+        if diff.baseline_annotation_error or diff.candidate_annotation_error:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"candidate {operation} count <= baseline x {factor:g}",
+                "annotation evidence incomplete",
+            )
         before = _operation_totals(baseline, operation)
         after = _operation_totals(candidate, operation)
         limit = before * factor

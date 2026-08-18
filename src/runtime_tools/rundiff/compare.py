@@ -110,6 +110,8 @@ class ExecutionDiff:
     candidate_id: str
     candidate_name: str
     match_level: Literal["aggregate"]
+    baseline_annotation_error: str | None
+    candidate_annotation_error: str | None
     outcome: Outcome
     exit_code_equivalent: bool | None
     output_equivalent: bool | None
@@ -128,6 +130,8 @@ class ExecutionDiff:
             "baseline": {"id": self.baseline_id, "name": self.baseline_name},
             "candidate": {"id": self.candidate_id, "name": self.candidate_name},
             "match_level": self.match_level,
+            "baseline_annotation_error": self.baseline_annotation_error,
+            "candidate_annotation_error": self.candidate_annotation_error,
             "outcome": self.outcome,
             "exit_code_equivalent": self.exit_code_equivalent,
             "output_equivalent": self.output_equivalent,
@@ -282,6 +286,8 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         candidate_id=candidate_summary.id,
         candidate_name=candidate_summary.name,
         match_level="aggregate",
+        baseline_annotation_error=baseline_summary.annotation_error,
+        candidate_annotation_error=candidate_summary.annotation_error,
         outcome=_outcome(exit_equivalent, output_equivalent, stderr_equivalent),
         exit_code_equivalent=exit_equivalent,
         output_equivalent=output_equivalent,

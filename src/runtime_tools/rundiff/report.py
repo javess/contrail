@@ -16,26 +16,41 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         f"baseline:  {diff.baseline_name} ({diff.baseline_id[:8]})",
         f"candidate: {diff.candidate_name} ({diff.candidate_id[:8]})",
         f"matching:  {diff.match_level}",
-        "",
-        "Outcome",
-        f"  {diff.outcome}",
-        f"  exit status: {_equivalence(diff.exit_code_equivalent)}",
-        f"  stdout:      {_equivalence(diff.output_equivalent)}",
-        f"  stderr:      {_equivalence(diff.stderr_equivalent)}",
-        "",
-        "Runtime",
-        f"  {_format_change(diff.wall_time, _duration)}",
-        "",
-        (
-            "Critical path "
-            f"({_certainty(diff.baseline_critical_path_certainty)} → "
-            f"{_certainty(diff.candidate_critical_path_certainty)})"
-        ),
-        f"  {_format_change(diff.critical_path, _duration)}",
-        "",
-        "Peak memory",
-        f"  {_format_change(diff.peak_memory, _bytes)}",
     ]
+    annotation_errors = (
+        ("baseline", diff.baseline_annotation_error),
+        ("candidate", diff.candidate_annotation_error),
+    )
+    if any(error is not None for _, error in annotation_errors):
+        lines.extend(("", "Evidence warnings"))
+        lines.extend(
+            f"  {side}: annotations ignored ({error})"
+            for side, error in annotation_errors
+            if error is not None
+        )
+    lines.extend(
+        (
+            "",
+            "Outcome",
+            f"  {diff.outcome}",
+            f"  exit status: {_equivalence(diff.exit_code_equivalent)}",
+            f"  stdout:      {_equivalence(diff.output_equivalent)}",
+            f"  stderr:      {_equivalence(diff.stderr_equivalent)}",
+            "",
+            "Runtime",
+            f"  {_format_change(diff.wall_time, _duration)}",
+            "",
+            (
+                "Critical path "
+                f"({_certainty(diff.baseline_critical_path_certainty)} → "
+                f"{_certainty(diff.candidate_critical_path_certainty)})"
+            ),
+            f"  {_format_change(diff.critical_path, _duration)}",
+            "",
+            "Peak memory",
+            f"  {_format_change(diff.peak_memory, _bytes)}",
+        )
+    )
     if diff.operation_count_changes:
         lines.extend(("", "Operation count changes"))
         for index, change in enumerate(diff.operation_count_changes, 1):
