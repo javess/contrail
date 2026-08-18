@@ -468,6 +468,22 @@ def _bottlenecks(
     if total is None or total <= 0:
         return ()
     findings: list[Bottleneck] = []
+    failed_scheduling_count = sum(
+        event.kind == "kubernetes.event" and event.name == "FailedScheduling" for event in events
+    )
+    if failed_scheduling_count:
+        noun = "event" if failed_scheduling_count == 1 else "events"
+        verb = "indicates" if failed_scheduling_count == 1 else "indicate"
+        findings.append(
+            Bottleneck(
+                "capacity_starvation",
+                (
+                    f"{failed_scheduling_count} Kubernetes FailedScheduling {noun} "
+                    f"{verb} placement failure"
+                ),
+                0.85,
+            )
+        )
     for event in events:
         duration = _duration_ns(event) / 1_000_000_000
         enclosing_run_durations = tuple(

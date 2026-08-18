@@ -229,6 +229,35 @@ def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> N
     assert {item.classification for item in analysis.bottlenecks} == {"external_dependency"}
 
 
+def test_batchscope_classifies_failed_scheduling_as_capacity_starvation(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "capacity.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("capacity", "capacity", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "pod", "worker", None, {}))
+        writer.add_event(
+            _event(
+                "failed-scheduling",
+                "kubernetes.event",
+                "FailedScheduling",
+                10_000_000,
+                10_000_000,
+                {"message": "0/4 nodes are available: insufficient cpu"},
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    finding = next(
+        item for item in analysis.bottlenecks if item.classification == "capacity_starvation"
+    )
+    assert finding.evidence == "1 Kubernetes FailedScheduling event indicates placement failure"
+    assert finding.confidence == 0.85
+
+
 def test_serialized_stage_uses_enclosing_logical_run_instead_of_process_startup(
     tmp_path: Path,
 ) -> None:
