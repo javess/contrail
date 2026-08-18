@@ -68,7 +68,16 @@ def _labels(value: object) -> dict[str, str]:
     raw = _object(value, "Prometheus metric labels")
     if not all(isinstance(key, str) and isinstance(item, str) for key, item in raw.items()):
         raise PrometheusImportError("Prometheus metric labels must be strings")
-    return {key: item for key, item in raw.items() if isinstance(item, str)}
+    result: dict[str, str] = {}
+    for key, item in raw.items():
+        assert isinstance(key, str) and isinstance(item, str)
+        try:
+            key.encode("utf-8")
+            item.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise PrometheusImportError("Prometheus metric labels must be valid UTF-8") from exc
+        result[key] = item
+    return result
 
 
 def _entity_for(labels: dict[str, str], entities: tuple[Entity, ...]) -> str | None:

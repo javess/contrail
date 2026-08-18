@@ -445,6 +445,37 @@ def test_prometheus_response_rejects_non_string_label_values(tmp_path: Path) -> 
     assert not output.exists()
 
 
+def test_prometheus_response_rejects_invalid_label_unicode_at_the_adapter_boundary(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 0, 2, (), str(tmp_path), 0, None, {}))
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "result": [
+                        {
+                            "metric": {"__name__": "bad-\ud800"},
+                            "value": [1, "3"],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match="labels must be valid UTF-8"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()
+
+
 def test_prometheus_response_rejects_non_standard_json_constants(tmp_path: Path) -> None:
     source = tmp_path / "source.runpack"
     response = tmp_path / "metrics.json"
