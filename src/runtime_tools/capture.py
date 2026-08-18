@@ -37,6 +37,7 @@ class CaptureError(ValueError):
 
 MAX_CAPTURE_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_POST_EXIT_DRAIN_BYTES = 1024 * 1024
+PROCESS_TERMINATION_TIMEOUT_SECONDS = 1.0
 _IDENTIFIED_ENVIRONMENT_VARIABLES = (
     "CI",
     "CUDA_VISIBLE_DEVICES",
@@ -196,6 +197,25 @@ def _wait_with_usage(
     return exit_code, usage
 
 
+def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
+    """Best-effort cleanup for a child when capture itself is interrupted."""
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except OSError:
+        return
+    try:
+        process.kill()
+        process.wait()
+    except OSError:
+        return
+
+
 def _initial_metadata() -> dict[str, JsonValue]:
     environment_identities: dict[str, JsonValue] = {
         name: hashlib.sha256(os.fsencode(os.environ[name])).hexdigest()
@@ -323,6 +343,9 @@ def record_process(
                 )
                 try:
                     exit_code, process_usage = _wait_with_usage(process)
+                except BaseException:
+                    _terminate_and_reap(process)
+                    raise
                 finally:
                     process_done.set()
                 stdout_digest = stdout_result.result()

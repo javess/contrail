@@ -6,6 +6,7 @@ import json
 import os
 import select
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -421,6 +422,36 @@ def test_record_process_normalizes_publication_failures_and_cleans_temporary_fil
 
     assert not output.exists()
     assert not tuple(tmp_path.glob(".unpublished.runpack.tmp-*"))
+
+
+def test_record_process_terminates_child_when_capture_is_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "interrupted.runpack"
+    children: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+
+    def tracked_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        child: subprocess.Popen[bytes] = real_popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    def interrupt_wait(process: subprocess.Popen[bytes]) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess, "Popen", tracked_popen)
+    monkeypatch.setattr(capture, "_wait_with_usage", interrupt_wait)
+
+    with pytest.raises(KeyboardInterrupt):
+        record_process(
+            (sys.executable, "-c", "import time; time.sleep(30)"),
+            output,
+            name="interrupted",
+        )
+
+    assert children[-1].poll() is not None
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".interrupted.runpack.tmp-*"))
 
 
 def test_reader_rejects_unknown_schema_major(tmp_path: Path) -> None:
