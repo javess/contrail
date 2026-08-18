@@ -919,6 +919,49 @@ def test_writer_rejects_invalid_execution_commands_before_writing(tmp_path: Path
             reader.execution()
 
 
+@pytest.mark.parametrize(
+    ("command", "message"),
+    (
+        (("",), "execution command executable must be non-empty"),
+        (("python", "bad\0argument"), "execution command arguments cannot contain NUL bytes"),
+    ),
+)
+def test_writer_rejects_impossible_execution_commands(
+    tmp_path: Path,
+    command: tuple[str, ...],
+    message: str,
+) -> None:
+    output = tmp_path / "impossible-command.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match=message):
+            writer.add_execution(Execution("run", "run", 0, 1, command, str(tmp_path), 0, None, {}))
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
+            reader.execution()
+
+
+@pytest.mark.parametrize(
+    ("command", "message"),
+    (
+        ([""], "execution command executable must be non-empty"),
+        (["python", "bad\0argument"], "execution command arguments cannot contain NUL bytes"),
+    ),
+)
+def test_reader_rejects_impossible_execution_commands(
+    tmp_path: Path,
+    command: list[str],
+    message: str,
+) -> None:
+    output = tmp_path / "impossible-command.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="impossible-command")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE executions SET command_json = ?", (json.dumps(command),))
+
+    with pytest.raises(RunpackError, match=message):
+        inspect_runpack(output)
+
+
 def test_writer_rejects_empty_execution_identity_before_writing(tmp_path: Path) -> None:
     output = tmp_path / "empty-execution-id.runpack"
     with RunpackWriter(output) as writer:

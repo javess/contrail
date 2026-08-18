@@ -204,7 +204,15 @@ def _json(value: JsonValue) -> str:
 def _command_json(value: object) -> str:
     if not isinstance(value, tuple) or not all(isinstance(item, str) for item in value):
         raise RunpackError("execution command must be a tuple of strings")
+    _validate_command_parts(value)
     return _json(list(value))
+
+
+def _validate_command_parts(value: tuple[str, ...] | list[str]) -> None:
+    if value and not value[0]:
+        raise RunpackError("execution command executable must be non-empty")
+    if any("\0" in item for item in value):
+        raise RunpackError("execution command arguments cannot contain NUL bytes")
 
 
 def _validate_json_size(value: str) -> None:
@@ -874,6 +882,7 @@ class RunpackReader:
             raise RunpackError("execution command is invalid JSON") from exc
         if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
             raise RunpackError("execution command is invalid")
+        _validate_command_parts(command)
         _checked_json(command)
         started_at_ns, finished_at_ns = _execution_interval(
             row["started_at_ns"], row["finished_at_ns"]
