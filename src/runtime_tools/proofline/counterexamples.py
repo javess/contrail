@@ -151,6 +151,8 @@ def search_counterexample(
         key = tuple(sorted(values.items()))
         if key in cache:
             return cache[key]
+        if len(cache) >= max_examples:
+            return False
         with tempfile.TemporaryDirectory(prefix="proofline-search-") as directory:
             experiment = run_experiment(
                 contract,

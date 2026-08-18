@@ -240,6 +240,64 @@ def test_counterexample_search_caps_example_count_before_loading_parameters(
         )
 
 
+def test_counterexample_search_hard_limits_distinct_experiment_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(
+        "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 100\n",
+        encoding="utf-8",
+    )
+    calls: list[int] = []
+
+    def experiment(*args: object, **kwargs: object) -> ExperimentResult:
+        workload_args = kwargs["workload_args"]
+        assert isinstance(workload_args, tuple)
+        value = int(str(workload_args[0]).split("=", 1)[1])
+        calls.append(value)
+        status: ClaimStatus = "fail" if value >= 50 else "pass"
+        report = VerificationReport(
+            "baseline",
+            "candidate",
+            (
+                ClaimResult(
+                    "contract",
+                    "output",
+                    "output_equivalent",
+                    status,
+                    "equivalent output",
+                    "different" if status == "fail" else "equivalent",
+                ),
+            ),
+        )
+        output_dir = kwargs["output_dir"]
+        assert isinstance(output_dir, Path)
+        return ExperimentResult(
+            output_dir / "baseline.runpack",
+            output_dir / "candidate.runpack",
+            0,
+            0,
+            report,
+        )
+
+    monkeypatch.setattr(counterexamples, "run_experiment", experiment)
+
+    result = search_counterexample(
+        tmp_path / "contract.yaml",
+        parameters,
+        baseline_ref="main",
+        candidate_ref="candidate",
+        workload=Path("workload.py"),
+        output_dir=tmp_path / "output",
+        max_examples=2,
+    )
+
+    assert result is not None
+    assert result.parameters["value"] >= 50
+    assert len(calls) <= 3  # two search executions plus the preserved reproduction
+
+
 def test_counterexample_search_rejects_existing_output_before_loading_parameters(
     tmp_path: Path,
 ) -> None:
