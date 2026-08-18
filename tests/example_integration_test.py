@@ -44,3 +44,24 @@ def test_local_pipeline_demonstrates_equivalent_output_and_runtime_regression(
     assert statuses["output_equivalent"] == "pass"
     assert statuses["forbid_new_dependency"] == "fail"
     assert statuses["max_operation_count"] == "fail"
+
+
+def test_batch_drain_example_exposes_post_compute_backlog(tmp_path: Path) -> None:
+    example = Path(__file__).parents[1] / "examples" / "local" / "batch_drain.py"
+    runpack = tmp_path / "batch-drain.runpack"
+
+    exit_code = record_process((sys.executable, str(example)), runpack, name="batch-drain")
+    analysis = analyze_runpack(runpack)
+
+    assert exit_code == 0
+    assert [phase.name for phase in analysis.lifecycle] == ["compute", "result-drain"]
+    assert analysis.throughput is not None
+    assert analysis.throughput.completed == 100
+    assert analysis.throughput.total == 100
+    assert analysis.throughput.remaining_at_compute_completion == 20
+    assert analysis.throughput.post_compute_seconds is not None
+    assert analysis.throughput.post_compute_seconds > 0
+    assert any(
+        item.classification == "serialized_stage" and "result-drain" in item.evidence
+        for item in analysis.bottlenecks
+    )

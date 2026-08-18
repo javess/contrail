@@ -172,8 +172,13 @@ BatchScope explains lifecycle, critical path, throughput, and deterministic
 bottleneck evidence for one finite run:
 
 ```bash
-uv run batchscope inspect run.runpack
+uv run runtime record --name batch-drain -- python examples/local/batch_drain.py
+uv run batchscope inspect batch-drain.runpack
 ```
+
+The example finishes parallel compute with 20 items still outstanding, then
+drains them through a concurrency-one stage so the post-compute backlog and
+serialized constraint are visible in the report.
 
 ## End-to-end demonstration
 
