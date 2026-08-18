@@ -122,6 +122,37 @@ def test_counterexample_search_normalizes_temporary_directory_failures(
         counterexamples._temporary_search_directory()
 
 
+def test_counterexample_search_normalizes_repository_resolution_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(
+        "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 1\n",
+        encoding="utf-8",
+    )
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    resolve = Path.resolve
+
+    def fail_repository_resolution(path: Path, strict: bool = False) -> Path:
+        if path == repository:
+            raise OSError("simulated resolution failure")
+        return resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", fail_repository_resolution)
+
+    with pytest.raises(ExperimentError, match="could not resolve working directory"):
+        search_counterexample(
+            tmp_path / "contract.yaml",
+            parameters,
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("workload.py"),
+            output_dir=tmp_path / "output",
+            cwd=repository,
+        )
+
+
 def test_counterexample_search_rejects_duplicate_parameter_keys(tmp_path: Path) -> None:
     parameters = tmp_path / "parameters.yaml"
     parameters.write_text(

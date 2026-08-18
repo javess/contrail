@@ -132,6 +132,15 @@ def _temporary_search_directory() -> tempfile.TemporaryDirectory[str]:
         raise ExperimentError(f"could not create temporary search directory: {exc}") from exc
 
 
+def _search_repository(cwd: Path | None) -> Path:
+    if cwd is not None and not isinstance(cwd, Path):
+        raise ExperimentError("working directory must be a path")
+    try:
+        return (cwd if cwd is not None else Path.cwd()).resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ExperimentError("could not resolve working directory") from exc
+
+
 def search_counterexample(
     contract: Path,
     parameters_path: Path,
@@ -154,7 +163,7 @@ def search_counterexample(
     if not output_dir.parent.is_dir():
         raise ExperimentError(f"output parent directory does not exist: {output_dir.parent}")
     parameters = load_parameters(parameters_path)
-    repo = (cwd or Path.cwd()).resolve()
+    repo = _search_repository(cwd)
     cache: dict[tuple[tuple[str, int], ...], bool] = {}
 
     def violates(values: dict[str, int]) -> bool:
