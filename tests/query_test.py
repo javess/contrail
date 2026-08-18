@@ -4,6 +4,7 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -84,6 +85,21 @@ def test_runpack_query_rejects_excessive_output_limits(tmp_path: Path) -> None:
 
     with pytest.raises(QueryError, match="query limit must be an integer"):
         query_runpack(runpack, "SELECT name FROM events", limit=True)
+
+
+def test_runpack_query_validates_sql_text_before_loading_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing = tmp_path / "missing.runpack"
+    with pytest.raises(QueryError, match="SQL query must be a string"):
+        query_runpack(missing, cast(str, True))
+    with pytest.raises(QueryError, match="SQL query must be valid UTF-8"):
+        query_runpack(missing, "SELECT '\udcff'")
+
+    monkeypatch.setattr(query, "MAX_QUERY_SQL_BYTES", 8)
+    with pytest.raises(QueryError, match="SQL query exceeds the 8-byte input limit"):
+        query_runpack(missing, "SELECT 12")
 
 
 def test_runpack_query_stops_read_only_work_that_exceeds_its_budget(tmp_path: Path) -> None:

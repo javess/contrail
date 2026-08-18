@@ -19,6 +19,7 @@ class QueryError(ValueError):
 
 MAX_QUERY_ROWS = 100_000
 MAX_QUERY_VM_STEPS = 25_000_000
+MAX_QUERY_SQL_BYTES = 1024 * 1024
 MAX_QUERY_CELL_BYTES = 4 * 1024 * 1024
 MAX_QUERY_RESULT_BYTES = 16 * 1024 * 1024
 _QUERY_PROGRESS_INTERVAL = 1_000
@@ -90,6 +91,14 @@ def _column_names(description: tuple[tuple[object, ...], ...]) -> tuple[str, ...
 
 
 def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
+    if not isinstance(sql, str):
+        raise QueryError("SQL query must be a string")
+    try:
+        sql_bytes = sql.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise QueryError("SQL query must be valid UTF-8") from exc
+    if len(sql_bytes) > MAX_QUERY_SQL_BYTES:
+        raise QueryError(f"SQL query exceeds the {MAX_QUERY_SQL_BYTES}-byte input limit")
     if not sql.strip():
         raise QueryError("SQL query cannot be empty")
     if not isinstance(limit, int) or isinstance(limit, bool):
@@ -114,6 +123,7 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
 
     try:
         with sqlite3.connect(uri, uri=True) as connection:
+            connection.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, MAX_QUERY_SQL_BYTES)
             connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_QUERY_CELL_BYTES)
             connection.set_authorizer(_authorize_read)
             connection.set_progress_handler(enforce_work_limit, _QUERY_PROGRESS_INTERVAL)

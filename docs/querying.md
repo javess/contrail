@@ -10,6 +10,7 @@ runtime query run.runpack \
 ```
 
 The default output cap is 1,000 rows. `--limit` can raise it to at most 100,000.
+SQL statement text is limited to 1 MiB and must be valid UTF-8.
 Separately, the engine interrupts a query after 25 million SQLite virtual-machine
 steps. This bounds expensive aggregation and recursive queries even when they
 produce few rows. Individual SQLite values are limited to 4 MiB and the encoded
