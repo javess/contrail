@@ -188,7 +188,7 @@ def _wait_with_usage(
 
 def _initial_metadata() -> dict[str, JsonValue]:
     environment_identities: dict[str, JsonValue] = {
-        name: hashlib.sha256(os.environ[name].encode()).hexdigest()
+        name: hashlib.sha256(os.fsencode(os.environ[name])).hexdigest()
         for name in _IDENTIFIED_ENVIRONMENT_VARIABLES
         if name in os.environ
     }

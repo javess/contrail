@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sqlite3
 import sys
 import threading
@@ -152,6 +153,21 @@ def test_record_process_hashes_selected_environment_values(
     assert isinstance(capture_runtime, dict)
     assert capture_runtime["python_implementation"]
     assert "runtime" not in metadata
+
+
+def test_capture_hashes_surrogate_escaped_environment_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = "value-\udcff"
+    monkeypatch.setenv("PYTHONHASHSEED", value)
+
+    metadata = capture._initial_metadata()
+
+    environment = metadata["environment"]
+    assert isinstance(environment, dict)
+    identities = environment["selected_value_sha256"]
+    assert isinstance(identities, dict)
+    assert identities["PYTHONHASHSEED"] == hashlib.sha256(os.fsencode(value)).hexdigest()
 
 
 def test_record_process_drains_output_after_relay_failure(tmp_path: Path) -> None:
