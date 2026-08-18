@@ -223,6 +223,8 @@ def load_annotations(
         relation = _string(record, "relation")
         if source_id not in known_ids or target_id not in known_ids:
             raise AnnotationError(f"annotation link {source_id} -> {target_id} is unresolved")
+        if source_id == target_id:
+            raise AnnotationError(f"annotation event cannot link to itself: {source_id}")
         edges.append(CausalEdge(source_id, target_id, relation, 1.0, {}))
     _validate_parent_hierarchy(edges)
     edge_identities: set[tuple[str, str, str]] = set()

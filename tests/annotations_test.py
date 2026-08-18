@@ -478,6 +478,24 @@ def test_annotation_loader_rejects_conflicting_lifecycle_records(
             (
                 {
                     "record": "event_instant",
+                    "id": "event",
+                    "kind": "event",
+                    "name": "event",
+                    "timestamp_ns": 1,
+                },
+                {
+                    "record": "link",
+                    "source_id": "event",
+                    "target_id": "event",
+                    "relation": "causes",
+                },
+            ),
+            "event cannot link to itself: event",
+        ),
+        (
+            (
+                {
+                    "record": "event_instant",
                     "id": "first",
                     "kind": "event",
                     "name": "first",
