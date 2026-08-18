@@ -29,6 +29,7 @@ def enrich_copy[T](
     temporary = output.with_name(f".{output.name}.tmp-{uuid.uuid4().hex}")
     try:
         shutil.copyfile(source, temporary)
+        shutil.copymode(source, temporary)
         with RunpackWriter.open_existing(temporary) as writer:
             result = operation(writer)
         try:

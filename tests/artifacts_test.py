@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from runtime_tools.artifacts import publish_without_overwrite
+from runtime_tools.enrichment import enrich_copy
+from runtime_tools.storage import RunpackWriter
 
 
 def test_artifact_publication_never_overwrites_a_concurrent_destination(tmp_path: Path) -> None:
@@ -29,3 +31,16 @@ def test_artifact_publication_moves_completed_content_into_place(tmp_path: Path)
 
     assert destination.read_bytes() == b"completed artifact"
     assert not temporary.exists()
+
+
+def test_enrichment_preserves_source_artifact_permissions(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source):
+        pass
+    source.chmod(0o640)
+
+    enrich_copy(source, output, lambda writer: None)
+
+    assert source.stat().st_mode & 0o777 == 0o640
+    assert output.stat().st_mode & 0o777 == 0o640
