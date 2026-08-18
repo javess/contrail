@@ -680,6 +680,7 @@ def import_otlp_logs(
             new_entity = Entity(entity_id, "service", service_name, None, resource_attributes)
 
         resource_event_count = 0
+        resource_entity_used = False
         scope_logs = _as_list(resource_group.get("scopeLogs", []), "scopeLogs")
         for scope_index, raw_scope_logs in enumerate(scope_logs):
             scope_group = _as_object(raw_scope_logs, "scopeLogs entry")
@@ -761,6 +762,8 @@ def import_otlp_logs(
                     span_matches = spans.get((trace_id, span_id), [])
                     if len(span_matches) == 1:
                         span = span_matches[0]
+                        if span.entity_id is not None:
+                            event_entity_id = span.entity_id
                         edges.append(
                             CausalEdge(
                                 span.id,
@@ -772,6 +775,8 @@ def import_otlp_logs(
                         )
                     else:
                         missing_spans += 1
+                if event_entity_id == entity_id:
+                    resource_entity_used = True
                 events.append(
                     Event(
                         event_id,
@@ -795,9 +800,9 @@ def import_otlp_logs(
                     "scope droppedAttributesCount",
                 )
 
-        if resource_event_count and new_entity is not None:
+        if resource_entity_used and new_entity is not None:
             entities.append(new_entity)
-        if resource_event_count and ambiguous_service:
+        if resource_entity_used and ambiguous_service:
             ambiguous_services += 1
         if resource_event_count:
             dropped_attribute_count = _bounded_count_total(

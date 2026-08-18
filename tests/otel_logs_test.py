@@ -296,6 +296,47 @@ def test_otlp_logs_create_service_entities_for_unmatched_resources(tmp_path: Pat
     assert log.attributes["log.body"] == 3
 
 
+def test_otlp_logs_use_exact_span_ownership_when_resource_identity_is_missing(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "5",
+                                        "body": {"stringValue": "correlated"},
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_logs(source, logs, output)
+
+    assert result.new_entity_count == 0
+    with RunpackReader(output) as reader:
+        log = next(event for event in reader.events() if event.kind == "log.record")
+        services = tuple(entity for entity in reader.entities() if entity.kind == "service")
+    assert log.entity_id == "api"
+    assert [service.name for service in services] == ["api"]
+
+
 def test_otlp_logs_can_add_distinct_documents_with_the_same_record_indexes(
     tmp_path: Path,
 ) -> None:
