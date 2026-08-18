@@ -63,17 +63,21 @@ def _name(item: dict[str, object]) -> str:
 
 def _namespace(metadata: dict[str, object]) -> str:
     value = metadata.get("namespace")
-    return value if isinstance(value, str) and value else "default"
+    if value is None or value == "":
+        return "default"
+    if not isinstance(value, str):
+        raise KubernetesImportError("metadata.namespace must be a string")
+    return value
 
 
 def _uid(item: dict[str, object]) -> str:
     metadata = _metadata(item)
     value = metadata.get("uid")
-    return (
-        str(value)
-        if value
-        else f"name:{item.get('kind', 'unknown')}:{_namespace(metadata)}:{_name(item)}"
-    )
+    if value is None or value == "":
+        return f"name:{item.get('kind', 'unknown')}:{_namespace(metadata)}:{_name(item)}"
+    if not isinstance(value, str):
+        raise KubernetesImportError("metadata.uid must be a string")
+    return value
 
 
 def _timestamp(value: object) -> int | None:
@@ -107,10 +111,15 @@ def _integer(value: object, label: str) -> int:
 
 def _attributes(item: dict[str, object]) -> dict[str, JsonValue]:
     metadata = _metadata(item)
-    labels = metadata.get("labels", {})
-    normalized_labels: dict[str, JsonValue] = (
-        {str(key): str(value) for key, value in labels.items()} if isinstance(labels, dict) else {}
-    )
+    labels = metadata.get("labels")
+    if labels is None:
+        normalized_labels: dict[str, JsonValue] = {}
+    elif not isinstance(labels, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in labels.items()
+    ):
+        raise KubernetesImportError("metadata.labels must map strings to strings")
+    else:
+        normalized_labels = labels
     return {
         "k8s.uid": _uid(item),
         "k8s.namespace": _namespace(metadata),

@@ -503,3 +503,43 @@ def test_kubernetes_snapshot_rejects_non_standard_json_constants(tmp_path: Path)
         import_kubernetes_snapshot(base, snapshot, output)
 
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("metadata", "message"),
+    (
+        ({"name": "pod", "uid": {"unexpected": "object"}}, "metadata.uid must be a string"),
+        ({"name": "pod", "namespace": 7}, "metadata.namespace must be a string"),
+        ({"name": "pod", "labels": {"team": 7}}, "metadata.labels must map strings"),
+    ),
+)
+def test_kubernetes_snapshot_rejects_malformed_identity_metadata(
+    tmp_path: Path,
+    metadata: dict[str, object],
+    message: str,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "malformed-metadata.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": metadata,
+                        "spec": {"containers": []},
+                        "status": {},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KubernetesImportError, match=message):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()
