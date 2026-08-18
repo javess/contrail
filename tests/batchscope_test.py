@@ -243,6 +243,27 @@ def test_kubernetes_lifecycle_does_not_borrow_unrelated_container_intervals(
     ]
 
 
+def test_kubernetes_lifecycle_requires_job_to_pod_ownership(tmp_path: Path) -> None:
+    runpack = tmp_path / "unowned-pod.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("jobs", "jobs", 0, 100, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("job", "workload.job", "job", 10, 90),
+                _event("pod", "workload.pod", "unrelated-pod", 20, 80),
+                _event("container", "workload.container", "container", 30, 70),
+            )
+        )
+        writer.add_causal_edge(CausalEdge("pod", "container", "contains", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert [(phase.name, phase.duration_seconds) for phase in analysis.lifecycle] == [
+        ("executing", 100 / 1_000_000_000)
+    ]
+
+
 def test_batchscope_cli_emits_structured_json(tmp_path: Path) -> None:
     runpack = tmp_path / "batch.runpack"
     _write_batch(runpack)

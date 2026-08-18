@@ -464,15 +464,15 @@ def _kubernetes_workload_events(
         for edge in edges
         if edge.kind == "owns" and edge.source_event_id == job_id
     }
-    if pod_ids:
-        pods = tuple(event for event in pods if event.id in pod_ids)
+    if not pod_ids:
+        return (), (), ()
+    pods = tuple(event for event in pods if event.id in pod_ids)
     container_ids = {
         edge.target_event_id
         for edge in edges
         if edge.kind == "contains" and edge.source_event_id in {pod.id for pod in pods}
     }
-    if pod_ids:
-        containers = tuple(event for event in containers if event.id in container_ids)
+    containers = tuple(event for event in containers if event.id in container_ids)
     return jobs, pods, containers
 
 
