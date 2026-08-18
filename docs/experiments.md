@@ -15,8 +15,9 @@ temporary detached worktree at candidate ref
 both runpacks -> deterministic contract verification
 ```
 
-The runner resolves refs before creating outputs, uses uniquely named temporary
-worktrees, and removes those worktrees even when capture or verification fails.
+The runner rejects unsafe ref syntax and validates the contract before resolving
+commits, creating outputs, or executing workloads. It uses uniquely named
+temporary worktrees and removes them even when capture or verification fails.
 The result directory is never reused or overwritten. Baseline and candidate
 runpacks remain available for `runtime inspect`, RunDiff, BatchScope, or replay.
 

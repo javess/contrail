@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools.proofline import ExperimentError, experiments, run_experiment
+from runtime_tools.proofline import ContractError, ExperimentError, experiments, run_experiment
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -124,6 +124,37 @@ def test_proofline_rejects_option_like_git_refs_before_creating_outputs(
         run_experiment(
             repo / "contract.yaml",
             baseline_ref="--help",
+            candidate_ref="main",
+            workload=Path("workload.py"),
+            workload_args=(),
+            output_dir=output,
+            cwd=repo,
+        )
+
+    assert not output.exists()
+    assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
+
+
+def test_proofline_validates_contracts_before_creating_worktrees_or_outputs(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Proofline Test")
+    _git(repo, "config", "user.email", "proofline@example.invalid")
+    workload = repo / "workload.py"
+    workload.write_text("raise RuntimeError('must not execute')\n", encoding="utf-8")
+    _git(repo, "add", "workload.py")
+    _git(repo, "commit", "-m", "workload")
+    contract = repo / "invalid.yaml"
+    contract.write_text("name: invalid\nassertions:\n  - type: unknown\n", encoding="utf-8")
+    output = tmp_path / "results"
+
+    with pytest.raises(ContractError, match="unsupported assertion type: unknown"):
+        run_experiment(
+            contract,
+            baseline_ref="main",
             candidate_ref="main",
             workload=Path("workload.py"),
             workload_args=(),

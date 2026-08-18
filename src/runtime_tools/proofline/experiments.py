@@ -12,6 +12,7 @@ from pathlib import Path
 
 from runtime_tools.capture import CaptureError, record_process
 from runtime_tools.model import JsonValue
+from runtime_tools.proofline.contracts import load_contracts
 from runtime_tools.proofline.verify import VerificationReport, verify_contracts
 
 
@@ -63,9 +64,13 @@ def _repo_root(cwd: Path) -> Path:
     return root
 
 
-def _resolve_commit(repo: Path, ref: str) -> str:
+def _validate_ref(ref: str) -> None:
     if not ref or ref.startswith("-"):
         raise ExperimentError("Git refs must be non-empty and cannot start with '-'")
+
+
+def _resolve_commit(repo: Path, ref: str) -> str:
+    _validate_ref(ref)
     return _git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}", capture=True)
 
 
@@ -101,10 +106,13 @@ def run_experiment(
     output_dir: Path,
     cwd: Path | None = None,
 ) -> ExperimentResult:
-    repo = _repo_root((cwd or Path.cwd()).resolve())
     if workload.is_absolute() or ".." in workload.parts:
         raise ExperimentError("workload must be a repository-relative path")
+    _validate_ref(baseline_ref)
+    _validate_ref(candidate_ref)
     contract = contract.resolve()
+    load_contracts(contract)
+    repo = _repo_root((cwd or Path.cwd()).resolve())
     if output_dir.exists():
         raise ExperimentError(f"refusing to reuse output directory: {output_dir}")
     if not output_dir.parent.is_dir():
