@@ -8,7 +8,7 @@ import pytest
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.inspect import inspect_runpack
 from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
-from runtime_tools.model import Execution
+from runtime_tools.model import CausalEdge, Entity, Event, Execution
 from runtime_tools.otel import import_otlp_json
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
 
@@ -247,6 +247,57 @@ def test_kubernetes_snapshot_preserves_deployment_owner_chains(tmp_path: Path) -
         ("k8s:deployment-uid:lifecycle", "k8s:replicaset-uid:lifecycle", "owns"),
         ("k8s:replicaset-uid:lifecycle", "k8s:pod-uid:lifecycle", "owns"),
     }
+
+
+def test_kubernetes_correlates_cross_service_trace_roots_to_each_pod(tmp_path: Path) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "pods.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 10, (), str(tmp_path), 0, None, {}))
+        writer.add_entities(
+            (
+                Entity("frontend", "service", "frontend", None, {"k8s.pod.uid": "pod-a"}),
+                Entity("backend", "service", "backend", None, {"k8s.pod.uid": "pod-b"}),
+            )
+        )
+        writer.add_events(
+            (
+                Event("request", "client.request", "call", "frontend", 1, 9, None, None, None, {}),
+                Event("handler", "server.request", "handle", "backend", 2, 8, None, None, None, {}),
+            )
+        )
+        writer.add_causal_edge(CausalEdge("request", "handler", "parent", 1.0, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("frontend", "pod-a"),
+                        "spec": {"containers": []},
+                        "status": {},
+                    },
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("backend", "pod-b"),
+                        "spec": {"containers": []},
+                        "status": {},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_kubernetes_snapshot(base, snapshot, output)
+
+    assert result.correlation_count == 2
+    with RunpackReader(output) as reader:
+        correlations = {
+            edge.target_event_id for edge in reader.causal_edges() if edge.kind == "correlates"
+        }
+    assert correlations == {"request", "handler"}
 
 
 def test_kubernetes_snapshot_rejects_timezone_ambiguous_timestamps(tmp_path: Path) -> None:

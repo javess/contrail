@@ -221,10 +221,16 @@ def _correlations(
         entities = reader.entities()
         events = reader.events()
         edges = reader.causal_edges()
-    incoming = {edge.target_event_id for edge in edges}
+    entity_by_event = {event.id: event.entity_id for event in events}
+    incoming_within_entity = {
+        edge.target_event_id
+        for edge in edges
+        if edge.kind == "parent"
+        and entity_by_event.get(edge.source_event_id) == entity_by_event.get(edge.target_event_id)
+    }
     roots_by_entity: dict[str, str] = {}
     for event in events:
-        if event.entity_id is not None and event.id not in incoming:
+        if event.entity_id is not None and event.id not in incoming_within_entity:
             roots_by_entity.setdefault(event.entity_id, event.id)
     result = []
     for entity in entities:
