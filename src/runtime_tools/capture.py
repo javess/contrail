@@ -91,6 +91,13 @@ def _pump(
     descriptor = source.fileno()
     os.set_blocking(descriptor, False)
 
+    def read(max_bytes: int) -> bytes:
+        while True:
+            try:
+                return os.read(descriptor, max_bytes)
+            except InterruptedError:
+                continue
+
     def consume(chunk: bytes) -> None:
         nonlocal byte_count, relay_error, sink
         digest.update(chunk)
@@ -115,7 +122,7 @@ def _pump(
     while True:
         if process_done.is_set():
             try:
-                chunk = os.read(descriptor, 64 * 1024)
+                chunk = read(64 * 1024)
             except BlockingIOError:
                 pipe_open_after_exit = True
                 break
@@ -125,7 +132,7 @@ def _pump(
             post_exit_bytes += len(chunk)
             if post_exit_bytes >= MAX_POST_EXIT_DRAIN_BYTES:
                 try:
-                    continuation = os.read(descriptor, 1)
+                    continuation = read(1)
                 except BlockingIOError:
                     pipe_open_after_exit = True
                 else:
@@ -134,11 +141,14 @@ def _pump(
                         pipe_open_after_exit = True
                 break
             continue
-        readable, _, _ = select.select((descriptor,), (), (), 0.05)
+        try:
+            readable, _, _ = select.select((descriptor,), (), (), 0.05)
+        except InterruptedError:
+            continue
         if not readable:
             continue
         try:
-            chunk = os.read(descriptor, 64 * 1024)
+            chunk = read(64 * 1024)
         except BlockingIOError:
             continue
         if not chunk:

@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import select
 import sqlite3
 import sys
 import threading
@@ -298,6 +299,56 @@ def test_output_drain_recognizes_eof_at_the_post_exit_boundary(
     assert digest.byte_count == 8
     assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
     assert digest.pipe_open_after_exit is False
+
+
+def test_output_drain_retries_interrupted_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stream = tmp_path / "stream"
+    stream.write_bytes(b"complete")
+    process_done = threading.Event()
+    process_done.set()
+    real_read = os.read
+    calls = 0
+
+    def interrupted_once(descriptor: int, size: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise InterruptedError
+        return real_read(descriptor, size)
+
+    monkeypatch.setattr("runtime_tools.capture.os.read", interrupted_once)
+
+    with stream.open("rb") as source:
+        digest = capture._pump(source, None, None, process_done)
+
+    assert digest.byte_count == 8
+    assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
+
+
+def test_output_drain_retries_interrupted_select(monkeypatch: pytest.MonkeyPatch) -> None:
+    read_descriptor, write_descriptor = os.pipe()
+    os.write(write_descriptor, b"complete")
+    os.close(write_descriptor)
+    process_done = threading.Event()
+    real_select = select.select
+    calls = 0
+
+    def interrupted_once(*args: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise InterruptedError
+        return real_select(*args)
+
+    monkeypatch.setattr("runtime_tools.capture.select.select", interrupted_once)
+
+    with os.fdopen(read_descriptor, "rb") as source:
+        digest = capture._pump(source, None, None, process_done)
+
+    assert digest.byte_count == 8
+    assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
 
 
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:
