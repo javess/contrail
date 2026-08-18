@@ -214,6 +214,21 @@ def _bounded_count_total(current: int, value: object, label: str) -> int:
     return total
 
 
+def _enum_integer(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) and value.is_integer() else None
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _span_kind(value: object) -> str:
     kinds = {
         0: "operation",
@@ -222,12 +237,6 @@ def _span_kind(value: object) -> str:
         3: "client.request",
         4: "message.publish",
         5: "message.consume",
-        "0": "operation",
-        "1": "operation",
-        "2": "server.request",
-        "3": "client.request",
-        "4": "message.publish",
-        "5": "message.consume",
         "SPAN_KIND_UNSPECIFIED": "operation",
         "SPAN_KIND_INTERNAL": "operation",
         "SPAN_KIND_SERVER": "server.request",
@@ -237,9 +246,12 @@ def _span_kind(value: object) -> str:
     }
     if value is None:
         return "operation"
-    if isinstance(value, bool) or not isinstance(value, (int, str)) or value not in kinds:
+    if isinstance(value, str) and value in kinds:
+        return kinds[value]
+    number = _enum_integer(value)
+    if number is None or number not in kinds:
         raise OtelImportError(f"unsupported OTLP span kind: {value}")
-    return kinds[value]
+    return kinds[number]
 
 
 def _status_code(value: object) -> str | None:
@@ -253,16 +265,16 @@ def _status_code(value: object) -> str | None:
         0: "STATUS_CODE_UNSET",
         1: "STATUS_CODE_OK",
         2: "STATUS_CODE_ERROR",
-        "0": "STATUS_CODE_UNSET",
-        "1": "STATUS_CODE_OK",
-        "2": "STATUS_CODE_ERROR",
         "STATUS_CODE_UNSET": "STATUS_CODE_UNSET",
         "STATUS_CODE_OK": "STATUS_CODE_OK",
         "STATUS_CODE_ERROR": "STATUS_CODE_ERROR",
     }
-    if isinstance(code, bool) or not isinstance(code, (int, str)) or code not in codes:
+    if isinstance(code, str) and code in codes:
+        return codes[code]
+    number = _enum_integer(code)
+    if number is None or number not in codes:
         raise OtelImportError(f"unsupported OTLP span status code: {code}")
-    return codes[code]
+    return codes[number]
 
 
 def _severity_number(value: object) -> int:
@@ -281,12 +293,9 @@ def _severity_number(value: object) -> int:
         )
     if isinstance(value, str) and value in names:
         return names[value]
-    if isinstance(value, bool) or not isinstance(value, (int, str)):
+    number = _enum_integer(value)
+    if number is None:
         raise OtelImportError("log severityNumber must be an OTLP severity enum")
-    try:
-        number = int(value)
-    except ValueError as exc:
-        raise OtelImportError("log severityNumber must be an OTLP severity enum") from exc
     if not 0 <= number <= 24:
         raise OtelImportError("log severityNumber must be between 0 and 24")
     return number

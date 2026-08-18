@@ -148,7 +148,13 @@ def test_otlp_logs_reject_records_over_the_input_limit(
         assert all(event.kind != "log.record" for event in reader.events())
 
 
-def test_otlp_logs_normalize_named_severity_numbers(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("severity", "normalized"),
+    (("SEVERITY_NUMBER_ERROR3", 19), (19.0, 19)),
+)
+def test_otlp_logs_normalize_severity_numbers(
+    tmp_path: Path, severity: object, normalized: int
+) -> None:
     source = tmp_path / "base.runpack"
     logs = tmp_path / "logs.json"
     output = tmp_path / "enriched.runpack"
@@ -163,7 +169,7 @@ def test_otlp_logs_normalize_named_severity_numbers(tmp_path: Path) -> None:
                                 "logRecords": [
                                     {
                                         "timeUnixNano": "5",
-                                        "severityNumber": "SEVERITY_NUMBER_ERROR3",
+                                        "severityNumber": severity,
                                     }
                                 ]
                             }
@@ -179,7 +185,7 @@ def test_otlp_logs_normalize_named_severity_numbers(tmp_path: Path) -> None:
 
     with RunpackReader(output) as reader:
         log = next(event for event in reader.events() if event.kind == "log.record")
-    assert log.attributes["log.severity_number"] == 19
+    assert log.attributes["log.severity_number"] == normalized
 
 
 def test_otlp_logs_accumulate_exporter_dropped_attributes(tmp_path: Path) -> None:
@@ -222,7 +228,7 @@ def test_otlp_logs_accumulate_exporter_dropped_attributes(tmp_path: Path) -> Non
     assert inspect_runpack(output).dropped_attribute_count == 14
 
 
-@pytest.mark.parametrize("severity", (True, "INVALID", -1, 25))
+@pytest.mark.parametrize("severity", (True, "INVALID", -1, 1.5, 25))
 def test_otlp_logs_reject_invalid_severity_numbers(
     tmp_path: Path,
     severity: object,

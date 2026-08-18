@@ -539,7 +539,7 @@ def test_otlp_json_import_surfaces_exporter_dropped_attributes(tmp_path: Path) -
     assert "semantics: 7 exporter-dropped OTLP attributes" in render_summary(summary, "text")
 
 
-@pytest.mark.parametrize("code", (True, -1, 3, "INVALID", ""))
+@pytest.mark.parametrize("code", (True, -1, 1.5, 3, "INVALID", ""))
 def test_otlp_json_import_rejects_invalid_span_status_codes(
     tmp_path: Path,
     code: object,
@@ -579,7 +579,11 @@ def test_otlp_json_import_rejects_invalid_span_status_codes(
 
 @pytest.mark.parametrize(
     ("code", "normalized"),
-    ((0, "STATUS_CODE_UNSET"), ("1", "STATUS_CODE_OK"), (2, "STATUS_CODE_ERROR")),
+    (
+        (0, "STATUS_CODE_UNSET"),
+        ("1", "STATUS_CODE_OK"),
+        (2.0, "STATUS_CODE_ERROR"),
+    ),
 )
 def test_otlp_json_import_normalizes_numeric_span_status_codes(
     tmp_path: Path,
@@ -618,6 +622,12 @@ def test_otlp_json_import_normalizes_numeric_span_status_codes(
     with RunpackReader(output) as reader:
         event = reader.events()[0]
     assert event.attributes["otel.status.code"] == normalized
+
+
+def test_otlp_span_kind_accepts_integral_json_numbers_without_truncation() -> None:
+    assert otel._span_kind(2.0) == "server.request"
+    with pytest.raises(OtelImportError, match="unsupported OTLP span kind"):
+        otel._span_kind(2.5)
 
 
 def test_otlp_json_import_rejects_invalid_dropped_link_counts(tmp_path: Path) -> None:
