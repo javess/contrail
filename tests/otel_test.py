@@ -368,6 +368,47 @@ def test_otlp_json_import_keeps_execution_open_when_any_span_is_incomplete(
     assert summary.wall_time_seconds is None
 
 
+def test_otlp_json_import_keeps_execution_open_when_a_span_start_is_missing(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "partial-start.json"
+    output = tmp_path / "partial-start.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "complete",
+                                        "startTimeUnixNano": "2",
+                                        "endTimeUnixNano": "3",
+                                    },
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "partial",
+                                        "endTimeUnixNano": "4",
+                                    },
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_otlp_json(source, output, name="partial-start")
+
+    summary = inspect_runpack(output)
+    assert summary.finished_at_ns is None
+    assert summary.wall_time_seconds is None
+
+
 def test_otlp_json_import_rejects_non_string_string_attributes(tmp_path: Path) -> None:
     source = tmp_path / "malformed-attribute.json"
     output = tmp_path / "malformed-attribute.runpack"
