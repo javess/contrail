@@ -215,6 +215,22 @@ def test_reader_rejects_sqlite_files_without_runpack_identity(tmp_path: Path) ->
         RunpackReader(output)
 
 
+def test_reader_rejects_dangling_runpack_relationships(tmp_path: Path) -> None:
+    output = tmp_path / "dangling-relationship.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(Event("work", "work", "work", "worker", 0, 1, None, None, None, {}))
+    with sqlite3.connect(output) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("DELETE FROM entities WHERE id = 'worker'")
+
+    with pytest.raises(
+        RunpackError, match="runpack contains an invalid relationship in events row"
+    ):
+        RunpackReader(output)
+
+
 def test_reader_reports_malformed_embedded_json_as_runpack_error(tmp_path: Path) -> None:
     output = tmp_path / "malformed.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="malformed")

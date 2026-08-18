@@ -282,6 +282,10 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
         raise UnsupportedSchemaError(
             f"unsupported runpack schema {version!r}; supported major: {SCHEMA_MAJOR_VERSION}"
         )
+    relationship_error = connection.execute("PRAGMA foreign_key_check").fetchone()
+    if relationship_error is not None:
+        table, row_id = relationship_error[:2]
+        raise RunpackError(f"runpack contains an invalid relationship in {table} row {row_id}")
 
 
 class RunpackWriter:
