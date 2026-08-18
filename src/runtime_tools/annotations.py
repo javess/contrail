@@ -15,6 +15,7 @@ class AnnotationError(ValueError):
 
 
 _MAX_TIMESTAMP_NS = (1 << 63) - 1
+MAX_ANNOTATION_STREAM_BYTES = 64 * 1024 * 1024
 
 
 def _json_value(value: object, label: str) -> JsonValue:
@@ -70,9 +71,18 @@ def load_annotations(
     event_ids: set[str] = set()
     end_lines: dict[str, int] = {}
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_ANNOTATION_STREAM_BYTES + 1)
     except OSError as exc:
         raise AnnotationError("could not read captured annotations") from exc
+    if len(raw) > MAX_ANNOTATION_STREAM_BYTES:
+        raise AnnotationError(
+            f"captured annotations exceed the {MAX_ANNOTATION_STREAM_BYTES}-byte input limit"
+        )
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise AnnotationError("captured annotations must be UTF-8") from exc
     for line_number, line in enumerate(lines, 1):
         try:
             record = _object(json.loads(line, parse_constant=_reject_json_constant), "annotation")

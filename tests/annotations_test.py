@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import runtime_tools.annotations as annotations_module
 from runtime_tools import record_process, runtime
 from runtime_tools.annotations import AnnotationError, load_annotations
 from runtime_tools.inspect import inspect_runpack, render_summary
@@ -133,6 +134,30 @@ print("result")
     summary = inspect_runpack(output)
     assert exit_code == 0
     assert summary.annotation_error == "invalid annotation JSON on line 1: non-finite constant NaN"
+    assert summary.record_counts["events"] == 1
+
+
+def test_record_process_preserves_core_capture_for_non_utf8_annotations(
+    tmp_path: Path,
+) -> None:
+    workload = tmp_path / "non-utf8.py"
+    workload.write_text(
+        """
+import os
+from pathlib import Path
+
+Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_bytes(b"\\xff")
+print("result")
+""".strip(),
+        encoding="utf-8",
+    )
+    output = tmp_path / "non-utf8.runpack"
+
+    exit_code = record_process((sys.executable, str(workload)), output, name="non-utf8")
+
+    summary = inspect_runpack(output)
+    assert exit_code == 0
+    assert summary.annotation_error == "captured annotations must be UTF-8"
     assert summary.record_counts["events"] == 1
 
 
@@ -298,3 +323,15 @@ def test_annotation_loader_rejects_conflicting_lifecycle_records(
 
     with pytest.raises(AnnotationError, match=message):
         load_annotations(annotations, entity_id="process")
+
+
+def test_annotation_loader_rejects_oversized_streams_before_decoding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    annotation_path = tmp_path / "oversized.jsonl"
+    annotation_path.write_bytes(b"{" + b" " * 32 + b"}")
+    monkeypatch.setattr(annotations_module, "MAX_ANNOTATION_STREAM_BYTES", 32)
+
+    with pytest.raises(AnnotationError, match="annotations exceed the 32-byte input limit"):
+        load_annotations(annotation_path, entity_id="process")
