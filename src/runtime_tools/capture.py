@@ -145,7 +145,7 @@ def _initial_metadata() -> dict[str, JsonValue]:
             "release": platform.release(),
             "machine": platform.machine(),
         },
-        "runtime": {
+        "capture_runtime": {
             "python_implementation": platform.python_implementation(),
             "python_version": platform.python_version(),
         },

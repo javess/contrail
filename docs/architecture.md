@@ -97,5 +97,6 @@ normal inspect and UI paths do not render their content.
 
 Local capture identifies only these selected environment variables by SHA-256,
 never plaintext: `CI`, `CUDA_VISIBLE_DEVICES`, locale/timezone settings,
-thread-pool sizing variables, and `PYTHONHASHSEED`. Python implementation and
-version are stored as non-secret runtime metadata.
+thread-pool sizing variables, and `PYTHONHASHSEED`. The capture tool's Python
+implementation and version are stored separately as non-secret controller
+metadata; they are not presented as the workload runtime.

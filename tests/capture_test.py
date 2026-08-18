@@ -113,6 +113,10 @@ def test_record_process_hashes_selected_environment_values(
     assert isinstance(identities, dict)
     assert identities["PYTHONHASHSEED"] == hashlib.sha256(b"environment-value").hexdigest()
     assert "environment-value" not in json.dumps(metadata)
+    capture_runtime = metadata["capture_runtime"]
+    assert isinstance(capture_runtime, dict)
+    assert capture_runtime["python_implementation"]
+    assert "runtime" not in metadata
 
 
 def test_record_process_drains_output_after_relay_failure(tmp_path: Path) -> None:
