@@ -35,6 +35,27 @@ def test_artifact_publication_moves_completed_content_into_place(tmp_path: Path)
     assert not temporary.exists()
 
 
+def test_artifact_publication_remains_successful_when_temporary_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temporary = tmp_path / "temporary.runpack"
+    destination = tmp_path / "result.runpack"
+    temporary.write_bytes(b"completed artifact")
+    unlink = Path.unlink
+
+    def fail_temporary_cleanup(path: Path, missing_ok: bool = False) -> None:
+        if path == temporary:
+            raise OSError("simulated cleanup failure")
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_temporary_cleanup)
+
+    publish_without_overwrite(temporary, destination)
+
+    assert destination.read_bytes() == b"completed artifact"
+    assert temporary.exists()
+
+
 def test_enrichment_preserves_source_artifact_permissions(tmp_path: Path) -> None:
     source = tmp_path / "source.runpack"
     output = tmp_path / "output.runpack"
