@@ -347,6 +347,8 @@ def import_kubernetes_snapshot(
         uid = _uid(item)
         entity_id = f"k8s:{kind.lower()}:{uid}"
         parent_uid = _owner_uid(item)
+        if parent_uid == uid:
+            raise KubernetesImportError(f"Kubernetes object cannot own itself: {uid}")
         attributes = _attributes(item)
         status = _object(item.get("status", {}), f"{kind} status")
         node_name = ""
