@@ -36,6 +36,7 @@ _MIN_RUNPACK_TIMESTAMP_NS = -(1 << 63)
 _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
 _WORKLOAD_KINDS = {"Node", "Deployment", "ReplicaSet", "Job", "Pod"}
 MAX_KUBERNETES_SNAPSHOT_BYTES = 64 * 1024 * 1024
+MAX_KUBERNETES_ITEMS = 200_000
 
 
 def _object(value: object, label: str) -> dict[str, object]:
@@ -174,7 +175,12 @@ def _load(source: Path) -> list[dict[str, object]]:
     except ValueError as exc:
         raise KubernetesImportError(f"invalid Kubernetes JSON: {exc}") from exc
     root = _object(document, "Kubernetes snapshot")
-    return [_object(item, "Kubernetes item") for item in _list(root.get("items"), "items")]
+    items = _list(root.get("items"), "items")
+    if len(items) > MAX_KUBERNETES_ITEMS:
+        raise KubernetesImportError(
+            f"Kubernetes snapshot exceeds the {MAX_KUBERNETES_ITEMS}-item input limit"
+        )
+    return [_object(item, "Kubernetes item") for item in items]
 
 
 def _owner_uid(item: dict[str, object]) -> str | None:

@@ -872,6 +872,23 @@ def test_kubernetes_snapshot_rejects_oversized_sources_before_decoding(
         )
 
 
+def test_kubernetes_snapshot_rejects_too_many_items_before_normalization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = tmp_path / "too-many-items.json"
+    snapshot.write_text(json.dumps({"items": [{}, {}]}), encoding="utf-8")
+    monkeypatch.setattr(kubernetes, "MAX_KUBERNETES_ITEMS", 1)
+
+    with pytest.raises(
+        KubernetesImportError,
+        match="Kubernetes snapshot exceeds the 1-item input limit",
+    ):
+        import_kubernetes_snapshot(
+            tmp_path / "missing.runpack", snapshot, tmp_path / "output.runpack"
+        )
+
+
 def test_kubernetes_snapshot_normalizes_invalid_utf8(tmp_path: Path) -> None:
     snapshot = tmp_path / "invalid-utf8.json"
     snapshot.write_bytes(b"\xff")
