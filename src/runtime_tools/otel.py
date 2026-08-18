@@ -29,6 +29,7 @@ _MAX_OTLP_INT = (1 << 63) - 1
 MAX_OTLP_DOCUMENT_BYTES = 64 * 1024 * 1024
 MAX_OTLP_ATTRIBUTE_DEPTH = 64
 MAX_OTLP_SPANS = 1_000_000
+MAX_OTLP_LINKS = 1_000_000
 MAX_OTLP_LOG_RECORDS = 1_000_000
 _OTLP_VALUE_FIELDS = (
     "stringValue",
@@ -434,6 +435,10 @@ def import_otlp_json(
                 if dropped_link_count > _MAX_RUNPACK_TIMESTAMP_NS:
                     raise OtelImportError("total dropped OTLP links exceeds the runpack range")
                 for raw_link in raw_links:
+                    if len(link_references) >= MAX_OTLP_LINKS:
+                        raise OtelImportError(
+                            f"OTLP JSON exceeds the {MAX_OTLP_LINKS}-span-link input limit"
+                        )
                     link = _as_object(raw_link, "span link")
                     dropped_attribute_count = _bounded_count_total(
                         dropped_attribute_count,

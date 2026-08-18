@@ -240,6 +240,47 @@ def test_otlp_json_import_rejects_spans_over_the_input_limit(
     assert not output.exists()
 
 
+def test_otlp_json_import_rejects_links_over_the_input_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "too-many-links.json"
+    output = tmp_path / "too-many-links.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "links": [
+                                            {"traceId": "trace", "spanId": "one"},
+                                            {"traceId": "trace", "spanId": "two"},
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(otel, "MAX_OTLP_LINKS", 1)
+
+    with pytest.raises(OtelImportError, match="exceeds the 1-span-link input limit"):
+        import_otlp_json(source, output, name="too-many-links")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_an_impossible_local_interval(tmp_path: Path) -> None:
     source = tmp_path / "invalid.json"
     output = tmp_path / "invalid.runpack"
