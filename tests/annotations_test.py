@@ -248,7 +248,7 @@ Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_text(
     assert summary.record_counts["events"] == 1
 
 
-def test_record_process_preserves_core_capture_for_duplicate_annotation_links(
+def test_record_process_deduplicates_annotation_links(
     tmp_path: Path,
 ) -> None:
     workload = tmp_path / "duplicate-link.py"
@@ -268,10 +268,21 @@ runtime.link(source, target)
     exit_code = record_process((sys.executable, str(workload)), output, name="duplicate-link")
 
     summary = inspect_runpack(output)
+    with RunpackReader(output) as reader:
+        events = {event.name: event for event in reader.events()}
+        edges = reader.causal_edges()
     assert exit_code == 0
-    assert summary.annotation_error == "duplicate annotation causal edge"
-    assert summary.record_counts["events"] == 1
-    assert summary.record_counts["causal_edges"] == 0
+    assert summary.annotation_error is None
+    assert summary.record_counts["events"] == 3
+    assert (
+        sum(
+            edge.source_event_id == events["source"].id
+            and edge.target_event_id == events["target"].id
+            and edge.kind == "causes"
+            for edge in edges
+        )
+        == 1
+    )
 
 
 def test_annotation_writer_completes_short_writes(

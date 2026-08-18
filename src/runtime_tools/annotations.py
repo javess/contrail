@@ -226,20 +226,22 @@ def load_annotations(
         if source_id == target_id:
             raise AnnotationError(f"annotation event cannot link to itself: {source_id}")
         edges.append(CausalEdge(source_id, target_id, relation, 1.0, {}))
-    _validate_parent_hierarchy(edges)
     edge_identities: set[tuple[str, str, str]] = set()
+    unique_edges: list[CausalEdge] = []
     for edge in edges:
         identity = (edge.source_event_id, edge.target_event_id, edge.kind)
         if identity in edge_identities:
-            raise AnnotationError("duplicate annotation causal edge")
+            continue
         edge_identities.add(identity)
+        unique_edges.append(edge)
+    _validate_parent_hierarchy(unique_edges)
     events.sort(
         key=lambda item: (
             -1 if item.started_at_ns is None else item.started_at_ns,
             item.id,
         )
     )
-    return tuple(events), tuple(edges)
+    return tuple(events), tuple(unique_edges)
 
 
 def _append_parent_edge(
