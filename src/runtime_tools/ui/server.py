@@ -96,7 +96,7 @@ def serve_runpacks(
     raw_host, actual_port = server.server_address[:2]
     actual_host = raw_host.decode() if isinstance(raw_host, bytes) else raw_host
     url = f"http://{actual_host}:{actual_port}"
-    print(f"runtime UI: {url}", file=sys.stderr)
+    print(f"runtime UI: {terminal_text(url)}", file=sys.stderr)
     try:
         if open_browser:
             webbrowser.open(url)

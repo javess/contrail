@@ -73,12 +73,16 @@ def main(argv: list[str] | None = None) -> int:
             print("COUNTEREXAMPLE")
             print()
             for name, value in sorted(counterexample.parameters.items()):
-                print(f"{name}={value}")
+                print(f"{terminal_text(name)}={value}")
             print()
             print(render_verification(counterexample.experiment.verification, "text"))
             print()
-            print(f"baseline artifact:  {counterexample.experiment.baseline_runpack}")
-            print(f"candidate artifact: {counterexample.experiment.candidate_runpack}")
+            print(
+                f"baseline artifact:  {terminal_text(counterexample.experiment.baseline_runpack)}"
+            )
+            print(
+                f"candidate artifact: {terminal_text(counterexample.experiment.candidate_runpack)}"
+            )
             return 1
         if args.subcommand == "run":
             experiment = run_experiment(
@@ -102,8 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         print(render_verification(report, args.format))
     if experiment is not None and args.format == "text":
         print()
-        print(f"baseline artifact:  {experiment.baseline_runpack}")
-        print(f"candidate artifact: {experiment.candidate_runpack}")
+        print(f"baseline artifact:  {terminal_text(experiment.baseline_runpack)}")
+        print(f"candidate artifact: {terminal_text(experiment.candidate_runpack)}")
     return 0 if report.passed else 1
 
 

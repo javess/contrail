@@ -271,6 +271,32 @@ def test_runtime_cli_escapes_terminal_controls_in_errors(tmp_path: Path) -> None
     assert r"bad-\x1b[31m.runpack" in inspected.stderr
 
 
+def test_runtime_cli_escapes_terminal_controls_in_status_paths(tmp_path: Path) -> None:
+    output = tmp_path / "recorded-\x1b[31m.runpack"
+
+    recorded = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "record",
+            "--output",
+            str(output),
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert recorded.returncode == 0
+    assert "\x1b" not in recorded.stderr
+    assert r"recorded-\x1b[31m.runpack" in recorded.stderr
+
+
 def test_runtime_cli_reports_enrichment_output_collisions_without_traceback(
     tmp_path: Path,
 ) -> None:

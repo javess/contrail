@@ -79,7 +79,7 @@ def _record(argv: list[str]) -> int:
     except (CaptureError, RunpackError) as exc:
         print(f"rundiff: {terminal_text(exc)}", file=sys.stderr)
         return 2
-    print(f"recorded {output}", file=sys.stderr)
+    print(f"recorded {terminal_text(output)}", file=sys.stderr)
     return exit_code
 
 

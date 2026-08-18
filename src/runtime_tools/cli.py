@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
                 stderr=_binary_stream("stderr"),
                 capture_output_limit=(args.output_limit_bytes if args.include_output else None),
             )
-            print(f"recorded {output}", file=sys.stderr)
+            print(f"recorded {terminal_text(output)}", file=sys.stderr)
             return exit_code
         if args.subcommand == "import-otel":
             name = args.name or args.source.stem
@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(
                 f"imported {otel_result.event_count} spans and "
-                f"{otel_result.edge_count} causal edges into {output}",
+                f"{otel_result.edge_count} causal edges into {terminal_text(output)}",
                 file=sys.stderr,
             )
             return 0
@@ -151,7 +151,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"added {kubernetes_result.entity_count} Kubernetes entities, "
                 f"{kubernetes_result.event_count} events, and "
-                f"{kubernetes_result.correlation_count} telemetry correlations to {args.output}",
+                f"{kubernetes_result.correlation_count} telemetry correlations to "
+                f"{terminal_text(args.output)}",
                 file=sys.stderr,
             )
             return 0
@@ -160,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"added {prometheus_result.sample_count} Prometheus samples "
                 f"({prometheus_result.dropped_outside_window} outside the run window) "
-                f"to {args.output}",
+                f"to {terminal_text(args.output)}",
                 file=sys.stderr,
             )
             return 0
@@ -176,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{logs_result.edge_count} span correlations "
                 f"({logs_result.dropped_outside_window} outside the run window) "
                 f"with {logs_result.dropped_attribute_count} exporter-dropped attributes "
-                f"to {args.output}",
+                f"to {terminal_text(args.output)}",
                 file=sys.stderr,
             )
             return 0
