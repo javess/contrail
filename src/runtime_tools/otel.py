@@ -7,6 +7,7 @@ import math
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Never
 
 from runtime_tools.artifacts import publish_without_overwrite
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, JsonValue
@@ -132,10 +133,14 @@ def _event_id(trace_id: str, span_id: str) -> str:
     return f"otel:{trace_id}:{span_id}"
 
 
+def _reject_json_constant(value: str) -> Never:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
 def _load_document(source: Path) -> tuple[dict[str, object], bytes]:
     try:
         raw = source.read_bytes()
-        value = json.loads(raw.decode("utf-8"))
+        value = json.loads(raw.decode("utf-8"), parse_constant=_reject_json_constant)
     except OSError as exc:
         raise OtelImportError(f"could not read OTLP JSON: {source}") from exc
     except UnicodeDecodeError as exc:
@@ -144,6 +149,8 @@ def _load_document(source: Path) -> tuple[dict[str, object], bytes]:
         raise OtelImportError(
             f"invalid OTLP JSON at line {exc.lineno}, column {exc.colno}"
         ) from exc
+    except ValueError as exc:
+        raise OtelImportError(f"invalid OTLP JSON: {exc}") from exc
     return _as_object(value, "OTLP document"), raw
 
 

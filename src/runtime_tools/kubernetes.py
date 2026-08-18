@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Never
 
 from runtime_tools.enrichment import EnrichmentError, enrich_copy
 from runtime_tools.model import CausalEdge, Entity, Event, JsonValue
@@ -116,13 +117,21 @@ def _attributes(item: dict[str, object]) -> dict[str, JsonValue]:
     }
 
 
+def _reject_json_constant(value: str) -> Never:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
 def _load(source: Path) -> list[dict[str, object]]:
     try:
-        document = json.loads(source.read_text(encoding="utf-8"))
+        document = json.loads(
+            source.read_text(encoding="utf-8"), parse_constant=_reject_json_constant
+        )
     except OSError as exc:
         raise KubernetesImportError(f"could not read Kubernetes snapshot: {source}") from exc
     except json.JSONDecodeError as exc:
         raise KubernetesImportError(f"invalid Kubernetes JSON at line {exc.lineno}") from exc
+    except ValueError as exc:
+        raise KubernetesImportError(f"invalid Kubernetes JSON: {exc}") from exc
     root = _object(document, "Kubernetes snapshot")
     return [_object(item, "Kubernetes item") for item in _list(root.get("items"), "items")]
 

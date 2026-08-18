@@ -7,6 +7,7 @@ import math
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Never
 
 from runtime_tools.enrichment import EnrichmentError, enrich_copy
 from runtime_tools.model import Entity, JsonValue, Measurement
@@ -83,13 +84,21 @@ def _entity_for(labels: dict[str, str], entities: tuple[Entity, ...]) -> str | N
     return None
 
 
+def _reject_json_constant(value: str) -> Never:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
 def _load(source: Path) -> list[tuple[dict[str, str], object, object]]:
     try:
-        document = json.loads(source.read_text(encoding="utf-8"))
+        document = json.loads(
+            source.read_text(encoding="utf-8"), parse_constant=_reject_json_constant
+        )
     except OSError as exc:
         raise PrometheusImportError(f"could not read Prometheus response: {source}") from exc
     except json.JSONDecodeError as exc:
         raise PrometheusImportError(f"invalid Prometheus JSON at line {exc.lineno}") from exc
+    except ValueError as exc:
+        raise PrometheusImportError(f"invalid Prometheus JSON: {exc}") from exc
     root = _object(document, "Prometheus response")
     if root.get("status") != "success":
         raise PrometheusImportError("Prometheus response status is not success")

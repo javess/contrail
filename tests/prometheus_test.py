@@ -192,3 +192,20 @@ def test_prometheus_response_rejects_non_string_label_values(tmp_path: Path) -> 
         import_prometheus_response(source, response, output)
 
     assert not output.exists()
+
+
+def test_prometheus_response_rejects_non_standard_json_constants(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source):
+        pass
+    response.write_text(
+        '{"status":"success","data":{"result":[]},"invalid":-Infinity}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match="non-finite JSON constant: -Infinity"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()

@@ -360,3 +360,14 @@ def test_otlp_json_import_rejects_non_string_string_attributes(tmp_path: Path) -
         import_otlp_json(source, output, name="malformed")
 
     assert not output.exists()
+
+
+def test_otlp_json_import_rejects_non_standard_json_constants(tmp_path: Path) -> None:
+    source = tmp_path / "non-standard.json"
+    output = tmp_path / "non-standard.runpack"
+    source.write_text('{"resourceSpans":[],"invalid":NaN}', encoding="utf-8")
+
+    with pytest.raises(OtelImportError, match="non-finite JSON constant: NaN"):
+        import_otlp_json(source, output, name="non-standard")
+
+    assert not output.exists()
