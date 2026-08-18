@@ -228,3 +228,18 @@ assertions:
 
     with pytest.raises(ContractError, match="found duplicate key 'percent'"):
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
+def test_proofline_normalizes_numeric_threshold_overflow(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "overflow.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=True)
+    contract.write_text(
+        f"name: overflow\nassertions:\n  - type: max_runtime_regression\n    percent: {10**400}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="percent exceeds the numeric range"):
+        verify_contracts(contract, baseline, candidate)

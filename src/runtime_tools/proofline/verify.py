@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -59,7 +60,13 @@ def _number(config: dict[str, JsonValue], key: str, assertion: Assertion) -> flo
     value = config.get(key)
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise ContractError(f"{assertion.type} requires numeric {key}")
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise ContractError(f"{assertion.type} {key} exceeds the numeric range") from exc
+    if not math.isfinite(number):
+        raise ContractError(f"{assertion.type} {key} must be finite")
+    return number
 
 
 def _string(config: dict[str, JsonValue], key: str, assertion: Assertion) -> str:
