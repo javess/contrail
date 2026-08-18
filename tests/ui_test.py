@@ -11,6 +11,7 @@ import pytest
 
 import runtime_tools.ui.server as server_module
 from runtime_tools import record_process
+from runtime_tools.inspect import inspect_runpack, render_summary
 from runtime_tools.model import Entity, Event, Execution
 from runtime_tools.storage import RunpackWriter
 from runtime_tools.ui import TimelineError, build_timeline_payload, create_server, serve_runpacks
@@ -61,6 +62,33 @@ def test_timeline_payload_exposes_normalized_evidence_and_comparison(tmp_path: P
     comparison = payload["comparison"]
     assert isinstance(comparison, dict)
     assert comparison["outcome"] == "equivalent"
+
+
+def test_default_summary_and_timeline_omit_attachment_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runpack = tmp_path / "private-attachment.runpack"
+    secret = b"attachment-secret-that-must-not-be-rendered"
+    monkeypatch.setenv("CONTRAIL_PRIVATE_ATTACHMENT_TEST", secret.decode())
+    record_process(
+        (
+            sys.executable,
+            "-c",
+            "import os, sys; "
+            "sys.stdout.buffer.write(os.environ['CONTRAIL_PRIVATE_ATTACHMENT_TEST'].encode())",
+        ),
+        runpack,
+        name="private",
+        capture_output_limit=1_024,
+    )
+
+    summary = render_summary(inspect_runpack(runpack), "json")
+    payload = json.dumps(build_timeline_payload(runpack), sort_keys=True)
+
+    assert secret.decode() not in summary
+    assert secret.decode() not in payload
+    assert json.loads(summary)["record_counts"]["attachments"] > 0
+    assert json.loads(payload)["runs"][0]["summary"]["record_counts"]["attachments"] > 0
 
 
 def test_timeline_derives_an_extent_for_open_executions(tmp_path: Path) -> None:
