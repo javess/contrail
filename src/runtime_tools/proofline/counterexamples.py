@@ -16,6 +16,9 @@ from runtime_tools.proofline.experiments import ExperimentError, ExperimentResul
 from runtime_tools.yaml_support import load_yaml
 
 MAX_COUNTEREXAMPLE_EXAMPLES = 1_000
+MAX_COUNTEREXAMPLE_PARAMETERS = 64
+_MIN_PARAMETER_INTEGER = -(1 << 63)
+_MAX_PARAMETER_INTEGER = (1 << 63) - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +44,8 @@ def _object(value: object, label: str) -> dict[str, object]:
 def _integer(value: object, label: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ContractError(f"{label} must be an integer")
+    if not _MIN_PARAMETER_INTEGER <= value <= _MAX_PARAMETER_INTEGER:
+        raise ContractError(f"{label} exceeds the supported integer range")
     return value
 
 
@@ -55,6 +60,10 @@ def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
     raw_parameters = _object(root.get("parameters"), "parameters")
     if not raw_parameters:
         raise ContractError("parameters cannot be empty")
+    if len(raw_parameters) > MAX_COUNTEREXAMPLE_PARAMETERS:
+        raise ContractError(
+            f"parameters cannot contain more than {MAX_COUNTEREXAMPLE_PARAMETERS} entries"
+        )
     result = []
     flags: set[str] = set()
     for name, raw_spec in raw_parameters.items():

@@ -127,6 +127,42 @@ parameters:
         )
 
 
+def test_counterexample_search_caps_parameter_count(tmp_path: Path) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    entries = "\n".join(
+        f"  value_{index}:\n    type: integer\n    min: 0\n    max: 1" for index in range(65)
+    )
+    parameters.write_text(f"parameters:\n{entries}\n", encoding="utf-8")
+
+    with pytest.raises(ContractError, match="parameters cannot contain more than 64 entries"):
+        search_counterexample(
+            tmp_path / "contract.yaml",
+            parameters,
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("workload.py"),
+            output_dir=tmp_path / "output",
+        )
+
+
+def test_counterexample_search_caps_parameter_integer_bounds(tmp_path: Path) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(
+        f"parameters:\n  value:\n    type: integer\n    min: 0\n    max: {1 << 63}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="parameter value max exceeds the supported"):
+        search_counterexample(
+            tmp_path / "contract.yaml",
+            parameters,
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("workload.py"),
+            output_dir=tmp_path / "output",
+        )
+
+
 def test_counterexample_search_caps_example_count_before_loading_parameters(
     tmp_path: Path,
 ) -> None:
