@@ -464,6 +464,36 @@ def test_reader_rejects_runpacks_without_required_identity_constraints(
         RunpackReader(output)
 
 
+def test_reader_rejects_runpacks_without_required_relationship_constraints(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "missing-foreign-key.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="missing-foreign-key")
+    with sqlite3.connect(output) as connection:
+        connection.execute("ALTER TABLE measurements RENAME TO original_measurements")
+        connection.execute(
+            """
+            CREATE TABLE measurements (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                value REAL NOT NULL,
+                unit TEXT NOT NULL,
+                timestamp_ns INTEGER,
+                entity_id TEXT,
+                attributes_json TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute("INSERT INTO measurements SELECT * FROM original_measurements")
+        connection.execute("DROP TABLE original_measurements")
+
+    with pytest.raises(
+        RunpackError,
+        match=r"measurements does not enforce required relationship: entity_id -> entities.id",
+    ):
+        RunpackReader(output)
+
+
 def test_reader_rejects_sqlite_files_without_runpack_identity(tmp_path: Path) -> None:
     output = tmp_path / "not-a-runpack.runpack"
     with sqlite3.connect(output) as connection:

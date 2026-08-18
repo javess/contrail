@@ -96,6 +96,15 @@ _PRIMARY_KEYS = {
     "measurements": ("id",),
     "attachments": ("id",),
 }
+_FOREIGN_KEYS = {
+    "entities": {("parent_entity_id", "entities", "id")},
+    "events": {("entity_id", "entities", "id")},
+    "causal_edges": {
+        ("source_event_id", "events", "id"),
+        ("target_event_id", "events", "id"),
+    },
+    "measurements": {("entity_id", "entities", "id")},
+}
 
 _SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -503,6 +512,17 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
             raise RunpackError(
                 f"runpack table {table} does not enforce required primary key: "
                 f"{', '.join(expected_primary_key)}"
+            )
+        foreign_keys = {
+            (str(row[3]), str(row[2]), str(row[4]))
+            for row in connection.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+        }
+        missing_foreign_keys = _FOREIGN_KEYS.get(table, set()) - foreign_keys
+        if missing_foreign_keys:
+            source, target_table, target = sorted(missing_foreign_keys)[0]
+            raise RunpackError(
+                f"runpack table {table} does not enforce required relationship: "
+                f"{source} -> {target_table}.{target}"
             )
     row = connection.execute("SELECT value FROM manifest WHERE key = 'schema_version'").fetchone()
     if row is None:
