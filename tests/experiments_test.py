@@ -43,6 +43,18 @@ def test_proofline_normalizes_git_launch_failures(
         experiments._git(tmp_path, "status")
 
 
+def test_proofline_normalizes_invalid_git_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+
+    with pytest.raises(ExperimentError, match="Git output must be valid UTF-8"):
+        experiments._git(tmp_path, "rev-parse", "--show-toplevel", capture=True)
+
+
 def test_proofline_preserves_trailing_whitespace_in_repository_paths(tmp_path: Path) -> None:
     repo = tmp_path / "repo "
     repo.mkdir()

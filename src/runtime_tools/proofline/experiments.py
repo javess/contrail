@@ -52,13 +52,16 @@ def _git(repo: Path, *args: str, capture: bool = False) -> str:
             check=True,
             stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
+            errors="strict",
             timeout=GIT_COMMAND_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as exc:
         raise ExperimentError("git is required for Proofline execution") from exc
     except OSError as exc:
         raise ExperimentError(f"could not execute Git: {exc}") from exc
+    except UnicodeError as exc:
+        raise ExperimentError("Git output must be valid UTF-8") from exc
     except subprocess.CalledProcessError as exc:
         message = exc.stderr.strip() or f"git {' '.join(args)} failed"
         raise ExperimentError(message) from exc
