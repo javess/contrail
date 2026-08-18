@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from runtime_tools import otel
-from runtime_tools.inspect import inspect_runpack, render_causal_tree
+from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
 from runtime_tools.otel import OtelImportError, import_otlp_json
 from runtime_tools.storage import RunpackReader
 
@@ -367,6 +367,42 @@ def test_otlp_json_import_reports_exporter_dropped_links_as_incomplete(
 
     assert result.missing_link_count == 2
     assert inspect_runpack(output).missing_causal_references == 2
+
+
+def test_otlp_json_import_surfaces_exporter_dropped_attributes(tmp_path: Path) -> None:
+    source = tmp_path / "dropped-attributes.json"
+    output = tmp_path / "dropped-attributes.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "resource": {"droppedAttributesCount": 1},
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "droppedAttributesCount": "2",
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_otlp_json(source, output, name="dropped-attributes")
+
+    summary = inspect_runpack(output)
+    assert summary.dropped_attribute_count == 3
+    assert "semantics: 3 exporter-dropped OTLP attributes" in render_summary(summary, "text")
 
 
 def test_otlp_json_import_rejects_invalid_dropped_link_counts(tmp_path: Path) -> None:

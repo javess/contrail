@@ -162,6 +162,13 @@ def _nonnegative_count(value: object, label: str) -> int:
     return count
 
 
+def _bounded_count_total(current: int, value: object, label: str) -> int:
+    total = current + _nonnegative_count(value, label)
+    if total > _MAX_RUNPACK_TIMESTAMP_NS:
+        raise OtelImportError(f"total {label} exceeds the runpack range")
+    return total
+
+
 def _span_kind(value: object) -> str:
     kinds = {
         0: "operation",
@@ -271,10 +278,16 @@ def import_otlp_json(
     known_events: set[str] = set()
     trace_ids: set[str] = set()
     dropped_link_count = 0
+    dropped_attribute_count = 0
 
     for resource_index, raw_resource_spans in enumerate(resource_spans):
         resource_group = _as_object(raw_resource_spans, "resourceSpans entry")
         resource = _as_object(resource_group.get("resource", {}), "resource")
+        dropped_attribute_count = _bounded_count_total(
+            dropped_attribute_count,
+            resource.get("droppedAttributesCount"),
+            "dropped OTLP attributes",
+        )
         resource_attributes = _attributes(resource.get("attributes", []))
         service_name = _semantic_name(
             resource_attributes.get("service.name"),
@@ -295,6 +308,11 @@ def import_otlp_json(
             spans = _as_list(scope_group.get("spans", []), "spans")
             for raw_span in spans:
                 span = _as_object(raw_span, "span")
+                dropped_attribute_count = _bounded_count_total(
+                    dropped_attribute_count,
+                    span.get("droppedAttributesCount"),
+                    "dropped OTLP attributes",
+                )
                 trace_id = _identifier(span.get("traceId"), "span traceId")
                 span_id = _identifier(span.get("spanId"), "span spanId")
                 event_id = _event_id(trace_id, span_id)
@@ -324,6 +342,11 @@ def import_otlp_json(
                     raise OtelImportError("total dropped OTLP links exceeds the runpack range")
                 for raw_link in raw_links:
                     link = _as_object(raw_link, "span link")
+                    dropped_attribute_count = _bounded_count_total(
+                        dropped_attribute_count,
+                        link.get("droppedAttributesCount"),
+                        "dropped OTLP attributes",
+                    )
                     linked_trace_id = _identifier(link.get("traceId"), "span link traceId")
                     linked_span_id = _identifier(link.get("spanId"), "span link spanId")
                     link_references.append(
@@ -419,6 +442,7 @@ def import_otlp_json(
                             "trace_count": len(trace_ids),
                             "missing_parent_count": missing_parent_count,
                             "missing_link_count": missing_link_count,
+                            "dropped_attribute_count": dropped_attribute_count,
                         },
                     },
                 )

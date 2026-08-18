@@ -37,6 +37,7 @@ class ExecutionSummary:
     stderr_complete: bool | None
     annotation_error: str | None
     missing_causal_references: int | None
+    dropped_attribute_count: int | None
     record_counts: dict[str, int]
 
     def as_json_value(self) -> dict[str, JsonValue]:
@@ -92,6 +93,7 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             stderr_complete=_stream_complete(execution.metadata, "stderr"),
             annotation_error=_annotation_error(execution.metadata),
             missing_causal_references=_missing_causal_references(execution.metadata),
+            dropped_attribute_count=_dropped_attribute_count(execution.metadata),
             record_counts=reader.counts(),
         )
 
@@ -219,6 +221,18 @@ def _missing_causal_references(metadata: dict[str, JsonValue]) -> int | None:
     return total
 
 
+def _dropped_attribute_count(metadata: dict[str, JsonValue]) -> int | None:
+    otel = metadata.get("otel")
+    if otel is None:
+        return 0
+    if not isinstance(otel, dict):
+        return None
+    value = otel.get("dropped_attribute_count", 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        return None
+    return value
+
+
 def _stream_complete(metadata: dict[str, JsonValue], stream: str) -> bool | None:
     output = metadata.get("output")
     if not isinstance(output, dict):
@@ -261,6 +275,7 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
         f"stderr:   {stderr}",
         f"annotations: ignored ({summary.annotation_error})" if summary.annotation_error else None,
         _causality_summary(summary.missing_causal_references),
+        _semantic_completeness_summary(summary.dropped_attribute_count),
         (
             "records:  "
             f"{summary.record_counts['entities']} entities, "
@@ -278,6 +293,14 @@ def _causality_summary(missing_references: int | None) -> str | None:
         return "causality: invalid OTLP completeness metadata"
     if missing_references:
         return f"causality: {missing_references} unresolved OTLP references"
+    return None
+
+
+def _semantic_completeness_summary(dropped_attributes: int | None) -> str | None:
+    if dropped_attributes is None:
+        return "semantics: invalid OTLP dropped-attribute metadata"
+    if dropped_attributes:
+        return f"semantics: {dropped_attributes} exporter-dropped OTLP attributes"
     return None
 
 

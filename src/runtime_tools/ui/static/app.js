@@ -35,6 +35,8 @@ function renderSummary() {
   if (run.summary.annotation_error) warningMessages.push(`Annotations ignored: ${escapeHtml(run.summary.annotation_error)}`);
   if (run.summary.missing_causal_references == null) warningMessages.push("Causal completeness metadata invalid");
   else if (run.summary.missing_causal_references > 0) warningMessages.push(`${run.summary.missing_causal_references} unresolved causal references`);
+  if (run.summary.dropped_attribute_count == null) warningMessages.push("OTLP dropped-attribute metadata invalid");
+  else if (run.summary.dropped_attribute_count > 0) warningMessages.push(`${run.summary.dropped_attribute_count} exporter-dropped OTLP attributes`);
   const incompleteStreams = ["stdout", "stderr"].filter(stream => run.summary[`${stream}_complete`] === false);
   if (incompleteStreams.length) warningMessages.push(`Incomplete output identity: ${incompleteStreams.join(", ")}`);
   const warning = warningMessages.map(message => `<div class="metric warning"><span>Evidence warning</span><strong>${message}</strong></div>`).join("");
