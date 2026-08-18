@@ -287,13 +287,13 @@ def _resource_map(value: object) -> dict[str, JsonValue]:
 
 
 def _container_interval(status: dict[str, object]) -> tuple[int | None, int | None]:
-    state = status.get("state", {})
-    if not isinstance(state, dict):
-        return None, None
-    running = state.get("running", {})
-    terminated = state.get("terminated", {})
-    started = _timestamp(running.get("startedAt")) if isinstance(running, dict) else None
-    if isinstance(terminated, dict):
+    state = _object(status.get("state", {}), "container state")
+    raw_running = state.get("running")
+    running = _object(raw_running, "running container state") if raw_running is not None else {}
+    raw_terminated = state.get("terminated")
+    started = _timestamp(running.get("startedAt"))
+    if raw_terminated is not None:
+        terminated = _object(raw_terminated, "terminated container state")
         terminated_started = _timestamp(terminated.get("startedAt"))
         if terminated_started is not None:
             started = terminated_started
