@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 
+from runtime_tools.terminal import terminal_text
 from runtime_tools.ui.data import TimelineError, build_timeline_payload
 
 _ASSETS = {
@@ -20,6 +21,10 @@ _ASSETS = {
 
 def _asset(name: str) -> bytes:
     return files("runtime_tools.ui").joinpath("static", name).read_bytes()
+
+
+def _log_line(message_format: str, args: tuple[object, ...]) -> str:
+    return f"runtime-ui: {terminal_text(message_format % args)}"
 
 
 def create_server(
@@ -71,7 +76,7 @@ def create_server(
             self.wfile.write(body)
 
         def log_message(self, message_format: str, *args: object) -> None:
-            print(f"runtime-ui: {message_format % args}", file=sys.stderr)
+            print(_log_line(message_format, args), file=sys.stderr)
 
     try:
         return ThreadingHTTPServer((host, port), Handler)

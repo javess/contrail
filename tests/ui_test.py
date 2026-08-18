@@ -13,6 +13,7 @@ from runtime_tools import record_process
 from runtime_tools.model import Entity, Event, Execution
 from runtime_tools.storage import RunpackWriter
 from runtime_tools.ui import TimelineError, build_timeline_payload, create_server
+from runtime_tools.ui.server import _log_line
 
 
 def test_timeline_payload_exposes_normalized_evidence_and_comparison(tmp_path: Path) -> None:
@@ -108,6 +109,13 @@ def test_local_ui_serves_packaged_assets_and_read_only_data(tmp_path: Path) -> N
 
     assert "Runtime timeline" in html
     assert payload["runs"][0]["summary"]["name"] == "served"
+
+
+def test_local_ui_escapes_terminal_controls_in_request_logs() -> None:
+    line = _log_line('"%s" %s', ("GET /\x1b[31m", 400))
+
+    assert "\x1b" not in line
+    assert r"GET /\x1b[31m" in line
 
 
 def test_packaged_ui_renders_batchscope_analysis() -> None:
