@@ -735,12 +735,8 @@ def import_otlp_logs(
                     "log droppedAttributesCount",
                 )
 
-                trace_id_value = record.get("traceId", "")
-                span_id_value = record.get("spanId", "")
-                if not isinstance(trace_id_value, str) or not isinstance(span_id_value, str):
-                    raise OtelImportError("log traceId and spanId must be strings")
-                trace_id = trace_id_value
-                span_id = span_id_value
+                trace_id = _identifier(record.get("traceId"), "log traceId", optional=True)
+                span_id = _identifier(record.get("spanId"), "log spanId", optional=True)
                 if bool(trace_id) != bool(span_id):
                     raise OtelImportError("log records must contain traceId and spanId together")
 

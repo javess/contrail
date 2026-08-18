@@ -513,6 +513,32 @@ def test_otlp_logs_reject_partial_trace_correlation_without_publishing(tmp_path:
     assert not output.exists()
 
 
+@pytest.mark.parametrize("field", ("traceId", "spanId"))
+def test_otlp_logs_reject_invalid_identifier_unicode_at_the_adapter_boundary(
+    tmp_path: Path, field: str
+) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    record = {
+        "timeUnixNano": "5",
+        "body": {"stringValue": "invalid"},
+        "traceId": "trace",
+        "spanId": "span",
+        field: "bad-\ud800",
+    }
+    logs.write_text(
+        json.dumps({"resourceLogs": [{"scopeLogs": [{"logRecords": [record]}]}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match=f"log {field} must be valid UTF-8"):
+        import_otlp_logs(source, logs, output)
+
+    assert not output.exists()
+
+
 def test_otlp_logs_do_not_masquerade_as_operations_or_critical_work(tmp_path: Path) -> None:
     source = tmp_path / "base.runpack"
     logs = tmp_path / "logs.json"
