@@ -201,6 +201,22 @@ def test_reader_aggregates_peer_dependencies_from_client_rows(tmp_path: Path) ->
             )
             for index in range(3)
         )
+        invalid_peers: tuple[str | int, ...] = ("", 7)
+        writer.add_events(
+            Event(
+                f"missing-peer-{index}",
+                "client.request",
+                "call",
+                "worker",
+                0,
+                1,
+                "test",
+                None,
+                index + 4,
+                {"peer.service": peer},
+            )
+            for index, peer in enumerate(invalid_peers)
+        )
     with RunpackReader(runpack) as reader:
         assert reader.peer_service_edge_counts() == {
             ("service", "worker", "service", "database", "calls"): 3

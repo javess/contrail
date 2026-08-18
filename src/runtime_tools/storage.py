@@ -1179,7 +1179,7 @@ class RunpackReader:
         counts: dict[tuple[str, str, str, str, str], int] = {}
         for row in rows:
             peer = _object(row["attributes_json"]).get("peer.service")
-            if not isinstance(peer, str):
+            if not isinstance(peer, str) or not peer:
                 continue
             key = (row["source_kind"], row["source_name"], "service", peer, "calls")
             counts[key] = counts.get(key, 0) + 1
