@@ -74,6 +74,45 @@ def test_causal_tree_distinguishes_shared_nodes_from_cycles(tmp_path: Path) -> N
     assert "cycle-a [operation] 0.000ms (cycle)" in tree
 
 
+def test_causal_tree_orders_unknown_timestamps_before_the_unix_epoch(tmp_path: Path) -> None:
+    runpack = tmp_path / "epoch-order.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("order", "order", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                Event(
+                    "unknown",
+                    "operation",
+                    "z-unknown",
+                    "worker",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    {},
+                ),
+                Event(
+                    "epoch",
+                    "operation",
+                    "a-epoch",
+                    "worker",
+                    0,
+                    0,
+                    "test",
+                    None,
+                    None,
+                    {},
+                ),
+            )
+        )
+
+    tree = render_causal_tree(runpack)
+
+    assert tree.index("z-unknown") < tree.index("a-epoch")
+
+
 def test_text_inspection_escapes_terminal_control_characters(tmp_path: Path) -> None:
     runpack = tmp_path / "controls.runpack"
     with RunpackWriter(runpack) as writer:

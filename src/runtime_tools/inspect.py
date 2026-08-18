@@ -118,7 +118,8 @@ def render_causal_tree(path: Path) -> str:
     roots = [event.id for event in events if event.id not in incoming]
 
     def sort_key(event_id: str) -> tuple[int, str]:
-        return (by_id[event_id].started_at_ns or -1, by_id[event_id].name)
+        started_at_ns = by_id[event_id].started_at_ns
+        return (-1 if started_at_ns is None else started_at_ns, by_id[event_id].name)
 
     for child_ids in children.values():
         child_ids.sort(key=sort_key)
