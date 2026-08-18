@@ -12,8 +12,10 @@ from hypothesis.errors import NoSuchExample
 from hypothesis.strategies import SearchStrategy, fixed_dictionaries, integers
 
 from runtime_tools.proofline.contracts import ContractError
-from runtime_tools.proofline.experiments import ExperimentResult, run_experiment
+from runtime_tools.proofline.experiments import ExperimentError, ExperimentResult, run_experiment
 from runtime_tools.yaml_support import load_yaml
+
+MAX_COUNTEREXAMPLE_EXAMPLES = 1_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +103,12 @@ def search_counterexample(
 ) -> CounterexampleResult | None:
     if max_examples <= 0:
         raise ContractError("max_examples must be positive")
+    if max_examples > MAX_COUNTEREXAMPLE_EXAMPLES:
+        raise ContractError(f"max_examples cannot exceed {MAX_COUNTEREXAMPLE_EXAMPLES}")
+    if output_dir.exists():
+        raise ExperimentError(f"refusing to reuse output directory: {output_dir}")
+    if not output_dir.parent.is_dir():
+        raise ExperimentError(f"output parent directory does not exist: {output_dir.parent}")
     parameters = load_parameters(parameters_path)
     repo = (cwd or Path.cwd()).resolve()
     cache: dict[tuple[tuple[str, int], ...], bool] = {}

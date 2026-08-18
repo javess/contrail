@@ -51,7 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     search.add_argument("--candidate-ref", required=True)
     search.add_argument("--workload", type=Path, required=True)
     search.add_argument("--output-dir", type=Path)
-    search.add_argument("--max-examples", type=int, default=25)
+    search.add_argument(
+        "--max-examples", type=int, default=25, help="search bound (hard limit: 1000)"
+    )
     args = parser.parse_args(argv)
     try:
         if args.subcommand == "search":

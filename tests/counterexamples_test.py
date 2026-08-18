@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools.proofline import ContractError, search_counterexample
+from runtime_tools.proofline import ContractError, ExperimentError, search_counterexample
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -124,4 +124,36 @@ parameters:
             candidate_ref="candidate",
             workload=Path("workload.py"),
             output_dir=tmp_path / "output",
+        )
+
+
+def test_counterexample_search_caps_example_count_before_loading_parameters(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ContractError, match="max_examples cannot exceed 1000"):
+        search_counterexample(
+            tmp_path / "contract.yaml",
+            tmp_path / "missing-parameters.yaml",
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("workload.py"),
+            output_dir=tmp_path / "output",
+            max_examples=1_001,
+        )
+
+
+def test_counterexample_search_rejects_existing_output_before_loading_parameters(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+
+    with pytest.raises(ExperimentError, match="refusing to reuse output directory"):
+        search_counterexample(
+            tmp_path / "contract.yaml",
+            tmp_path / "missing-parameters.yaml",
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("workload.py"),
+            output_dir=output,
         )

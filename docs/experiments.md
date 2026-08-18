@@ -57,7 +57,8 @@ parameters:
 Each generated value becomes `--parameter=value`. Non-violating case artifacts
 are temporary; only the minimized violating case is preserved. Search is
 deterministic, has no Hypothesis example database, and is bounded by
-`--max-examples`.
+`--max-examples` (default 25, hard limit 1,000). The final output directory is
+validated before the search begins and is never reused.
 
 ```bash
 proofline search contracts.yaml \
