@@ -15,7 +15,9 @@ Separately, the engine interrupts a query after 25 million SQLite virtual-machin
 steps. This bounds expensive aggregation and recursive queries even when they
 produce few rows. Individual SQLite values are limited to 4 MiB and the encoded
 result, including column metadata and row framing, is limited to 16 MiB, so a
-small row count cannot create unbounded output.
+small row count cannot create unbounded output. Each output renderer enforces
+the same limit after formatting, preventing repeated JSONL keys or table padding
+from expanding a bounded result. Table columns are truncated to 60 characters.
 
 Machine-readable formats preserve column order and JSON-safe values. Repeated
 SQL column labels receive deterministic `_2`, `_3`, and later suffixes so JSONL

@@ -13,6 +13,7 @@ from runtime_tools.query import (
     MAX_QUERY_CELL_BYTES,
     MAX_QUERY_VM_STEPS,
     QueryError,
+    QueryResult,
     query_runpack,
     render_query,
 )
@@ -214,3 +215,21 @@ def test_runpack_query_bounds_individual_values(tmp_path: Path) -> None:
 
     with pytest.raises(QueryError, match="string or blob too big"):
         query_runpack(runpack, f"SELECT zeroblob({MAX_QUERY_CELL_BYTES + 1})")
+
+
+def test_query_renderers_bound_format_expansion(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = QueryResult(("long-column-name",), (("",),) * 20, False)
+    monkeypatch.setattr(query, "MAX_QUERY_RESULT_BYTES", 200)
+
+    with pytest.raises(QueryError, match="rendered query output exceeded the byte limit of 200"):
+        render_query(result, "jsonl")
+    with pytest.raises(QueryError, match="rendered query output exceeded the byte limit of 200"):
+        render_query(result, "table")
+
+
+def test_query_table_caps_long_column_labels() -> None:
+    result = QueryResult(("x" * 1_000,), (("value",),), False)
+
+    table = render_query(result, "table")
+
+    assert max(len(line) for line in table.splitlines()) == 60

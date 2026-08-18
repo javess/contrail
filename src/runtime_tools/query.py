@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -167,30 +168,58 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
 
 def render_query(result: QueryResult, output_format: str) -> str:
     if output_format == "json":
-        return json.dumps(result.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
+        return _bounded_rendered_output(
+            json.dumps(result.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
+        )
     if output_format == "jsonl":
-        return "\n".join(
+        return _join_bounded_lines(
             json.dumps(dict(zip(result.columns, row, strict=True)), allow_nan=False, sort_keys=True)
             for row in result.rows
         )
     rendered_columns = [terminal_text(column) for column in result.columns]
-    widths = [len(column) for column in rendered_columns]
+    widths = [min(60, len(column)) for column in rendered_columns]
     rendered_rows = [[_display(value) for value in row] for row in result.rows]
     for row in rendered_rows:
         for index, value in enumerate(row):
             widths[index] = min(60, max(widths[index], len(value)))
-    header = "  ".join(column.ljust(widths[index]) for index, column in enumerate(rendered_columns))
+    header = "  ".join(
+        column[: widths[index]].ljust(widths[index])
+        for index, column in enumerate(rendered_columns)
+    )
     divider = "  ".join("-" * width for width in widths)
-    lines = [header, divider]
-    for row in rendered_rows:
-        lines.append(
-            "  ".join(
+
+    def lines() -> Iterable[str]:
+        yield header
+        yield divider
+        for row in rendered_rows:
+            yield "  ".join(
                 value[: widths[index]].ljust(widths[index]) for index, value in enumerate(row)
             )
+        if result.truncated:
+            yield "… result truncated"
+
+    return _join_bounded_lines(lines())
+
+
+def _bounded_rendered_output(value: str) -> str:
+    if len(value.encode("utf-8")) > MAX_QUERY_RESULT_BYTES:
+        raise QueryError(
+            f"rendered query output exceeded the byte limit of {MAX_QUERY_RESULT_BYTES}"
         )
-    if result.truncated:
-        lines.append("… result truncated")
-    return "\n".join(lines)
+    return value
+
+
+def _join_bounded_lines(lines: Iterable[str]) -> str:
+    rendered: list[str] = []
+    byte_count = 0
+    for line in lines:
+        byte_count += len(line.encode("utf-8")) + int(bool(rendered))
+        if byte_count > MAX_QUERY_RESULT_BYTES:
+            raise QueryError(
+                f"rendered query output exceeded the byte limit of {MAX_QUERY_RESULT_BYTES}"
+            )
+        rendered.append(line)
+    return "\n".join(rendered)
 
 
 def _display(value: JsonValue) -> str:
