@@ -22,6 +22,7 @@ class OtelImportError(ValueError):
 
 _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
 MAX_OTLP_DOCUMENT_BYTES = 64 * 1024 * 1024
+MAX_OTLP_ATTRIBUTE_DEPTH = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +44,9 @@ class OtelLogImportResult:
     ambiguous_service_count: int
 
 
-def _typed_value(value: object) -> JsonValue:
+def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
+    if depth > MAX_OTLP_ATTRIBUTE_DEPTH:
+        raise OtelImportError(f"OTLP attribute nesting exceeds {MAX_OTLP_ATTRIBUTE_DEPTH} levels")
     if not isinstance(value, dict):
         raise OtelImportError("OTLP attribute value must be an object")
     if "stringValue" in value:
@@ -78,16 +81,16 @@ def _typed_value(value: object) -> JsonValue:
         array = value["arrayValue"]
         if not isinstance(array, dict) or not isinstance(array.get("values", []), list):
             raise OtelImportError("OTLP arrayValue is invalid")
-        return [_typed_value(item) for item in array.get("values", [])]
+        return [_typed_value(item, depth=depth + 1) for item in array.get("values", [])]
     if "kvlistValue" in value:
         key_values = value["kvlistValue"]
         if not isinstance(key_values, dict):
             raise OtelImportError("OTLP kvlistValue is invalid")
-        return _attributes(key_values.get("values", []))
+        return _attributes(key_values.get("values", []), depth=depth + 1)
     raise OtelImportError("unsupported OTLP attribute value")
 
 
-def _attributes(raw: object) -> dict[str, JsonValue]:
+def _attributes(raw: object, *, depth: int = 0) -> dict[str, JsonValue]:
     if raw is None:
         return {}
     if not isinstance(raw, list):
@@ -99,7 +102,7 @@ def _attributes(raw: object) -> dict[str, JsonValue]:
         key = item["key"]
         if key in result:
             raise OtelImportError(f"duplicate OTLP attribute key: {key}")
-        result[key] = _typed_value(item.get("value"))
+        result[key] = _typed_value(item.get("value"), depth=depth)
     return result
 
 

@@ -444,6 +444,43 @@ def test_otlp_json_import_rejects_duplicate_attribute_keys(tmp_path: Path) -> No
     assert not output.exists()
 
 
+def test_otlp_json_import_rejects_excessively_nested_attributes(tmp_path: Path) -> None:
+    source = tmp_path / "nested-attribute.json"
+    output = tmp_path / "nested-attribute.runpack"
+    value: dict[str, object] = {"stringValue": "leaf"}
+    for _ in range(65):
+        value = {"arrayValue": {"values": [value]}}
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "attributes": [{"key": "nested", "value": value}],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="OTLP attribute nesting exceeds 64 levels"):
+        import_otlp_json(source, output, name="nested-attribute")
+
+    assert not output.exists()
+
+
 @pytest.mark.parametrize(
     ("resource_attributes", "span_name", "message"),
     (
