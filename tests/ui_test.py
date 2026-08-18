@@ -141,6 +141,8 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "Causal links" in javascript
     assert "Clock domain" in javascript
     assert "Resource measurements" in javascript
+    assert "escapeDisplayControls(value).replace" in javascript
+    assert r"[\p{Cc}\p{Cf}\p{Cs}]" in javascript
 
 
 def test_timeline_rejects_oversized_artifact_before_analysis(tmp_path: Path) -> None:

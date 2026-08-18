@@ -6,7 +6,14 @@ const fmtNumber = value => value == null ? "unknown" : new Intl.NumberFormat().f
 const fmtRate = value => value == null ? "unknown" : `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)}/s`;
 const fmtEquivalence = value => value == null ? "unknown" : value ? "equivalent" : "different";
 const nsToSeconds = value => value == null ? null : value / 1e9;
-const escapeHtml = value => String(value).replace(/[&<>'"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[char]);
+const escapeDisplayControls = value => Array.from(String(value), char => {
+  if (char === "\n" || char === "\t" || !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(char)) return char;
+  const codePoint = char.codePointAt(0);
+  const width = codePoint <= 0xff ? 2 : codePoint <= 0xffff ? 4 : 8;
+  const prefix = width === 2 ? "\\x" : width === 4 ? "\\u" : "\\U";
+  return `${prefix}${codePoint.toString(16).padStart(width, "0")}`;
+}).join("");
+const escapeHtml = value => escapeDisplayControls(value).replace(/[&<>'"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[char]);
 
 function currentRun() { return state.data.runs[state.runIndex]; }
 
