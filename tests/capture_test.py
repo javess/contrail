@@ -16,7 +16,13 @@ import pytest
 from runtime_tools import CaptureError, capture, inspect_runpack, record_process
 from runtime_tools.inspect import render_summary
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, Measurement
-from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter, UnsupportedSchemaError
+from runtime_tools.storage import (
+    MAX_RUNPACK_JSON_BYTES,
+    RunpackError,
+    RunpackReader,
+    RunpackWriter,
+    UnsupportedSchemaError,
+)
 
 
 def test_record_process_captures_outcome_resources_and_output_identity(tmp_path: Path) -> None:
@@ -340,6 +346,40 @@ def test_reader_normalizes_excessively_nested_embedded_json(tmp_path: Path) -> N
         connection.execute("UPDATE executions SET metadata_json = ?", (nested,))
 
     with pytest.raises(RunpackError, match="invalid JSON object in runpack"):
+        inspect_runpack(output)
+
+
+def test_writer_rejects_oversized_normalized_json(tmp_path: Path) -> None:
+    output = tmp_path / "oversized-json-write.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="runpack JSON exceeds"):
+            writer.add_execution(
+                Execution(
+                    "run",
+                    "run",
+                    0,
+                    1,
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    {"value": "x" * MAX_RUNPACK_JSON_BYTES},
+                )
+            )
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
+            reader.execution()
+
+
+def test_reader_rejects_oversized_normalized_json(tmp_path: Path) -> None:
+    output = tmp_path / "oversized-json-read.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="oversized-json")
+    oversized = json.dumps({"value": "x" * MAX_RUNPACK_JSON_BYTES})
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE executions SET metadata_json = ?", (oversized,))
+
+    with pytest.raises(RunpackError, match="runpack JSON exceeds"):
         inspect_runpack(output)
 
 

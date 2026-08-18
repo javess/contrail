@@ -25,6 +25,7 @@ from runtime_tools.model import (
 SCHEMA_VERSION = "1.1"
 SCHEMA_MAJOR_VERSION = "1"
 APPLICATION_ID = 0x4354524C  # CTRL
+MAX_RUNPACK_JSON_BYTES = 4 * 1024 * 1024
 _MIN_INTEGER = -(1 << 63)
 _MAX_INTEGER = (1 << 63) - 1
 _REQUIRED_TABLES = {
@@ -175,11 +176,13 @@ class UnsupportedSchemaError(RunpackError):
 def _json(value: JsonValue) -> str:
     try:
         normalized = _checked_json(value)
-        return json.dumps(normalized, allow_nan=False, separators=(",", ":"), sort_keys=True)
+        encoded = json.dumps(normalized, allow_nan=False, separators=(",", ":"), sort_keys=True)
     except RunpackError as exc:
         raise RunpackError("invalid JSON value for runpack") from exc
     except (OverflowError, TypeError, ValueError, RecursionError) as exc:
         raise RunpackError("invalid JSON value for runpack") from exc
+    _validate_json_size(encoded)
+    return encoded
 
 
 def _command_json(value: object) -> str:
@@ -188,7 +191,16 @@ def _command_json(value: object) -> str:
     return _json(list(value))
 
 
-def _object(value: str) -> dict[str, JsonValue]:
+def _validate_json_size(value: str) -> None:
+    byte_count = len(value.encode("utf-8", errors="surrogatepass"))
+    if byte_count > MAX_RUNPACK_JSON_BYTES:
+        raise RunpackError(f"runpack JSON exceeds the {MAX_RUNPACK_JSON_BYTES}-byte field limit")
+
+
+def _object(value: object) -> dict[str, JsonValue]:
+    if not isinstance(value, str):
+        raise RunpackError("invalid JSON object in runpack")
+    _validate_json_size(value)
     try:
         decoded = _checked_json(json.loads(value))
     except (json.JSONDecodeError, TypeError, RecursionError) as exc:

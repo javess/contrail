@@ -34,6 +34,8 @@ rendered by default because they may contain secrets.
 
 Attributes are JSON objects at adapter boundaries. Values must be JSON-safe;
 query-prominent concepts graduate to typed columns only after demonstrated use.
+Normalized JSON fields are limited to 4 MiB so portable artifacts remain safe
+to inspect; larger raw evidence belongs in an attachment.
 
 ## Time and uncertainty
 
