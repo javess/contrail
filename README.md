@@ -97,9 +97,10 @@ entity counts, operation and explicit failure counts, observed max concurrency,
 aggregate duration, CPU time, peak memory, and runtime dependencies; JSON keeps
 the same structured facts for automation. Comparisons of artifacts carrying the
 same execution ID are marked as exact identity matches; distinct executions use
-structural matching when their entity, operation, and dependency key sets
-align and their internal causal edges connect the same semantic operations,
-then fall back to aggregate semantic matching when the observed shape changes.
+structural matching when their entity, entity-parent, operation, and dependency
+key sets align and their internal causal edges connect the same semantic
+operations, then fall back to aggregate semantic matching when the observed
+shape changes.
 
 ```bash
 uv run rundiff compare baseline.runpack candidate.runpack

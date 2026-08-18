@@ -474,6 +474,22 @@ def _structural_edge_keys(
     return keys
 
 
+def _structural_entity_parent_keys(
+    reader: RunpackReader,
+) -> set[tuple[str, str, str, str]]:
+    entities = {entity.id: entity for entity in reader.entities()}
+    return {
+        (
+            entity.kind,
+            entity.name,
+            entities[entity.parent_entity_id].kind,
+            entities[entity.parent_entity_id].name,
+        )
+        for entity in entities.values()
+        if entity.parent_entity_id is not None
+    }
+
+
 def _selected_environment(metadata: dict[str, JsonValue]) -> dict[str, str]:
     environment = metadata.get("environment")
     if environment is None:
@@ -523,6 +539,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         baseline_durations = baseline_reader.operation_duration_totals()
         baseline_edges = _all_edge_counts(baseline_reader)
         baseline_structural_edges = _structural_edge_keys(baseline_reader)
+        baseline_structural_parents = _structural_entity_parent_keys(baseline_reader)
     with RunpackReader(candidate_path) as candidate_reader:
         candidate_environment = _selected_environment(candidate_reader.execution().metadata)
         candidate_entities = candidate_reader.entity_counts()
@@ -532,6 +549,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         candidate_durations = candidate_reader.operation_duration_totals()
         candidate_edges = _all_edge_counts(candidate_reader)
         candidate_structural_edges = _structural_edge_keys(candidate_reader)
+        candidate_structural_parents = _structural_entity_parent_keys(candidate_reader)
 
     exit_equivalent = _known_equivalence(baseline_summary.exit_code, candidate_summary.exit_code)
     output_equivalent = _output_equivalence(
@@ -567,6 +585,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         and baseline_operations.keys() == candidate_operations.keys()
         and baseline_edges.keys() == candidate_edges.keys()
         and baseline_structural_edges == candidate_structural_edges
+        and baseline_structural_parents == candidate_structural_parents
     ):
         match_level = "structural"
     else:

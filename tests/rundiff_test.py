@@ -264,6 +264,28 @@ def test_compare_runpacks_does_not_call_changed_internal_causality_structural(
     assert diff.match_level == "aggregate"
 
 
+def test_compare_runpacks_does_not_call_changed_entity_parentage_structural(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, parent in ((baseline, "pool-a"), (candidate, "pool-b")):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(path.stem, path.stem, 0, 1, (), str(tmp_path), 0, None, {})
+            )
+            writer.add_entity(Entity("pool-a", "pool", "a", None, {}))
+            writer.add_entity(Entity("pool-b", "pool", "b", None, {}))
+            writer.add_entity(Entity("worker", "worker", "worker", parent, {}))
+            writer.add_event(
+                Event("work", "operation", "work", "worker", 0, 1, "test", None, 0, {})
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.match_level == "aggregate"
+
+
 def test_compare_runpacks_omits_unrepresentable_cpu_percentages(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"
