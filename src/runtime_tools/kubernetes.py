@@ -544,6 +544,12 @@ def import_kubernetes_snapshot(
                         {"source": "kubernetes"},
                     )
                 )
+            unknown_statuses = sorted(statuses.keys() - container_names)
+            if unknown_statuses:
+                raise KubernetesImportError(
+                    "containerStatuses contains names absent from Pod containers: "
+                    f"{', '.join(unknown_statuses)}"
+                )
     event_uids: set[str] = set()
     for item in items:
         if _kind(item) != "Event":

@@ -652,6 +652,19 @@ def test_kubernetes_enrichment_rejects_duplicate_event_uids(tmp_path: Path) -> N
             ],
             "duplicate container name: task",
         ),
+        (
+            [
+                {
+                    "kind": "Pod",
+                    "metadata": _metadata("worker", "pod"),
+                    "spec": {"containers": [{"name": "task", "resources": {}}]},
+                    "status": {
+                        "containerStatuses": [{"name": "other", "restartCount": 3, "state": {}}]
+                    },
+                }
+            ],
+            "containerStatuses contains names absent from Pod containers: other",
+        ),
     ),
 )
 def test_kubernetes_snapshot_rejects_ambiguous_workload_names(
