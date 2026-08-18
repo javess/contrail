@@ -344,7 +344,12 @@ def _format_cpu(summary: ExecutionSummary) -> str:
 def _format_output(byte_count: int | None, digest: str | None, complete: bool | None) -> str:
     if byte_count is None or digest is None:
         return "unknown"
-    suffix = " (incomplete: pipe remained open after exit)" if complete is False else ""
+    if complete is None:
+        suffix = " (completeness unknown)"
+    elif complete is False:
+        suffix = " (incomplete: pipe remained open after exit)"
+    else:
+        suffix = ""
     return f"{byte_count} B, sha256:{digest[:12]}{suffix}"
 
 

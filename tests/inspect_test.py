@@ -222,3 +222,36 @@ def test_inspection_rejects_out_of_range_otlp_completeness_counts(tmp_path: Path
 
     assert summary.missing_causal_references is None
     assert summary.dropped_attribute_count is None
+
+
+def test_text_inspection_reports_invalid_output_completeness(tmp_path: Path) -> None:
+    runpack = tmp_path / "invalid-output-completeness.runpack"
+    digest = "a" * 64
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution(
+                "run",
+                "run",
+                0,
+                10,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {
+                    "output": {
+                        "stdout": {
+                            "bytes": 5,
+                            "sha256": digest,
+                            "pipe_open_after_exit": "false",
+                        }
+                    }
+                },
+            )
+        )
+
+    summary = inspect_runpack(runpack)
+    rendered = render_summary(summary, "text")
+
+    assert summary.stdout_complete is None
+    assert f"stdout:   5 B, sha256:{digest[:12]} (completeness unknown)" in rendered
