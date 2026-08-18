@@ -191,7 +191,7 @@ def _command_json(value: object) -> str:
 def _object(value: str) -> dict[str, JsonValue]:
     try:
         decoded = _checked_json(json.loads(value))
-    except (json.JSONDecodeError, TypeError) as exc:
+    except (json.JSONDecodeError, TypeError, RecursionError) as exc:
         raise RunpackError("invalid JSON object in runpack") from exc
     if not isinstance(decoded, dict):
         raise RunpackError("expected a JSON object in runpack")

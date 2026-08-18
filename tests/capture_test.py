@@ -307,6 +307,17 @@ def test_reader_rejects_non_finite_embedded_json_numbers(tmp_path: Path) -> None
         inspect_runpack(output)
 
 
+def test_reader_normalizes_excessively_nested_embedded_json(tmp_path: Path) -> None:
+    output = tmp_path / "nested-json.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="nested-json")
+    nested = '{"value":' + "[" * 2_000 + "0" + "]" * 2_000 + "}"
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE executions SET metadata_json = ?", (nested,))
+
+    with pytest.raises(RunpackError, match="invalid JSON object in runpack"):
+        inspect_runpack(output)
+
+
 def test_reader_rejects_reversed_execution_intervals(tmp_path: Path) -> None:
     output = tmp_path / "reversed.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="reversed")
