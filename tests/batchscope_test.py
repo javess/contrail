@@ -157,6 +157,39 @@ def test_kubernetes_lifecycle_uses_the_uniquely_correlated_job(tmp_path: Path) -
     ]
 
 
+def test_kubernetes_lifecycle_does_not_borrow_unrelated_container_intervals(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "unrelated-container.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("jobs", "jobs", 0, 100, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("job-a", "workload.job", "job-a", 10, 90),
+                _event("pod-a", "workload.pod", "pod-a", 20, 80),
+                _event("job-b", "workload.job", "job-b", 0, 100),
+                _event("pod-b", "workload.pod", "pod-b", 1, 99),
+                _event("container-b", "workload.container", "container-b", 2, 98),
+                _event("trace-root", "operation", "trace-root", 30, 70),
+            )
+        )
+        writer.add_causal_edges(
+            (
+                CausalEdge("job-a", "pod-a", "owns", 1.0, {}),
+                CausalEdge("pod-a", "trace-root", "correlates", 1.0, {}),
+                CausalEdge("job-b", "pod-b", "owns", 1.0, {}),
+                CausalEdge("pod-b", "container-b", "contains", 1.0, {}),
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert [(phase.name, phase.duration_seconds) for phase in analysis.lifecycle] == [
+        ("provisioning", 10 / 1_000_000_000)
+    ]
+
+
 def test_batchscope_cli_emits_structured_json(tmp_path: Path) -> None:
     runpack = tmp_path / "batch.runpack"
     _write_batch(runpack)
