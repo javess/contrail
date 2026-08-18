@@ -161,6 +161,30 @@ print("result")
     assert summary.record_counts["events"] == 1
 
 
+def test_record_process_preserves_core_capture_for_oversized_annotation_fields(
+    tmp_path: Path,
+) -> None:
+    workload = tmp_path / "oversized-field.py"
+    workload.write_text(
+        """
+from runtime_tools import runtime
+
+runtime.event("oversized", value="x" * (4 * 1024 * 1024))
+print("result")
+""".strip(),
+        encoding="utf-8",
+    )
+    output = tmp_path / "oversized-field.runpack"
+
+    exit_code = record_process((sys.executable, str(workload)), output, name="oversized-field")
+
+    summary = inspect_runpack(output)
+    assert exit_code == 0
+    assert summary.annotation_error is not None
+    assert summary.annotation_error.startswith("runpack JSON exceeds the 4194304-byte field limit")
+    assert summary.record_counts["events"] == 1
+
+
 def test_record_process_preserves_core_capture_for_reversed_annotation_intervals(
     tmp_path: Path,
 ) -> None:

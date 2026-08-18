@@ -559,6 +559,27 @@ class RunpackWriter:
                 (_event_values(event) for event in events),
             )
 
+    def add_event_graph(self, events: Iterable[Event], edges: Iterable[CausalEdge]) -> None:
+        """Add related events and edges in one transaction."""
+        with self._writing(), self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO events(
+                    id, kind, name, entity_id, started_at_ns, finished_at_ns,
+                    clock_domain, uncertainty_ns, sequence, attributes_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (_event_values(event) for event in events),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO causal_edges(
+                    source_event_id, target_event_id, kind, confidence, attributes_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (_edge_values(edge) for edge in edges),
+            )
+
     def add_causal_edge(self, edge: CausalEdge) -> None:
         with self._writing():
             self._connection.execute(

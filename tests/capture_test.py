@@ -826,6 +826,22 @@ def test_bulk_attachment_write_rolls_back_non_binary_content(tmp_path: Path) -> 
         assert reader.attachments() == ()
 
 
+def test_event_graph_write_rolls_back_events_when_an_edge_is_invalid(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-event-graph.runpack"
+    event = Event("event", "event", "event", None, 0, 1, "test", None, None, {})
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        with pytest.raises(RunpackError, match="FOREIGN KEY constraint failed"):
+            writer.add_event_graph(
+                (event,),
+                (CausalEdge("event", "missing", "causes", 1.0, {}),),
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.events() == ()
+        assert reader.causal_edges() == ()
+
+
 def test_each_capture_reports_its_own_child_peak_memory(tmp_path: Path) -> None:
     large = tmp_path / "large.runpack"
     small = tmp_path / "small.runpack"

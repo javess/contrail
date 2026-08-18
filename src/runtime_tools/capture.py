@@ -28,7 +28,7 @@ from runtime_tools.model import (
     JsonValue,
     Measurement,
 )
-from runtime_tools.storage import RunpackWriter
+from runtime_tools.storage import RunpackError, RunpackWriter
 
 
 class CaptureError(ValueError):
@@ -299,7 +299,8 @@ def record_process(
                 annotation_events, annotation_edges = load_annotations(
                     annotation_path, entity_id=entity_id
                 )
-            except AnnotationError as exc:
+                writer.add_event_graph(annotation_events, annotation_edges)
+            except (AnnotationError, RunpackError) as exc:
                 annotation_events, annotation_edges = (), ()
                 capture_metadata = metadata.get("capture")
                 assert isinstance(capture_metadata, dict)
@@ -307,8 +308,6 @@ def record_process(
                     **metadata,
                     "capture": {**capture_metadata, "annotation_error": str(exc)},
                 }
-            writer.add_events(annotation_events)
-            writer.add_causal_edges(annotation_edges)
             measurements = (
                 Measurement("process.wall_time", wall_seconds, "s", finished_at_ns, entity_id, {}),
                 Measurement(
