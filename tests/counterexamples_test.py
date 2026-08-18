@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools.proofline import ContractError, ExperimentError, search_counterexample
+from runtime_tools.proofline import (
+    ContractError,
+    ExperimentError,
+    counterexamples,
+    search_counterexample,
+)
+from runtime_tools.proofline.experiments import ExperimentResult
+from runtime_tools.proofline.verify import ClaimResult, VerificationReport
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -193,3 +200,56 @@ def test_counterexample_search_rejects_existing_output_before_loading_parameters
             workload=Path("workload.py"),
             output_dir=output,
         )
+
+
+def test_counterexample_search_does_not_treat_unverifiable_claims_as_violations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(
+        "parameters:\n  value:\n    type: integer\n    min: 0\n    max: 1\n",
+        encoding="utf-8",
+    )
+    calls = 0
+
+    def unverifiable(*args: object, **kwargs: object) -> ExperimentResult:
+        nonlocal calls
+        calls += 1
+        report = VerificationReport(
+            "baseline",
+            "candidate",
+            (
+                ClaimResult(
+                    "contract",
+                    "output_equivalent",
+                    "output_equivalent",
+                    "unverifiable",
+                    "equivalent output",
+                    "output identity unavailable",
+                ),
+            ),
+        )
+        return ExperimentResult(
+            tmp_path / "baseline.runpack",
+            tmp_path / "candidate.runpack",
+            0,
+            0,
+            report,
+        )
+
+    monkeypatch.setattr(counterexamples, "run_experiment", unverifiable)
+
+    result = search_counterexample(
+        tmp_path / "contract.yaml",
+        parameters,
+        baseline_ref="main",
+        candidate_ref="candidate",
+        workload=Path("workload.py"),
+        output_dir=tmp_path / "output",
+        max_examples=4,
+        cwd=tmp_path,
+    )
+
+    assert result is None
+    assert calls > 0

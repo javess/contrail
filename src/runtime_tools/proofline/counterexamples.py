@@ -99,6 +99,10 @@ def _arguments(parameters: tuple[IntegerParameter, ...], values: dict[str, int])
     return tuple(f"{parameter.flag}={values[parameter.name]}" for parameter in parameters)
 
 
+def _has_violation(experiment: ExperimentResult) -> bool:
+    return any(result.status == "fail" for result in experiment.verification.results)
+
+
 def search_counterexample(
     contract: Path,
     parameters_path: Path,
@@ -136,7 +140,7 @@ def search_counterexample(
                 output_dir=Path(directory) / "artifacts",
                 cwd=repo,
             )
-            result = not experiment.verification.passed
+            result = _has_violation(experiment)
             cache[key] = result
             return result
 
