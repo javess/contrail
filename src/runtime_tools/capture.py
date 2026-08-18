@@ -101,7 +101,12 @@ def _pump(
                 captured.extend(chunk[: capture_limit - len(captured)])
         if sink is not None:
             try:
-                sink.write(chunk)
+                remaining = memoryview(chunk)
+                while remaining:
+                    written = sink.write(remaining)
+                    if written is None or written <= 0 or written > len(remaining):
+                        raise OSError("output relay did not accept the complete chunk")
+                    remaining = remaining[written:]
                 sink.flush()
             except Exception as exc:
                 relay_error = f"{type(exc).__name__}: {exc}"

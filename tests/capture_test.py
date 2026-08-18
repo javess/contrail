@@ -181,6 +181,33 @@ def test_record_process_drains_output_after_relay_failure(tmp_path: Path) -> Non
     assert stdout_metadata["relay_error"] == "BrokenPipeError: consumer closed"
 
 
+def test_record_process_completes_short_output_relay_writes(tmp_path: Path) -> None:
+    class ShortSink(io.BytesIO):
+        def write(self, data: Buffer, /) -> int:
+            return super().write(memoryview(data)[:3])
+
+    output = tmp_path / "short-relay.runpack"
+    sink = ShortSink()
+    content = b"complete relay"
+
+    exit_code = record_process(
+        (sys.executable, "-c", f"import sys; sys.stdout.buffer.write({content!r})"),
+        output,
+        name="short-relay",
+        stdout=sink,
+    )
+
+    assert exit_code == 0
+    assert sink.getvalue() == content
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+    output_metadata = execution.metadata["output"]
+    assert isinstance(output_metadata, dict)
+    stdout_metadata = output_metadata["stdout"]
+    assert isinstance(stdout_metadata, dict)
+    assert "relay_error" not in stdout_metadata
+
+
 def test_record_process_does_not_wait_for_descendants_holding_output_pipes(
     tmp_path: Path,
 ) -> None:
