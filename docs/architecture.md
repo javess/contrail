@@ -63,7 +63,10 @@ is optional and never required for core queries.
 Every artifact contains a schema version, producer version, execution row, and
 normalized tables. Readers reject unsupported major schema versions and accept
 additive minor versions. Version 1.1 adds optional attachments while version 1
-core tables remain readable.
+core tables remain readable. Runpacks use SQLite's DELETE journal mode so a
+completed artifact is one portable file; readers reject WAL-mode databases that
+may depend on unshipped sidecars. Executable schema triggers are also rejected
+before inspection or enrichment.
 
 ## Package direction
 

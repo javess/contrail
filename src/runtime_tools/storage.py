@@ -494,6 +494,9 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
     application_id = connection.execute("PRAGMA application_id").fetchone()
     if application_id is None or application_id[0] != APPLICATION_ID:
         raise RunpackError("file is not a Contrail runpack")
+    journal_mode = connection.execute("PRAGMA journal_mode").fetchone()
+    if journal_mode is None or str(journal_mode[0]).lower() != "delete":
+        raise RunpackError("runpack must use DELETE journal mode for single-file portability")
     tables = {
         str(row[0])
         for row in connection.execute(

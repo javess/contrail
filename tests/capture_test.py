@@ -615,6 +615,16 @@ def test_reader_rejects_sqlite_triggers_before_they_can_mutate_enrichment(
         assert connection.execute("SELECT count(*) FROM events").fetchone()[0] == 1
 
 
+def test_reader_rejects_wal_mode_runpacks_that_depend_on_sidecar_files(tmp_path: Path) -> None:
+    output = tmp_path / "wal.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="wal")
+    with sqlite3.connect(output) as connection:
+        assert connection.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+
+    with pytest.raises(RunpackError, match="DELETE journal mode for single-file portability"):
+        RunpackReader(output)
+
+
 def test_reader_rejects_runpacks_without_required_identity_constraints(
     tmp_path: Path,
 ) -> None:
