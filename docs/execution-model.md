@@ -16,7 +16,9 @@ An **event** is an occurrence. It has a start and optional finish, so the same
 record supports instants and intervals. Events have a semantic `kind`, a
 human-readable operation name, an optional owning entity, and attributes.
 Adapter-specific identifiers such as trace and span IDs live in correlation
-fields or attributes and do not become core identity.
+attributes. When an adapter must derive a core ID from multiple external
+identifiers, each component is encoded independently; delimiter-bearing source
+values therefore cannot make two distinct identity tuples alias.
 
 A **causal edge** states that one event constrained or caused another. Causality
 is stored separately from timestamps because clocks can disagree and async
@@ -75,9 +77,10 @@ that group remains unavailable rather than being reported as zero.
 Execution, entity, and event IDs are unique within an artifact. Generated IDs
 are opaque. Repeatable logical identity belongs in semantic keys such as entity
 kind/name, operation name, stage path, attributes, and source-local sequence.
-RunDiff currently compares aggregate semantic keys rather than assuming IDs
-survive repeated executions. Exact and structural matching remain future layers
-over the same identity model.
+RunDiff marks artifacts with the same execution ID as exact matches. Distinct
+executions compare aggregate semantic keys rather than assuming event or entity
+IDs survive repetition. Structural matching remains a future layer over the
+same identity model.
 
 ## Query implications
 
