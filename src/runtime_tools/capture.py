@@ -218,8 +218,14 @@ def record_process(
     capture_output_limit: int | None = None,
 ) -> int:
     """Run ``command``, write ``output``, and return the process exit code."""
+    if not isinstance(command, tuple) or not all(isinstance(item, str) for item in command):
+        raise CaptureError("command must be a tuple of strings")
     if not command:
         raise CaptureError("a command is required")
+    if not command[0]:
+        raise CaptureError("command executable must be non-empty")
+    if any("\0" in item for item in command):
+        raise CaptureError("command arguments cannot contain NUL bytes")
     if capture_output_limit is not None and (
         not isinstance(capture_output_limit, int) or isinstance(capture_output_limit, bool)
     ):
@@ -279,7 +285,7 @@ def record_process(
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                 )
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 raise CaptureError(f"could not start command {command[0]!r}: {exc}") from exc
 
             if process.stdout is None or process.stderr is None:

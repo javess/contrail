@@ -302,6 +302,28 @@ def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None
     assert output.read_bytes() == b"keep me"
 
 
+@pytest.mark.parametrize(
+    ("command", "message"),
+    (
+        (cast(Any, [sys.executable]), "command must be a tuple of strings"),
+        (("",), "command executable must be non-empty"),
+        (("bad\0command",), "command arguments cannot contain NUL bytes"),
+    ),
+)
+def test_record_process_rejects_invalid_command_shapes_before_creating_artifacts(
+    tmp_path: Path,
+    command: tuple[str, ...],
+    message: str,
+) -> None:
+    output = tmp_path / "invalid-command.runpack"
+
+    with pytest.raises(CaptureError, match=message):
+        record_process(command, output, name="invalid-command")
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".invalid-command.*"))
+
+
 def test_record_process_normalizes_publication_failures_and_cleans_temporary_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
