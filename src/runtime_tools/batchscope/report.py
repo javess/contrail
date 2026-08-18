@@ -7,6 +7,8 @@ import json
 from runtime_tools.batchscope.analysis import BatchAnalysis
 from runtime_tools.terminal import terminal_text
 
+MAX_TEXT_SECTION_ITEMS = 100
+
 
 def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
     if output_format == "json":
@@ -18,11 +20,12 @@ def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
         "",
         "Lifecycle",
     ]
-    for phase in analysis.lifecycle:
+    for phase in analysis.lifecycle[:MAX_TEXT_SECTION_ITEMS]:
         lines.append(
             f"  {terminal_text(phase.name):<24} "
             f"{_duration(phase.duration_seconds):>10}  {phase.source}"
         )
+    _append_omitted(lines, len(analysis.lifecycle))
     lines.extend(("", "Critical path"))
     if analysis.critical_path is None:
         lines.append("  unavailable")
@@ -32,7 +35,11 @@ def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
         lines.append(f"  active execution: {_duration(path.active_seconds)}")
         lines.append(f"  causal waiting: {_duration(path.waiting_seconds)}")
         lines.append(f"  parallel slack: {_duration(path.parallel_slack_seconds)}")
-        lines.append(f"  {' → '.join(terminal_text(name) for name in path.event_names)}")
+        lines.append(
+            "  "
+            + " → ".join(terminal_text(name) for name in path.event_names[:MAX_TEXT_SECTION_ITEMS])
+        )
+        _append_omitted(lines, len(path.event_names))
     lines.extend(("", "Throughput"))
     if analysis.throughput is None:
         lines.append("  no progress evidence")
@@ -52,10 +59,17 @@ def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
     lines.extend(("", "Bottlenecks"))
     if not analysis.bottlenecks:
         lines.append("  none classified from available evidence")
-    for bottleneck in analysis.bottlenecks:
+    for bottleneck in analysis.bottlenecks[:MAX_TEXT_SECTION_ITEMS]:
         lines.append(f"  {terminal_text(bottleneck.classification)} ({bottleneck.confidence:.0%})")
         lines.append(f"    {terminal_text(bottleneck.evidence)}")
+    _append_omitted(lines, len(analysis.bottlenecks))
     return "\n".join(lines)
+
+
+def _append_omitted(lines: list[str], total: int) -> None:
+    omitted = total - MAX_TEXT_SECTION_ITEMS
+    if omitted > 0:
+        lines.append(f"  … {omitted:,} additional items omitted from text output")
 
 
 def _duration(value: float | None) -> str:

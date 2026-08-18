@@ -10,6 +10,12 @@ import pytest
 
 from runtime_tools import record_process
 from runtime_tools.batchscope import analyze_runpack
+from runtime_tools.batchscope.analysis import (
+    BatchAnalysis,
+    Bottleneck,
+    CriticalPath,
+    LifecyclePhase,
+)
 from runtime_tools.batchscope.report import render_analysis
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue
 from runtime_tools.storage import RunpackWriter
@@ -268,6 +274,25 @@ def test_critical_path_separates_active_time_waiting_and_parallel_slack(tmp_path
     report = render_analysis(analysis, "text")
     assert "active execution: 20.0ms" in report
     assert "causal waiting: 20.0ms" in report
+
+
+def test_batchscope_text_report_bounds_repeated_sections() -> None:
+    names = tuple(f"event-{index}" for index in range(101))
+    analysis = BatchAnalysis(
+        execution_id="execution",
+        name="bounded",
+        total_seconds=1.0,
+        lifecycle=tuple(LifecyclePhase(name, 0.01, "explicit") for name in names),
+        critical_path=CriticalPath(1.0, 1.0, 0.0, 0.0, names, names, "observed", False),
+        throughput=None,
+        bottlenecks=tuple(Bottleneck("serialized_stage", name, 0.9) for name in names),
+    )
+
+    report = render_analysis(analysis, "text")
+
+    assert "event-99" in report
+    assert "event-100" not in report
+    assert report.count("1 additional items omitted from text output") == 3
 
 
 def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> None:
