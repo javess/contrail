@@ -63,8 +63,8 @@ uv run runtime query demo.runpack \
 
 See [querying runpacks](docs/querying.md) for schema and output details.
 
-Bounded OpenTelemetry trace exports in OTLP/JSON can be normalized into the
-same artifact and inspected as a causal tree:
+OpenTelemetry trace exports in OTLP/JSON, bounded to 64 MiB per input, can be
+normalized into the same artifact and inspected as a causal tree:
 
 ```bash
 uv run runtime import-otel trace.json --name checkout

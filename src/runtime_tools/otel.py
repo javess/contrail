@@ -21,6 +21,7 @@ class OtelImportError(ValueError):
 
 
 _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
+MAX_OTLP_DOCUMENT_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,10 +185,14 @@ def _reject_json_constant(value: str) -> Never:
 
 def _load_document(source: Path) -> tuple[dict[str, object], bytes]:
     try:
-        raw = source.read_bytes()
-        value = json.loads(raw.decode("utf-8"), parse_constant=_reject_json_constant)
+        with source.open("rb") as stream:
+            raw = stream.read(MAX_OTLP_DOCUMENT_BYTES + 1)
     except OSError as exc:
         raise OtelImportError(f"could not read OTLP JSON: {source}") from exc
+    if len(raw) > MAX_OTLP_DOCUMENT_BYTES:
+        raise OtelImportError(f"OTLP JSON exceeds the {MAX_OTLP_DOCUMENT_BYTES}-byte input limit")
+    try:
+        value = json.loads(raw.decode("utf-8"), parse_constant=_reject_json_constant)
     except UnicodeDecodeError as exc:
         raise OtelImportError("OTLP JSON must be UTF-8") from exc
     except json.JSONDecodeError as exc:

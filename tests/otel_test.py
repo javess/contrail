@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from runtime_tools import otel
 from runtime_tools.inspect import inspect_runpack, render_causal_tree
 from runtime_tools.otel import OtelImportError, import_otlp_json
 from runtime_tools.storage import RunpackReader
@@ -534,5 +535,20 @@ def test_otlp_json_import_rejects_non_standard_json_constants(tmp_path: Path) ->
 
     with pytest.raises(OtelImportError, match="non-finite JSON constant: NaN"):
         import_otlp_json(source, output, name="non-standard")
+
+    assert not output.exists()
+
+
+def test_otlp_json_import_rejects_oversized_sources_before_decoding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "oversized.json"
+    output = tmp_path / "oversized.runpack"
+    source.write_bytes(b"{" + b" " * 32 + b"}")
+    monkeypatch.setattr(otel, "MAX_OTLP_DOCUMENT_BYTES", 32)
+
+    with pytest.raises(OtelImportError, match="OTLP JSON exceeds the 32-byte input limit"):
+        import_otlp_json(source, output, name="oversized")
 
     assert not output.exists()
