@@ -229,7 +229,7 @@ def import_prometheus_response(
                 yield Measurement(
                     name,
                     _sample_value(raw_value),
-                    labels.get("unit", "1"),
+                    labels.get("unit") or "1",
                     timestamp_ns,
                     entity_id,
                     attributes,

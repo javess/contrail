@@ -78,6 +78,40 @@ def test_prometheus_response_imports_only_windowed_samples_and_matches_pod(
     assert source.is_file()
 
 
+def test_prometheus_response_normalizes_an_empty_unit_as_dimensionless(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [
+                        {
+                            "metric": {"__name__": "ratio", "unit": ""},
+                            "value": [1, "0.5"],
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_prometheus_response(source, response, output)
+
+    with RunpackReader(output) as reader:
+        measurement = reader.measurements()[0]
+    assert measurement.unit == "1"
+    assert measurement.attributes["unit"] == ""
+
+
 def test_prometheus_response_rejects_non_finite_timestamps(tmp_path: Path) -> None:
     source = tmp_path / "source.runpack"
     response = tmp_path / "metrics.json"
