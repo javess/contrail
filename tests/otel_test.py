@@ -1434,6 +1434,50 @@ def test_otlp_json_import_normalizes_excessive_document_nesting(tmp_path: Path) 
     assert not output.exists()
 
 
+def test_otlp_json_import_normalizes_source_directory_resolution_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "trace.json"
+    output = tmp_path / "trace.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    resolve = Path.resolve
+
+    def fail_source_directory(path: Path, strict: bool = False) -> Path:
+        if path == source.parent:
+            raise OSError("simulated resolution failure")
+        return resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", fail_source_directory)
+
+    with pytest.raises(OtelImportError, match="could not resolve OTLP source directory"):
+        import_otlp_json(source, output, name="trace")
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".trace.runpack.tmp-*"))
+
+
 def test_otlp_json_import_preserves_a_colliding_temporary_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

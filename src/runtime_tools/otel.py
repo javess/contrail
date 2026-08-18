@@ -76,6 +76,13 @@ def _source_name(source: Path) -> str:
     return _validate_utf8(source.name, "OTLP source filename")
 
 
+def _source_directory(source: Path) -> str:
+    try:
+        return str(source.parent.resolve())
+    except (OSError, RuntimeError) as exc:
+        raise OtelImportError("could not resolve OTLP source directory") from exc
+
+
 def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
     if depth > MAX_OTLP_ATTRIBUTE_DEPTH:
         raise OtelImportError(f"OTLP attribute nesting exceeds {MAX_OTLP_ATTRIBUTE_DEPTH} levels")
@@ -384,6 +391,7 @@ def import_otlp_json(
         raise OtelImportError(f"output directory does not exist: {output.parent}")
     source_name = _source_name(source)
     document, raw_document = _load_document(source)
+    working_directory = _source_directory(source)
     resource_spans = _as_list(document.get("resourceSpans"), "resourceSpans")
     execution_id = uuid.uuid4().hex
     temporary = output.with_name(f".{output.name}.tmp-{uuid.uuid4().hex}")
@@ -586,7 +594,7 @@ def import_otlp_json(
                     started_at_ns=started_at_ns,
                     finished_at_ns=finished_at_ns,
                     command=(),
-                    working_directory=str(source.parent.resolve()),
+                    working_directory=working_directory,
                     exit_code=None,
                     revision=None,
                     metadata={
