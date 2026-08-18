@@ -217,6 +217,30 @@ def test_record_process_drains_output_after_relay_failure(tmp_path: Path) -> Non
     assert stdout_metadata["relay_error"] == "BrokenPipeError: consumer closed"
 
 
+def test_record_process_normalizes_invalid_unicode_in_relay_errors(tmp_path: Path) -> None:
+    class InvalidUnicodeSink(io.BytesIO):
+        def write(self, data: Buffer, /) -> int:
+            raise OSError("bad-\ud800")
+
+    output = tmp_path / "invalid-relay-error.runpack"
+
+    exit_code = record_process(
+        (sys.executable, "-c", "print('result')"),
+        output,
+        name="invalid-relay-error",
+        stdout=InvalidUnicodeSink(),
+    )
+
+    with RunpackReader(output) as reader:
+        metadata = reader.execution().metadata
+    output_metadata = metadata["output"]
+    assert isinstance(output_metadata, dict)
+    stdout_metadata = output_metadata["stdout"]
+    assert isinstance(stdout_metadata, dict)
+    assert exit_code == 0
+    assert stdout_metadata["relay_error"] == r"OSError: bad-\ud800"
+
+
 def test_record_process_completes_short_output_relay_writes(tmp_path: Path) -> None:
     class ShortSink(io.BytesIO):
         def write(self, data: Buffer, /) -> int:

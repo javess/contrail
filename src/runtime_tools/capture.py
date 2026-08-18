@@ -29,6 +29,7 @@ from runtime_tools.model import (
     Measurement,
 )
 from runtime_tools.storage import RunpackError, RunpackWriter
+from runtime_tools.terminal import terminal_text
 
 
 class CaptureError(ValueError):
@@ -117,7 +118,7 @@ def _pump(
                     remaining = remaining[written:]
                 sink.flush()
             except Exception as exc:
-                relay_error = f"{type(exc).__name__}: {exc}"
+                relay_error = terminal_text(f"{type(exc).__name__}: {exc}")
                 sink = None
 
     while True:
