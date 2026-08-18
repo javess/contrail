@@ -270,14 +270,23 @@ def _known_equivalence(baseline: object | None, candidate: object | None) -> boo
 
 
 def _output_equivalence(
-    baseline: str | None,
-    candidate: str | None,
+    baseline_bytes: int | None,
+    baseline_digest: str | None,
+    candidate_bytes: int | None,
+    candidate_digest: str | None,
     baseline_complete: bool | None,
     candidate_complete: bool | None,
 ) -> bool | None:
-    if baseline_complete is not True or candidate_complete is not True:
+    if (
+        baseline_bytes is None
+        or baseline_digest is None
+        or candidate_bytes is None
+        or candidate_digest is None
+        or baseline_complete is not True
+        or candidate_complete is not True
+    ):
         return None
-    return _known_equivalence(baseline, candidate)
+    return (baseline_bytes, baseline_digest) == (candidate_bytes, candidate_digest)
 
 
 def _incomplete_streams(summary: ExecutionSummary) -> tuple[str, ...]:
@@ -482,13 +491,17 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
 
     exit_equivalent = _known_equivalence(baseline_summary.exit_code, candidate_summary.exit_code)
     output_equivalent = _output_equivalence(
+        baseline_summary.stdout_bytes,
         baseline_summary.stdout_sha256,
+        candidate_summary.stdout_bytes,
         candidate_summary.stdout_sha256,
         baseline_summary.stdout_complete,
         candidate_summary.stdout_complete,
     )
     stderr_equivalent = _output_equivalence(
+        baseline_summary.stderr_bytes,
         baseline_summary.stderr_sha256,
+        candidate_summary.stderr_bytes,
         candidate_summary.stderr_sha256,
         baseline_summary.stderr_complete,
         candidate_summary.stderr_complete,

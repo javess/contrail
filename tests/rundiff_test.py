@@ -662,6 +662,29 @@ def test_compare_runpacks_keeps_invalid_output_completeness_unknown(tmp_path: Pa
     assert "stdout:      unknown" in render_diff(diff, "text")
 
 
+def test_compare_runpacks_keeps_invalid_output_byte_counts_unknown(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    record_process((sys.executable, "-c", "print('same')"), baseline, name="baseline")
+    record_process((sys.executable, "-c", "print('same')"), candidate, name="candidate")
+    with RunpackReader(baseline) as reader:
+        execution = reader.execution()
+    metadata = execution.metadata.copy()
+    output = metadata["output"]
+    assert isinstance(output, dict)
+    stdout = output["stdout"]
+    assert isinstance(stdout, dict)
+    stdout["bytes"] = True
+    with RunpackWriter.open_existing(baseline) as writer:
+        writer.set_execution_metadata(execution.id, metadata)
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.output_equivalent is None
+    assert diff.stderr_equivalent is True
+    assert diff.outcome == "unknown"
+
+
 def test_compare_runpacks_keeps_outcome_unknown_when_stderr_evidence_is_missing(
     tmp_path: Path,
 ) -> None:
