@@ -492,6 +492,30 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert payload["operation_concurrency_changes"][0]["candidate"] == 3
 
 
+def test_rundiff_text_hides_submillisecond_duration_noise_but_json_retains_it(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, duration_ns in ((baseline, 100_000), (candidate, 101_000)):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(path.stem, path.stem, 0, 1_000_000, (), str(tmp_path), 0, None, {})
+            )
+            writer.add_entity(Entity("worker", "service", "worker", None, {}))
+            writer.add_event(
+                Event("work", "operation", "work", "worker", 0, duration_ns, "test", None, 0, {})
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+    text_report = render_diff(diff, "text")
+    json_report = json.loads(render_diff(diff, "json"))
+
+    assert "Aggregate operation duration changes" not in text_report
+    assert "100.0µs → 101.0µs" in text_report
+    assert len(json_report["operation_duration_changes"]) == 1
+
+
 def test_rundiff_text_report_bounds_each_change_section(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -9,6 +9,7 @@ from runtime_tools.rundiff.compare import EdgeCountChange, ExecutionDiff, ValueC
 from runtime_tools.terminal import terminal_text
 
 MAX_TEXT_SECTION_ITEMS = 100
+MIN_TEXT_DURATION_DELTA_SECONDS = 0.001
 
 
 def render_diff(diff: ExecutionDiff, output_format: str) -> str:
@@ -145,11 +146,15 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 f"     {concurrency_change.baseline:,} → {concurrency_change.candidate:,} {percent}"
             )
         _append_omitted(lines, len(diff.operation_concurrency_changes))
-    if diff.operation_duration_changes:
+    text_duration_changes = tuple(
+        change
+        for change in diff.operation_duration_changes
+        if abs(change.candidate_seconds - change.baseline_seconds)
+        >= MIN_TEXT_DURATION_DELTA_SECONDS
+    )
+    if text_duration_changes:
         lines.extend(("", "Aggregate operation duration changes"))
-        for index, duration_change in enumerate(
-            diff.operation_duration_changes[:MAX_TEXT_SECTION_ITEMS], 1
-        ):
+        for index, duration_change in enumerate(text_duration_changes[:MAX_TEXT_SECTION_ITEMS], 1):
             percent = _percent(
                 duration_change.percent,
                 duration_change.baseline_seconds,
@@ -164,7 +169,7 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 f"     {_duration(duration_change.baseline_seconds)} → "
                 f"{_duration(duration_change.candidate_seconds)} {percent}"
             )
-        _append_omitted(lines, len(diff.operation_duration_changes))
+        _append_omitted(lines, len(text_duration_changes))
     new_edges = tuple(change for change in diff.edge_count_changes if change.change_kind == "new")
     removed_edges = tuple(
         change for change in diff.edge_count_changes if change.change_kind == "removed"
@@ -187,7 +192,7 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         and not diff.operation_count_changes
         and not diff.operation_error_count_changes
         and not diff.operation_concurrency_changes
-        and not diff.operation_duration_changes
+        and not text_duration_changes
         and not diff.edge_count_changes
     ):
         lines.extend(
@@ -244,6 +249,8 @@ def _percent(percent: float | None, baseline: float | int, candidate: float | in
 
 
 def _duration(value: float) -> str:
+    if value < 0.001:
+        return f"{value * 1_000_000:.1f}µs"
     if value < 1:
         return f"{value * 1000:.1f}ms"
     return f"{value:.3f}s"
