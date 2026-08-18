@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 from typing import Never
 
+from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import CausalEdge, Event, JsonValue
 
 
@@ -107,7 +108,14 @@ def load_annotations(
         lines.pop()
     for line_number, line in enumerate(lines, 1):
         try:
-            record = _object(json.loads(line, parse_constant=_reject_json_constant), "annotation")
+            record = _object(
+                json.loads(
+                    line,
+                    parse_constant=_reject_json_constant,
+                    object_pairs_hook=reject_duplicate_object,
+                ),
+                "annotation",
+            )
         except json.JSONDecodeError as exc:
             raise AnnotationError(f"invalid annotation JSON on line {line_number}") from exc
         except (AnnotationError, RecursionError, ValueError) as exc:

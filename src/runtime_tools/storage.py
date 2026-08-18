@@ -13,6 +13,7 @@ from pathlib import Path
 from types import TracebackType
 
 from runtime_tools import __version__
+from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import (
     Attachment,
     CausalEdge,
@@ -226,7 +227,7 @@ def _object(value: object) -> dict[str, JsonValue]:
         raise RunpackError("invalid JSON object in runpack")
     _validate_json_size(value)
     try:
-        decoded = json.loads(value)
+        decoded = json.loads(value, object_pairs_hook=reject_duplicate_object)
     except (TypeError, ValueError, RecursionError) as exc:
         raise RunpackError("invalid JSON object in runpack") from exc
     try:
@@ -877,7 +878,7 @@ class RunpackReader:
             raise RunpackError("execution command is invalid JSON")
         _validate_json_size(raw_command)
         try:
-            command = json.loads(raw_command)
+            command = json.loads(raw_command, object_pairs_hook=reject_duplicate_object)
         except (TypeError, ValueError, RecursionError) as exc:
             raise RunpackError("execution command is invalid JSON") from exc
         if not isinstance(command, list) or not all(isinstance(item, str) for item in command):

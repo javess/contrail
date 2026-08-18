@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Never
 
 from runtime_tools.enrichment import EnrichmentError, enrich_copy
+from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import Entity, JsonValue, Measurement
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
@@ -121,7 +122,11 @@ def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
     except UnicodeDecodeError as exc:
         raise PrometheusImportError("Prometheus response must be UTF-8") from exc
     try:
-        document = json.loads(text, parse_constant=_reject_json_constant)
+        document = json.loads(
+            text,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=reject_duplicate_object,
+        )
     except json.JSONDecodeError as exc:
         raise PrometheusImportError(f"invalid Prometheus JSON at line {exc.lineno}") from exc
     except RecursionError as exc:

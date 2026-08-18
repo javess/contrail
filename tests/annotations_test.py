@@ -137,6 +137,18 @@ print("result")
     assert summary.record_counts["events"] == 1
 
 
+def test_annotation_loader_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    annotations = tmp_path / "duplicates.jsonl"
+    annotations.write_text(
+        '{"record":"event_instant","id":"one","id":"two",'
+        '"kind":"event","name":"duplicate","timestamp_ns":1}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AnnotationError, match="duplicate JSON key: id"):
+        load_annotations(annotations, entity_id="process")
+
+
 def test_record_process_preserves_core_capture_for_non_utf8_annotations(
     tmp_path: Path,
 ) -> None:

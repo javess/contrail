@@ -470,6 +470,19 @@ def test_reader_reports_malformed_embedded_json_as_runpack_error(tmp_path: Path)
         inspect_runpack(output)
 
 
+def test_reader_rejects_duplicate_embedded_json_keys(tmp_path: Path) -> None:
+    output = tmp_path / "duplicate-json-keys.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="duplicate-json-keys")
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            "UPDATE executions SET metadata_json = ?",
+            ('{"output":{},"output":{"forged":true}}',),
+        )
+
+    with pytest.raises(RunpackError, match="invalid JSON object in runpack"):
+        inspect_runpack(output)
+
+
 def test_reader_rejects_non_finite_embedded_json_numbers(tmp_path: Path) -> None:
     output = tmp_path / "non-finite.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="non-finite")

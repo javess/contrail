@@ -1162,6 +1162,17 @@ def test_otlp_json_import_rejects_non_standard_json_constants(tmp_path: Path) ->
     assert not output.exists()
 
 
+def test_otlp_json_import_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    source = tmp_path / "duplicate-keys.json"
+    output = tmp_path / "duplicate-keys.runpack"
+    source.write_text('{"resourceSpans":[],"resourceSpans":[]}', encoding="utf-8")
+
+    with pytest.raises(OtelImportError, match="duplicate JSON key: resourceSpans"):
+        import_otlp_json(source, output, name="duplicate-keys")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_oversized_sources_before_decoding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

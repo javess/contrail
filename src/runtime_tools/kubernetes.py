@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Never
 
 from runtime_tools.enrichment import EnrichmentError, enrich_copy
+from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import CausalEdge, Entity, Event, JsonValue
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
@@ -168,7 +169,11 @@ def _load(source: Path) -> list[dict[str, object]]:
     except UnicodeDecodeError as exc:
         raise KubernetesImportError("Kubernetes snapshot must be UTF-8") from exc
     try:
-        document = json.loads(text, parse_constant=_reject_json_constant)
+        document = json.loads(
+            text,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=reject_duplicate_object,
+        )
     except json.JSONDecodeError as exc:
         raise KubernetesImportError(f"invalid Kubernetes JSON at line {exc.lineno}") from exc
     except RecursionError as exc:

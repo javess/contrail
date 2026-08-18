@@ -824,6 +824,16 @@ def test_kubernetes_snapshot_rejects_non_standard_json_constants(tmp_path: Path)
     assert not output.exists()
 
 
+def test_kubernetes_snapshot_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    snapshot = tmp_path / "duplicate-keys.json"
+    snapshot.write_text('{"items":[],"items":[]}', encoding="utf-8")
+
+    with pytest.raises(KubernetesImportError, match="duplicate JSON key: items"):
+        import_kubernetes_snapshot(
+            tmp_path / "missing.runpack", snapshot, tmp_path / "output.runpack"
+        )
+
+
 @pytest.mark.parametrize(
     ("metadata", "message"),
     (

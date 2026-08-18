@@ -15,6 +15,7 @@ from typing import Never
 
 from runtime_tools.artifacts import publish_without_overwrite
 from runtime_tools.enrichment import enrich_copy
+from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, JsonValue
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
@@ -318,7 +319,11 @@ def _load_document(source: Path) -> tuple[dict[str, object], bytes]:
     if len(raw) > MAX_OTLP_DOCUMENT_BYTES:
         raise OtelImportError(f"OTLP JSON exceeds the {MAX_OTLP_DOCUMENT_BYTES}-byte input limit")
     try:
-        value = json.loads(raw.decode("utf-8"), parse_constant=_reject_json_constant)
+        value = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=reject_duplicate_object,
+        )
     except UnicodeDecodeError as exc:
         raise OtelImportError("OTLP JSON must be UTF-8") from exc
     except json.JSONDecodeError as exc:
