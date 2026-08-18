@@ -240,7 +240,7 @@ def test_proofline_validates_assertion_fields_before_loading_runpacks(
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 
-def test_proofline_rejects_recursive_yaml_values(tmp_path: Path) -> None:
+def test_proofline_rejects_yaml_aliases_before_expansion(tmp_path: Path) -> None:
     contract = tmp_path / "recursive.yaml"
     contract.write_text(
         """
@@ -253,7 +253,7 @@ assertions:
         encoding="utf-8",
     )
 
-    with pytest.raises(ContractError, match="recursive"):
+    with pytest.raises(ContractError, match="YAML aliases are not supported"):
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 

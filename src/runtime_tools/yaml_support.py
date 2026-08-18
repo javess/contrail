@@ -9,6 +9,7 @@ import yaml
 from yaml.constructor import ConstructorError
 from yaml.nodes import MappingNode
 from yaml.resolver import BaseResolver
+from yaml.tokens import AliasToken
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -53,7 +54,15 @@ _UniqueKeyLoader.add_constructor(
 
 
 def load_yaml(value: str) -> Any:
-    """Load safe YAML while rejecting duplicate mapping keys."""
+    """Load safe YAML while rejecting aliases and duplicate mapping keys."""
+    for token in yaml.scan(value):
+        if isinstance(token, AliasToken):
+            raise ConstructorError(
+                None,
+                None,
+                "YAML aliases are not supported",
+                token.start_mark,
+            )
     return yaml.load(value, Loader=_UniqueKeyLoader)
 
 
