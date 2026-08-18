@@ -596,6 +596,43 @@ def test_otlp_json_import_reports_exporter_dropped_links_as_incomplete(
     assert inspect_runpack(output).missing_causal_references == 2
 
 
+def test_otlp_json_import_bounds_dropped_and_unresolved_link_totals(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "overflowed-links.json"
+    output = tmp_path / "overflowed-links.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "droppedLinksCount": (1 << 63) - 1,
+                                        "links": [{"traceId": "missing", "spanId": "missing"}],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="total missing OTLP links exceeds"):
+        import_otlp_json(source, output, name="overflowed-links")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_surfaces_exporter_dropped_attributes(tmp_path: Path) -> None:
     source = tmp_path / "dropped-attributes.json"
     output = tmp_path / "dropped-attributes.runpack"

@@ -552,7 +552,11 @@ def import_otlp_json(
     for trace_id, span_id, target_id, attributes in link_references:
         source_id = _event_id(trace_id, span_id)
         if source_id not in known_events:
-            missing_link_count += 1
+            missing_link_count = _bounded_count_total(
+                missing_link_count,
+                1,
+                "missing OTLP links",
+            )
             continue
         if source_id == target_id:
             raise OtelImportError(f"span cannot link to itself: {trace_id}/{span_id}")
