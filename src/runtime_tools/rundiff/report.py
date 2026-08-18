@@ -90,6 +90,15 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 f"[{change.operation_kind}]"
             )
             lines.append(f"     {change.baseline:,} → {change.candidate:,} {percent}")
+    if diff.operation_error_count_changes:
+        lines.extend(("", "Failed operation changes"))
+        for index, change in enumerate(diff.operation_error_count_changes, 1):
+            percent = _percent(change.percent, change.baseline, change.candidate)
+            lines.append(
+                f"  {index}. {change.entity_name} :: {change.operation_name} "
+                f"[{change.operation_kind}]"
+            )
+            lines.append(f"     {change.baseline:,} → {change.candidate:,} {percent}")
     if diff.operation_concurrency_changes:
         lines.extend(("", "Observed max concurrency changes"))
         for index, concurrency_change in enumerate(diff.operation_concurrency_changes, 1):
@@ -139,6 +148,7 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
     if (
         not diff.entity_count_changes
         and not diff.operation_count_changes
+        and not diff.operation_error_count_changes
         and not diff.operation_concurrency_changes
         and not diff.operation_duration_changes
         and not diff.edge_count_changes
@@ -146,7 +156,7 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         lines.extend(
             (
                 "",
-                "No entity, structural, concurrency, duration, or operation-count changes.",
+                "No entity, structural, error, concurrency, duration, or operation-count changes.",
             )
         )
     return "\n".join(lines)

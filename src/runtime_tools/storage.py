@@ -896,6 +896,41 @@ class RunpackReader:
             for row in rows
         }
 
+    def operation_error_counts(self) -> dict[tuple[str, str, str, str], int]:
+        rows = self._execute(
+            """
+            SELECT
+                COALESCE(entity.kind, 'unowned') AS entity_kind,
+                COALESCE(entity.name, 'unowned') AS entity_name,
+                event.kind AS event_kind,
+                event.name AS event_name,
+                event.attributes_json
+            FROM events AS event
+            LEFT JOIN entities AS entity ON entity.id = event.entity_id
+            WHERE event.kind != 'log.record'
+            """
+        ).fetchall()
+        counts: dict[tuple[str, str, str, str], int] = {}
+        for row in rows:
+            attributes = _object(row["attributes_json"])
+            status = attributes.get("otel.status.code")
+            error_type = attributes.get("error.type")
+            if not (
+                attributes.get("error") is True
+                or status in (2, "2", "STATUS_CODE_ERROR")
+                or isinstance(error_type, str)
+                and bool(error_type)
+            ):
+                continue
+            key = (
+                row["entity_kind"],
+                row["entity_name"],
+                row["event_kind"],
+                row["event_name"],
+            )
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
     def entity_counts(self) -> dict[tuple[str, str], int]:
         rows = self._execute(
             """

@@ -50,7 +50,7 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
                 "test",
                 None,
                 index,
-                {},
+                {"error": candidate and index == 0},
             )
         )
     if candidate:
@@ -140,6 +140,10 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
         ("database", "SELECT items", 1, 3),
         ("metadata", "metadata.lookup", 0, 1),
     ]
+    assert [
+        (change.entity_name, change.operation_name, change.baseline, change.candidate)
+        for change in diff.operation_error_count_changes
+    ] == [("database", "SELECT items", 0, 1)]
     assert [
         (
             change.entity_name,
@@ -245,6 +249,7 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert "database :: SELECT items [client.request]" in text_report
     assert "Entity changes\n  metadata [service]: 0 → 1 (added)" in text_report
     assert "Aggregate operation duration changes" in text_report
+    assert "Failed operation changes" in text_report
     assert "Observed max concurrency changes" in text_report
     assert "database :: SELECT items [client.request]\n     1 → 3 (+200.0%)" in text_report
     assert "gateway :: GET /items [server.request]" in text_report
@@ -265,6 +270,7 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
         }
     ]
     assert payload["operation_count_changes"][0]["candidate"] == 3
+    assert payload["operation_error_count_changes"][0]["candidate"] == 1
     assert payload["operation_duration_changes"][0]["candidate_seconds"] == 0.02
     assert payload["operation_concurrency_changes"][0]["candidate"] == 3
 
@@ -310,9 +316,64 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
     assert compared.returncode == 0
     assert "Outcome\n  equivalent" in compared.stdout
     assert (
-        "No entity, structural, concurrency, duration, or operation-count changes."
+        "No entity, structural, error, concurrency, duration, or operation-count changes."
         in compared.stdout
     )
+
+
+def test_reader_aggregates_only_explicit_operation_error_evidence(tmp_path: Path) -> None:
+    runpack = tmp_path / "errors.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("errors", "errors", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "service", "worker", None, {}))
+        writer.add_events(
+            (
+                Event(
+                    "flag", "operation", "work", "worker", 0, 1, "test", None, None, {"error": True}
+                ),
+                Event(
+                    "status",
+                    "operation",
+                    "work",
+                    "worker",
+                    0,
+                    1,
+                    "test",
+                    None,
+                    None,
+                    {"otel.status.code": "STATUS_CODE_ERROR"},
+                ),
+                Event(
+                    "type",
+                    "operation",
+                    "work",
+                    "worker",
+                    0,
+                    1,
+                    "test",
+                    None,
+                    None,
+                    {"error.type": "TimeoutError"},
+                ),
+                Event(
+                    "ok",
+                    "operation",
+                    "work",
+                    "worker",
+                    0,
+                    1,
+                    "test",
+                    None,
+                    None,
+                    {"otel.status.code": "STATUS_CODE_OK"},
+                ),
+            )
+        )
+
+    with RunpackReader(runpack) as reader:
+        counts = reader.operation_error_counts()
+
+    assert counts == {("service", "worker", "operation", "work"): 3}
 
 
 def test_compare_runpacks_treats_changed_stderr_as_different_behavior(tmp_path: Path) -> None:

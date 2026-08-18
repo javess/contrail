@@ -197,6 +197,7 @@ class ExecutionDiff:
     peak_memory: ValueChange
     entity_count_changes: tuple[EntityCountChange, ...]
     operation_count_changes: tuple[OperationCountChange, ...]
+    operation_error_count_changes: tuple[OperationCountChange, ...]
     operation_concurrency_changes: tuple[OperationConcurrencyChange, ...]
     operation_duration_changes: tuple[OperationDurationChange, ...]
     edge_count_changes: tuple[EdgeCountChange, ...]
@@ -227,6 +228,9 @@ class ExecutionDiff:
             ],
             "operation_count_changes": [
                 change.as_json_value() for change in self.operation_count_changes
+            ],
+            "operation_error_count_changes": [
+                change.as_json_value() for change in self.operation_error_count_changes
             ],
             "operation_concurrency_changes": [
                 change.as_json_value() for change in self.operation_concurrency_changes
@@ -444,6 +448,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         baseline_environment = _selected_environment(baseline_reader.execution().metadata)
         baseline_entities = baseline_reader.entity_counts()
         baseline_operations = baseline_reader.operation_counts()
+        baseline_errors = baseline_reader.operation_error_counts()
         baseline_concurrency = baseline_reader.operation_max_concurrency()
         baseline_durations = baseline_reader.operation_duration_totals()
         baseline_edges = _all_edge_counts(baseline_reader)
@@ -451,6 +456,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         candidate_environment = _selected_environment(candidate_reader.execution().metadata)
         candidate_entities = candidate_reader.entity_counts()
         candidate_operations = candidate_reader.operation_counts()
+        candidate_errors = candidate_reader.operation_error_counts()
         candidate_concurrency = candidate_reader.operation_max_concurrency()
         candidate_durations = candidate_reader.operation_duration_totals()
         candidate_edges = _all_edge_counts(candidate_reader)
@@ -510,6 +516,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         ),
         entity_count_changes=_entity_changes(baseline_entities, candidate_entities),
         operation_count_changes=_operation_changes(baseline_operations, candidate_operations),
+        operation_error_count_changes=_operation_changes(baseline_errors, candidate_errors),
         operation_concurrency_changes=_concurrency_changes(
             baseline_concurrency,
             candidate_concurrency,
