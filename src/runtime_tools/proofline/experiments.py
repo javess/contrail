@@ -66,7 +66,7 @@ def _git(repo: Path, *args: str, capture: bool = False) -> str:
         raise ExperimentError(
             f"Git command timed out after {GIT_COMMAND_TIMEOUT_SECONDS} seconds"
         ) from exc
-    return result.stdout.strip() if capture else ""
+    return result.stdout.removesuffix("\n").removesuffix("\r") if capture else ""
 
 
 def _repo_root(cwd: Path) -> Path:

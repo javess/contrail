@@ -42,6 +42,14 @@ def test_proofline_normalizes_git_launch_failures(
         experiments._git(tmp_path, "status")
 
 
+def test_proofline_preserves_trailing_whitespace_in_repository_paths(tmp_path: Path) -> None:
+    repo = tmp_path / "repo "
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+
+    assert experiments._repo_root(repo) == repo
+
+
 def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
