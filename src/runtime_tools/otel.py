@@ -28,6 +28,8 @@ _MIN_OTLP_INT = -(1 << 63)
 _MAX_OTLP_INT = (1 << 63) - 1
 MAX_OTLP_DOCUMENT_BYTES = 64 * 1024 * 1024
 MAX_OTLP_ATTRIBUTE_DEPTH = 64
+MAX_OTLP_SPANS = 1_000_000
+MAX_OTLP_LOG_RECORDS = 1_000_000
 _OTLP_VALUE_FIELDS = (
     "stringValue",
     "boolValue",
@@ -390,6 +392,10 @@ def import_otlp_json(
                     "dropped OTLP attributes",
                 )
             for raw_span in spans:
+                if len(events) >= MAX_OTLP_SPANS:
+                    raise OtelImportError(
+                        f"OTLP JSON exceeds the {MAX_OTLP_SPANS}-span input limit"
+                    )
                 span = _as_object(raw_span, "span")
                 dropped_attribute_count = _bounded_count_total(
                     dropped_attribute_count,
@@ -625,6 +631,7 @@ def import_otlp_logs(
     missing_spans = 0
     ambiguous_services = 0
     dropped_attribute_count = 0
+    log_record_count = 0
 
     for resource_index, raw_resource_logs in enumerate(resource_logs):
         resource_group = _as_object(raw_resource_logs, "resourceLogs entry")
@@ -663,6 +670,11 @@ def import_otlp_logs(
             log_records = _as_list(scope_group.get("logRecords", []), "logRecords")
             scope_event_count = 0
             for record_index, raw_log_record in enumerate(log_records):
+                log_record_count += 1
+                if log_record_count > MAX_OTLP_LOG_RECORDS:
+                    raise OtelImportError(
+                        f"OTLP JSON exceeds the {MAX_OTLP_LOG_RECORDS}-log-record input limit"
+                    )
                 record = _as_object(raw_log_record, "log record")
                 raw_timestamp = record.get("timeUnixNano")
                 if raw_timestamp in (None, ""):

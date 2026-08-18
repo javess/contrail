@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from runtime_tools import otel
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.inspect import inspect_runpack
 from runtime_tools.model import Entity, Event, Execution
@@ -106,6 +107,43 @@ def test_otlp_logs_enrich_known_spans_and_bound_timestamped_records(tmp_path: Pa
     assert (edge.source_event_id, edge.kind) == ("otel:trace:span", "emits")
     assert len(attachments) == 1
     assert attachments[0].content == logs.read_bytes()
+    with RunpackReader(source) as reader:
+        assert all(event.kind != "log.record" for event in reader.events())
+
+
+def test_otlp_logs_reject_records_over_the_input_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "too-many-logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {"timeUnixNano": "5", "body": {"stringValue": "one"}},
+                                    {"timeUnixNano": "6", "body": {"stringValue": "two"}},
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(otel, "MAX_OTLP_LOG_RECORDS", 1)
+
+    with pytest.raises(OtelImportError, match="exceeds the 1-log-record input limit"):
+        import_otlp_logs(source, logs, output)
+
+    assert not output.exists()
     with RunpackReader(source) as reader:
         assert all(event.kind != "log.record" for event in reader.events())
 

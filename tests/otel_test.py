@@ -213,6 +213,33 @@ def test_otlp_json_import_rejects_malformed_span_semantics(
     assert not output.exists()
 
 
+def test_otlp_json_import_rejects_spans_over_the_input_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "too-many-spans.json"
+    output = tmp_path / "too-many-spans.runpack"
+    spans = [
+        {
+            "traceId": "trace",
+            "spanId": f"span-{index}",
+            "startTimeUnixNano": "1",
+            "endTimeUnixNano": "2",
+        }
+        for index in range(2)
+    ]
+    source.write_text(
+        json.dumps({"resourceSpans": [{"scopeSpans": [{"spans": spans}]}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(otel, "MAX_OTLP_SPANS", 1)
+
+    with pytest.raises(OtelImportError, match="exceeds the 1-span input limit"):
+        import_otlp_json(source, output, name="too-many-spans")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_an_impossible_local_interval(tmp_path: Path) -> None:
     source = tmp_path / "invalid.json"
     output = tmp_path / "invalid.runpack"
