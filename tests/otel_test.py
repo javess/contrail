@@ -102,6 +102,72 @@ def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: P
     assert "clock inconsistencies: 1" in tree
 
 
+def test_otlp_json_import_normalizes_numeric_enum_strings_and_error_status(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "status.json"
+    output = tmp_path / "status.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "name": "write",
+                                        "kind": "3",
+                                        "status": {"code": "STATUS_CODE_ERROR"},
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_otlp_json(source, output, name="status")
+
+    with RunpackReader(output) as reader:
+        event = reader.events()[0]
+        errors = reader.operation_error_counts()
+    assert event.kind == "client.request"
+    assert event.attributes["otel.status.code"] == "STATUS_CODE_ERROR"
+    assert sum(errors.values()) == 1
+
+
+@pytest.mark.parametrize(("field", "value"), (("kind", True), ("status", "invalid")))
+def test_otlp_json_import_rejects_malformed_span_semantics(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    source = tmp_path / f"invalid-{field}.json"
+    output = tmp_path / f"invalid-{field}.runpack"
+    span: dict[str, object] = {
+        "traceId": "trace",
+        "spanId": "span",
+        "startTimeUnixNano": "1",
+        "endTimeUnixNano": "2",
+        field: value,
+    }
+    source.write_text(
+        json.dumps({"resourceSpans": [{"scopeSpans": [{"spans": [span]}]}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError):
+        import_otlp_json(source, output, name="invalid")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_an_impossible_local_interval(tmp_path: Path) -> None:
     source = tmp_path / "invalid.json"
     output = tmp_path / "invalid.runpack"

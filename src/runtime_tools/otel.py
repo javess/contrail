@@ -150,18 +150,42 @@ def _timestamp(value: object, label: str) -> int | None:
 
 def _span_kind(value: object) -> str:
     kinds = {
+        0: "operation",
         1: "operation",
         2: "server.request",
         3: "client.request",
         4: "message.publish",
         5: "message.consume",
+        "0": "operation",
+        "1": "operation",
+        "2": "server.request",
+        "3": "client.request",
+        "4": "message.publish",
+        "5": "message.consume",
+        "SPAN_KIND_UNSPECIFIED": "operation",
         "SPAN_KIND_INTERNAL": "operation",
         "SPAN_KIND_SERVER": "server.request",
         "SPAN_KIND_CLIENT": "client.request",
         "SPAN_KIND_PRODUCER": "message.publish",
         "SPAN_KIND_CONSUMER": "message.consume",
     }
-    return kinds.get(value, "operation")
+    if value is None:
+        return "operation"
+    if isinstance(value, bool) or not isinstance(value, (int, str)) or value not in kinds:
+        raise OtelImportError(f"unsupported OTLP span kind: {value}")
+    return kinds[value]
+
+
+def _status_code(value: object) -> str | None:
+    if value is None:
+        return None
+    status = _as_object(value, "span status")
+    if "code" not in status:
+        return None
+    code = status["code"]
+    if isinstance(code, bool) or not isinstance(code, (int, str)) or code == "":
+        raise OtelImportError("span status code must be an integer or non-empty string")
+    return str(code)
 
 
 def _event_id(trace_id: str, span_id: str) -> str:
@@ -290,9 +314,9 @@ def import_otlp_json(
                             _attributes(link.get("attributes", [])),
                         )
                     )
-                status = span.get("status")
-                if isinstance(status, dict) and "code" in status:
-                    attributes["otel.status.code"] = str(status["code"])
+                status_code = _status_code(span.get("status"))
+                if status_code is not None:
+                    attributes["otel.status.code"] = status_code
                 started_at_ns = _timestamp(span.get("startTimeUnixNano"), "span start")
                 finished_at_ns = _timestamp(span.get("endTimeUnixNano"), "span end")
                 if (
