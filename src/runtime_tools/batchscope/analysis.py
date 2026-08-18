@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from runtime_tools.inspect import inspect_runpack
-from runtime_tools.model import Event, JsonValue
+from runtime_tools.model import CausalEdge, Event, JsonValue
 from runtime_tools.storage import RunpackReader
 
 
@@ -376,7 +376,47 @@ def _sample_rate(samples: list[tuple[int, float, float]]) -> float | None:
     return delta / elapsed if elapsed > 0 and delta > 0 else None
 
 
-def _lifecycle(events: tuple[Event, ...], total: float | None) -> tuple[LifecyclePhase, ...]:
+def _kubernetes_workload_events(
+    events: tuple[Event, ...], edges: tuple[CausalEdge, ...]
+) -> tuple[tuple[Event, ...], tuple[Event, ...], tuple[Event, ...]]:
+    jobs = tuple(event for event in events if event.kind == "workload.job")
+    pods = tuple(event for event in events if event.kind == "workload.pod")
+    containers = tuple(event for event in events if event.kind == "workload.container")
+    if not jobs or not pods:
+        return jobs, pods, containers
+    correlated_pods = {edge.source_event_id for edge in edges if edge.kind == "correlates"}
+    correlated_jobs = {
+        edge.source_event_id
+        for edge in edges
+        if edge.kind == "owns" and edge.target_event_id in correlated_pods
+    }
+    if len(correlated_jobs) == 1:
+        job_id = next(iter(correlated_jobs))
+    elif not correlated_jobs and len(jobs) == 1:
+        job_id = jobs[0].id
+    else:
+        return (), (), ()
+    jobs = tuple(event for event in jobs if event.id == job_id)
+    pod_ids = {
+        edge.target_event_id
+        for edge in edges
+        if edge.kind == "owns" and edge.source_event_id == job_id
+    }
+    if pod_ids:
+        pods = tuple(event for event in pods if event.id in pod_ids)
+    container_ids = {
+        edge.target_event_id
+        for edge in edges
+        if edge.kind == "contains" and edge.source_event_id in {pod.id for pod in pods}
+    }
+    if container_ids:
+        containers = tuple(event for event in containers if event.id in container_ids)
+    return jobs, pods, containers
+
+
+def _lifecycle(
+    events: tuple[Event, ...], edges: tuple[CausalEdge, ...], total: float | None
+) -> tuple[LifecyclePhase, ...]:
     explicit = tuple(
         LifecyclePhase(event.name, _duration_ns(event) / 1_000_000_000, "explicit")
         for event in events
@@ -384,9 +424,7 @@ def _lifecycle(events: tuple[Event, ...], total: float | None) -> tuple[Lifecycl
     )
     if explicit:
         return explicit
-    jobs = tuple(event for event in events if event.kind == "workload.job")
-    pods = tuple(event for event in events if event.kind == "workload.pod")
-    containers = tuple(event for event in events if event.kind == "workload.container")
+    jobs, pods, containers = _kubernetes_workload_events(events, edges)
     if jobs and pods:
         job_start = min(
             (event.started_at_ns for event in jobs if event.started_at_ns is not None),
@@ -504,7 +542,7 @@ def analyze_runpack(path: Path) -> BatchAnalysis:
         summary.id,
         summary.name,
         summary.wall_time_seconds,
-        _lifecycle(events, summary.wall_time_seconds),
+        _lifecycle(events, edges, summary.wall_time_seconds),
         critical,
         _throughput(events, summary.finished_at_ns),
         _bottlenecks(events, critical, summary.wall_time_seconds),
