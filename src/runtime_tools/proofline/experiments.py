@@ -20,6 +20,9 @@ class ExperimentError(ValueError):
     """Raised when an isolated comparison cannot be executed safely."""
 
 
+GIT_COMMAND_TIMEOUT_SECONDS = 120
+
+
 @dataclass(frozen=True, slots=True)
 class ExperimentResult:
     baseline_runpack: Path
@@ -47,12 +50,17 @@ def _git(repo: Path, *args: str, capture: bool = False) -> str:
             stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=GIT_COMMAND_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as exc:
         raise ExperimentError("git is required for Proofline execution") from exc
     except subprocess.CalledProcessError as exc:
         message = exc.stderr.strip() or f"git {' '.join(args)} failed"
         raise ExperimentError(message) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ExperimentError(
+            f"Git command timed out after {GIT_COMMAND_TIMEOUT_SECONDS} seconds"
+        ) from exc
     return result.stdout.strip() if capture else ""
 
 

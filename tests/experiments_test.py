@@ -19,6 +19,17 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def test_proofline_bounds_git_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def time_out(*args: object, **kwargs: object) -> None:
+        assert kwargs["timeout"] == experiments.GIT_COMMAND_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(("git", "status"), kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", time_out)
+
+    with pytest.raises(ExperimentError, match="Git command timed out after 120 seconds"):
+        experiments._git(tmp_path, "status")
+
+
 def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
