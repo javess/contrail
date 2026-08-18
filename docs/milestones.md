@@ -22,6 +22,7 @@ Later work may refine earlier schemas only through explicit versioning.
 
 - Import a bounded OTLP trace fixture into the same artifact.
 - Normalize services, operations, intervals, parent edges, and trace correlation.
+- Enrich existing executions with bounded OTLP log records and exact span links.
 - Print the causal structure and report clock inconsistencies.
 
 ## 3. RunDiff

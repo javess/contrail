@@ -66,9 +66,23 @@ uv run runtime import-otel trace.json --name checkout
 uv run runtime inspect trace.runpack --tree
 ```
 
-Pass `--include-raw` only when the original OTLP JSON should travel with the
-runpack. Normal inspection and the local UI expose attachment counts, not
-attachment content; content remains available through an explicit SQL query.
+Enrich that execution with OTLP/JSON log records without modifying the trace
+artifact:
+
+```bash
+uv run runtime enrich-otel-logs trace.runpack logs.json \
+  --output trace-logs.runpack
+```
+
+Known log timestamps outside the execution window are dropped. Service resource
+attributes identify log owners, and trace/span IDs create causal `emits` edges
+only when they match one known span. Timestamp-less records remain explicit
+rather than receiving fabricated times.
+
+Pass `--include-raw` to either OTLP command only when the original JSON should
+travel with the runpack. Normal inspection and the local UI expose attachment
+counts, not attachment content; content remains available through an explicit
+SQL query.
 
 Compare any two runpacks with RunDiff. The text report emphasizes changed
 operation counts and runtime dependencies; JSON keeps the same structured facts
