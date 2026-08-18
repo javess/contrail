@@ -109,6 +109,33 @@ print("result")
     )
 
 
+def test_record_process_preserves_core_capture_for_non_finite_annotation_json(
+    tmp_path: Path,
+) -> None:
+    workload = tmp_path / "non-finite.py"
+    workload.write_text(
+        """
+import os
+from pathlib import Path
+
+Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_text(
+    '{"record":"event_instant","id":"bad","kind":"event","name":"bad",'
+    '"timestamp_ns":1,"attributes":{"value":NaN}}'
+)
+print("result")
+""".strip(),
+        encoding="utf-8",
+    )
+    output = tmp_path / "non-finite.runpack"
+
+    exit_code = record_process((sys.executable, str(workload)), output, name="non-finite")
+
+    summary = inspect_runpack(output)
+    assert exit_code == 0
+    assert summary.annotation_error == "invalid annotation JSON on line 1: non-finite constant NaN"
+    assert summary.record_counts["events"] == 1
+
+
 def test_annotation_writer_completes_short_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

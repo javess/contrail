@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
+from typing import Never
 
 from runtime_tools.model import CausalEdge, Event, JsonValue
 
@@ -12,10 +14,29 @@ class AnnotationError(ValueError):
     """Raised when a captured annotation stream is malformed."""
 
 
+def _json_value(value: object, label: str) -> JsonValue:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise AnnotationError(f"{label} contains a non-finite number")
+        return value
+    if isinstance(value, list):
+        return [_json_value(item, label) for item in value]
+    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
+        return {key: _json_value(item, label) for key, item in value.items()}
+    raise AnnotationError(f"{label} contains an invalid JSON value")
+
+
 def _object(value: object, label: str) -> dict[str, JsonValue]:
-    if not isinstance(value, dict):
+    normalized = _json_value(value, label)
+    if not isinstance(normalized, dict):
         raise AnnotationError(f"{label} must be an object")
-    return value
+    return normalized
+
+
+def _reject_json_constant(value: str) -> Never:
+    raise ValueError(f"non-finite constant {value}")
 
 
 def _string(record: dict[str, JsonValue], key: str) -> str:
@@ -49,9 +70,11 @@ def load_annotations(
         raise AnnotationError("could not read captured annotations") from exc
     for line_number, line in enumerate(lines, 1):
         try:
-            record = _object(json.loads(line), "annotation")
+            record = _object(json.loads(line, parse_constant=_reject_json_constant), "annotation")
         except json.JSONDecodeError as exc:
             raise AnnotationError(f"invalid annotation JSON on line {line_number}") from exc
+        except (AnnotationError, RecursionError, ValueError) as exc:
+            raise AnnotationError(f"invalid annotation JSON on line {line_number}: {exc}") from exc
         record_kind = record.get("record")
         if record_kind == "event_start":
             event_id = _string(record, "id")
