@@ -174,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"added {logs_result.event_count} OTLP log records and "
                 f"{logs_result.edge_count} span correlations "
                 f"({logs_result.dropped_outside_window} outside the run window) "
+                f"with {logs_result.dropped_attribute_count} exporter-dropped attributes "
                 f"to {args.output}",
                 file=sys.stderr,
             )

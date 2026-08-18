@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from runtime_tools.batchscope import analyze_runpack
+from runtime_tools.inspect import inspect_runpack
 from runtime_tools.model import Entity, Event, Execution
 from runtime_tools.otel import OtelImportError, import_otlp_logs
 from runtime_tools.rundiff import compare_runpacks
@@ -134,6 +136,45 @@ def test_otlp_logs_normalize_named_severity_numbers(tmp_path: Path) -> None:
     with RunpackReader(output) as reader:
         log = next(event for event in reader.events() if event.kind == "log.record")
     assert log.attributes["log.severity_number"] == 19
+
+
+def test_otlp_logs_accumulate_exporter_dropped_attributes(tmp_path: Path) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    with sqlite3.connect(source) as connection:
+        row = connection.execute("SELECT metadata_json FROM executions").fetchone()
+        metadata = json.loads(row[0])
+        metadata["otel"] = {"dropped_attribute_count": 2}
+        connection.execute("UPDATE executions SET metadata_json = ?", (json.dumps(metadata),))
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "resource": {"droppedAttributesCount": 3},
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "5",
+                                        "droppedAttributesCount": "4",
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_logs(source, logs, output)
+
+    assert result.dropped_attribute_count == 7
+    assert inspect_runpack(output).dropped_attribute_count == 9
 
 
 @pytest.mark.parametrize("severity", (True, "INVALID", -1, 25))

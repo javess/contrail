@@ -699,6 +699,22 @@ class RunpackWriter:
             )
             self._connection.commit()
 
+    def set_execution_metadata(
+        self,
+        execution_id: str,
+        metadata: dict[str, JsonValue],
+    ) -> None:
+        normalized_execution_id = _text_value(execution_id, "execution id")
+        encoded_metadata = _json(metadata)
+        with self._writing():
+            cursor = self._connection.execute(
+                "UPDATE executions SET metadata_json = ? WHERE id = ?",
+                (encoded_metadata, normalized_execution_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunpackError(f"execution does not exist: {normalized_execution_id}")
+            self._connection.commit()
+
     def finish_execution(
         self,
         execution_id: str,

@@ -42,6 +42,7 @@ class OtelLogImportResult:
     dropped_outside_window: int
     missing_span_count: int
     ambiguous_service_count: int
+    dropped_attribute_count: int
 
 
 def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
@@ -563,10 +564,15 @@ def import_otlp_logs(
     dropped = 0
     missing_spans = 0
     ambiguous_services = 0
+    dropped_attribute_count = 0
 
     for resource_index, raw_resource_logs in enumerate(resource_logs):
         resource_group = _as_object(raw_resource_logs, "resourceLogs entry")
         resource = _as_object(resource_group.get("resource", {}), "resource")
+        resource_dropped_attributes = _nonnegative_count(
+            resource.get("droppedAttributesCount"),
+            "resource droppedAttributesCount",
+        )
         resource_attributes = _attributes(resource.get("attributes", []))
         service_name = _semantic_name(
             resource_attributes.get("service.name"),
@@ -608,6 +614,12 @@ def import_otlp_logs(
                 ):
                     dropped += 1
                     continue
+
+                dropped_attribute_count = _bounded_count_total(
+                    dropped_attribute_count,
+                    record.get("droppedAttributesCount"),
+                    "log droppedAttributesCount",
+                )
 
                 trace_id_value = record.get("traceId", "")
                 span_id_value = record.get("spanId", "")
@@ -678,8 +690,33 @@ def import_otlp_logs(
             entities.append(new_entity)
         if resource_event_count and ambiguous_service:
             ambiguous_services += 1
+        if resource_event_count:
+            dropped_attribute_count = _bounded_count_total(
+                dropped_attribute_count,
+                resource_dropped_attributes,
+                "resource droppedAttributesCount",
+            )
 
     def append(writer: RunpackWriter) -> OtelLogImportResult:
+        if dropped_attribute_count:
+            metadata = execution.metadata.copy()
+            raw_otel_metadata = metadata.get("otel")
+            if raw_otel_metadata is None:
+                otel_metadata: dict[str, JsonValue] = {}
+            elif isinstance(raw_otel_metadata, dict):
+                otel_metadata = raw_otel_metadata.copy()
+            else:
+                raise OtelImportError("existing execution otel metadata must be an object")
+            otel_metadata["dropped_attribute_count"] = _bounded_count_total(
+                _nonnegative_count(
+                    otel_metadata.get("dropped_attribute_count"),
+                    "existing dropped OTLP attributes",
+                ),
+                dropped_attribute_count,
+                "dropped OTLP attributes",
+            )
+            metadata["otel"] = otel_metadata
+            writer.set_execution_metadata(execution.id, metadata)
         writer.add_entities(entities)
         writer.add_events(events)
         writer.add_causal_edges(edges)
@@ -703,6 +740,7 @@ def import_otlp_logs(
             dropped,
             missing_spans,
             ambiguous_services,
+            dropped_attribute_count,
         )
 
     return enrich_copy(runpack, output, append)
