@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import sys
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -370,6 +371,54 @@ def test_annotation_writer_rejects_invalid_unicode_without_poisoning_the_stream(
     events, edges = load_annotations(annotations, entity_id="process")
     assert [event.name for event in events] == ["valid"]
     assert edges == ()
+
+
+@pytest.mark.parametrize(
+    ("write_invalid", "message"),
+    (
+        (lambda: runtime.event(""), "annotation name must be a non-empty string"),
+        (lambda: runtime.event("valid", kind="bad\0kind"), "annotation kind must be"),
+        (
+            lambda: runtime.link(runtime.EventRef(""), runtime.EventRef("target")),
+            "annotation source id must be",
+        ),
+        (
+            lambda: runtime.link(
+                runtime.EventRef("source"), runtime.EventRef("target"), relation=""
+            ),
+            "annotation relation must be",
+        ),
+    ),
+)
+def test_annotation_writer_rejects_invalid_semantic_text_without_poisoning_the_stream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    write_invalid: Callable[[], None],
+    message: str,
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", str(annotations))
+    runtime.event("valid")
+    valid_content = annotations.read_bytes()
+
+    with pytest.raises(ValueError, match=message):
+        write_invalid()
+
+    assert annotations.read_bytes() == valid_content
+
+
+def test_annotation_writer_rejects_self_links_without_poisoning_the_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", str(annotations))
+    event = runtime.event("valid")
+    valid_content = annotations.read_bytes()
+
+    with pytest.raises(ValueError, match="cannot link to themselves"):
+        runtime.link(event, event)
+
+    assert annotations.read_bytes() == valid_content
 
 
 def test_annotation_writer_keeps_concurrent_short_writes_as_complete_records(

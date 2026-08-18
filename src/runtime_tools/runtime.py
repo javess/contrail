@@ -25,6 +25,16 @@ class EventRef:
     id: str
 
 
+def _required_text(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value or "\0" in value:
+        raise ValueError(f"{label} must be a non-empty string without NUL bytes")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"{label} must be valid UTF-8") from exc
+    return value
+
+
 def _write(record: dict[str, JsonValue]) -> None:
     target = os.environ.get(_ANNOTATIONS_ENV)
     if target is None:
@@ -72,8 +82,8 @@ def _flock(descriptor: int, operation: int) -> None:
 class _Scope:
     def __init__(self, kind: str, name: str, attributes: dict[str, JsonValue]) -> None:
         self.ref = EventRef(uuid.uuid4().hex)
-        self.kind = kind
-        self.name = name
+        self.kind = _required_text(kind, "annotation kind")
+        self.name = _required_text(name, "annotation name")
         self.attributes = attributes
         self._token: contextvars.Token[str | None] | None = None
         self._used = False
@@ -127,6 +137,8 @@ def stage(name: str, **attributes: JsonValue) -> _Scope:
 
 
 def event(name: str, *, kind: str = "event", **attributes: JsonValue) -> EventRef:
+    name = _required_text(name, "annotation name")
+    kind = _required_text(kind, "annotation kind")
     ref = EventRef(uuid.uuid4().hex)
     _write(
         {
@@ -147,11 +159,18 @@ def progress(*, completed: int | float, total: int | float, **attributes: JsonVa
 
 
 def link(source: EventRef, target: EventRef, *, relation: str = "causes") -> None:
+    if not isinstance(source, EventRef) or not isinstance(target, EventRef):
+        raise ValueError("annotation links require EventRef endpoints")
+    source_id = _required_text(source.id, "annotation source id")
+    target_id = _required_text(target.id, "annotation target id")
+    relation = _required_text(relation, "annotation relation")
+    if source_id == target_id:
+        raise ValueError("annotation events cannot link to themselves")
     _write(
         {
             "record": "link",
-            "source_id": source.id,
-            "target_id": target.id,
+            "source_id": source_id,
+            "target_id": target_id,
             "relation": relation,
         }
     )
