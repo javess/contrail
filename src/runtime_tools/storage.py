@@ -491,6 +491,7 @@ class RunpackWriter:
             )
 
     def expand_execution_bounds(self, started_at_ns: int, finished_at_ns: int | None) -> None:
+        normalized_start, normalized_finish = _execution_interval(started_at_ns, finished_at_ns)
         with self._writing():
             self._connection.execute(
                 """
@@ -502,7 +503,12 @@ class RunpackWriter:
                     ELSE max(finished_at_ns, ?)
                 END
             """,
-                (started_at_ns, finished_at_ns, finished_at_ns, finished_at_ns),
+                (
+                    normalized_start,
+                    normalized_finish,
+                    normalized_finish,
+                    normalized_finish,
+                ),
             )
             self._connection.commit()
 

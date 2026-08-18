@@ -353,6 +353,31 @@ def test_writer_rejects_a_second_execution(tmp_path: Path) -> None:
         assert reader.execution().id == "first"
 
 
+@pytest.mark.parametrize(
+    ("started_at_ns", "finished_at_ns", "message"),
+    (
+        (True, 2, "execution start timestamp must be an integer"),
+        (2, False, "execution finish timestamp must be an integer or null"),
+        (2, 1, "execution cannot finish before it starts"),
+    ),
+)
+def test_writer_rejects_invalid_execution_bound_expansions(
+    tmp_path: Path,
+    started_at_ns: int,
+    finished_at_ns: int | None,
+    message: str,
+) -> None:
+    output = tmp_path / "invalid-expansion.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        with pytest.raises(RunpackError, match=message):
+            writer.expand_execution_bounds(started_at_ns, finished_at_ns)
+
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+    assert (execution.started_at_ns, execution.finished_at_ns) == (0, 1)
+
+
 def test_writer_rejects_reversed_interval_when_finishing_execution(tmp_path: Path) -> None:
     output = tmp_path / "reversed-finish.runpack"
     with RunpackWriter(output) as writer:
