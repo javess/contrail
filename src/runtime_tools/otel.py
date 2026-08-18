@@ -209,6 +209,33 @@ def _status_code(value: object) -> str | None:
     return str(code)
 
 
+def _severity_number(value: object) -> int:
+    names = {"SEVERITY_NUMBER_UNSPECIFIED": 0}
+    for base, start in (
+        ("TRACE", 1),
+        ("DEBUG", 5),
+        ("INFO", 9),
+        ("WARN", 13),
+        ("ERROR", 17),
+        ("FATAL", 21),
+    ):
+        names[f"SEVERITY_NUMBER_{base}"] = start
+        names.update(
+            {f"SEVERITY_NUMBER_{base}{offset}": start + offset - 1 for offset in range(2, 5)}
+        )
+    if isinstance(value, str) and value in names:
+        return names[value]
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise OtelImportError("log severityNumber must be an OTLP severity enum")
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise OtelImportError("log severityNumber must be an OTLP severity enum") from exc
+    if not 0 <= number <= 24:
+        raise OtelImportError("log severityNumber must be between 0 and 24")
+    return number
+
+
 def _event_id(trace_id: str, span_id: str) -> str:
     return f"otel:{trace_id}:{span_id}"
 
@@ -603,11 +630,7 @@ def import_otlp_logs(
                         raise OtelImportError("log severityText must be a string")
                     attributes["log.severity_text"] = severity_text
                 if "severityNumber" in record:
-                    try:
-                        severity_number = int(str(record["severityNumber"]))
-                    except ValueError as exc:
-                        raise OtelImportError("log severityNumber must be an integer") from exc
-                    attributes["log.severity_number"] = severity_number
+                    attributes["log.severity_number"] = _severity_number(record["severityNumber"])
                 if trace_id:
                     attributes["otel.trace_id"] = trace_id
                     attributes["otel.span_id"] = span_id

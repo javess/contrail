@@ -102,6 +102,70 @@ def test_otlp_logs_enrich_known_spans_and_bound_timestamped_records(tmp_path: Pa
         assert all(event.kind != "log.record" for event in reader.events())
 
 
+def test_otlp_logs_normalize_named_severity_numbers(tmp_path: Path) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "5",
+                                        "severityNumber": "SEVERITY_NUMBER_ERROR3",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_otlp_logs(source, logs, output)
+
+    with RunpackReader(output) as reader:
+        log = next(event for event in reader.events() if event.kind == "log.record")
+    assert log.attributes["log.severity_number"] == 19
+
+
+@pytest.mark.parametrize("severity", (True, "INVALID", -1, 25))
+def test_otlp_logs_reject_invalid_severity_numbers(
+    tmp_path: Path,
+    severity: object,
+) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "scopeLogs": [
+                            {"logRecords": [{"timeUnixNano": "5", "severityNumber": severity}]}
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="log severityNumber must be"):
+        import_otlp_logs(source, logs, output)
+
+    assert not output.exists()
+
+
 def test_otlp_logs_create_service_entities_for_unmatched_resources(tmp_path: Path) -> None:
     source = tmp_path / "base.runpack"
     logs = tmp_path / "logs.json"
