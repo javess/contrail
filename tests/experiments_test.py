@@ -63,6 +63,15 @@ def test_proofline_preserves_trailing_whitespace_in_repository_paths(tmp_path: P
     assert experiments._repo_root(repo) == repo
 
 
+def test_proofline_rejects_an_empty_git_repository_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(experiments, "_git", lambda *args, **kwargs: "")
+
+    with pytest.raises(ExperimentError, match="Git repository root is empty"):
+        experiments._repo_root(tmp_path)
+
+
 def test_proofline_normalizes_temporary_worktree_allocation_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

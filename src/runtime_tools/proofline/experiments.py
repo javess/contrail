@@ -74,6 +74,8 @@ def _git(repo: Path, *args: str, capture: bool = False) -> str:
 
 def _repo_root(cwd: Path) -> Path:
     value = _git(cwd, "rev-parse", "--show-toplevel", capture=True)
+    if not value:
+        raise ExperimentError("Git repository root is empty")
     root = Path(value)
     if not root.is_dir():
         raise ExperimentError("Git repository root does not exist")
