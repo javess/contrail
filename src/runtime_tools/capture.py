@@ -119,7 +119,14 @@ def _pump(
             consume(chunk)
             post_exit_bytes += len(chunk)
             if post_exit_bytes >= MAX_POST_EXIT_DRAIN_BYTES:
-                pipe_open_after_exit = True
+                try:
+                    continuation = os.read(descriptor, 1)
+                except BlockingIOError:
+                    pipe_open_after_exit = True
+                else:
+                    if continuation:
+                        consume(continuation)
+                        pipe_open_after_exit = True
                 break
             continue
         readable, _, _ = select.select((descriptor,), (), (), 0.05)

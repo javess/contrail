@@ -5,6 +5,7 @@ import io
 import json
 import sqlite3
 import sys
+import threading
 import time
 from collections.abc import Buffer
 from pathlib import Path
@@ -219,6 +220,23 @@ def test_record_process_does_not_wait_for_descendants_holding_output_pipes(
     assert summary.stderr_complete is False
     assert "stdout:   16 B, sha256:" in render_summary(summary, "text")
     assert "incomplete: pipe remained open after exit" in render_summary(summary, "text")
+
+
+def test_output_drain_recognizes_eof_at_the_post_exit_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stream = tmp_path / "stream"
+    stream.write_bytes(b"complete")
+    process_done = threading.Event()
+    process_done.set()
+    monkeypatch.setattr(capture, "MAX_POST_EXIT_DRAIN_BYTES", 8)
+
+    with stream.open("rb") as source:
+        digest = capture._pump(source, None, None, process_done)
+
+    assert digest.byte_count == 8
+    assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
+    assert digest.pipe_open_after_exit is False
 
 
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:
