@@ -252,6 +252,14 @@ def test_proofline_rejects_non_utf8_contracts(tmp_path: Path) -> None:
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 
+def test_proofline_normalizes_excessive_contract_nesting(tmp_path: Path) -> None:
+    contract = tmp_path / "nested.yaml"
+    contract.write_text("value: " + "[" * 2_000 + "0" + "]" * 2_000, encoding="utf-8")
+
+    with pytest.raises(ContractError, match="contract file nesting is too deep"):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
 def test_proofline_normalizes_numeric_threshold_overflow(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"

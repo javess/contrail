@@ -70,4 +70,7 @@ def load_yaml_file(path: Path, *, label: str, max_bytes: int) -> Any:
         value = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise YamlInputError(f"{label} must be UTF-8") from exc
-    return load_yaml(value)
+    try:
+        return load_yaml(value)
+    except RecursionError as exc:
+        raise YamlInputError(f"{label} nesting is too deep") from exc

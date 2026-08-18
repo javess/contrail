@@ -172,6 +172,14 @@ def test_counterexample_parameters_reject_non_utf8_yaml(tmp_path: Path) -> None:
         counterexamples.load_parameters(parameters)
 
 
+def test_counterexample_parameters_normalize_excessive_yaml_nesting(tmp_path: Path) -> None:
+    parameters = tmp_path / "nested.yaml"
+    parameters.write_text("value: " + "[" * 2_000 + "0" + "]" * 2_000, encoding="utf-8")
+
+    with pytest.raises(ContractError, match="parameter file nesting is too deep"):
+        counterexamples.load_parameters(parameters)
+
+
 def test_counterexample_search_caps_parameter_integer_bounds(tmp_path: Path) -> None:
     parameters = tmp_path / "parameters.yaml"
     parameters.write_text(
