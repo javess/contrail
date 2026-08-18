@@ -79,7 +79,7 @@ def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
     result = []
     flags: set[str] = set()
     for name, raw_spec in raw_parameters.items():
-        if not isinstance(name, str) or not name:
+        if not isinstance(name, str) or not name or "\0" in name:
             raise ContractError("parameter names must be non-empty strings")
         spec = _object(raw_spec, f"parameter {name}")
         _reject_unknown_fields(spec, {"type", "min", "max", "flag"}, f"parameter {name}")
@@ -95,6 +95,7 @@ def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
             or not flag.startswith("-")
             or flag in {"-", "--"}
             or "=" in flag
+            or "\0" in flag
             or any(character.isspace() for character in flag)
         ):
             raise ContractError(

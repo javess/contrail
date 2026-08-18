@@ -172,6 +172,24 @@ def test_counterexample_parameters_reject_ambiguous_flags(tmp_path: Path, flag: 
         counterexamples.load_parameters(parameters)
 
 
+def test_counterexample_parameters_reject_nul_in_flags(tmp_path: Path) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(
+        """
+parameters:
+  value:
+    type: integer
+    min: 0
+    max: 1
+    flag: "--value\\0"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="option name without whitespace"):
+        counterexamples.load_parameters(parameters)
+
+
 def test_counterexample_search_caps_parameter_count(tmp_path: Path) -> None:
     parameters = tmp_path / "parameters.yaml"
     entries = "\n".join(
