@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+import runtime_tools.inspect as inspect_module
 from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import RunpackWriter
@@ -46,6 +49,39 @@ def test_causal_tree_handles_graphs_beyond_python_recursion_limit(tmp_path: Path
     assert "operation-1499" in tree
     assert "… depth 1499 …" in tree
     assert "clock inconsistencies: 0" in tree
+
+
+def test_causal_tree_bounds_human_readable_structure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runpack = tmp_path / "bounded-tree.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("run", "run", 0, 3, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            Event(
+                f"event-{index}",
+                "operation",
+                f"operation-{index}",
+                "worker",
+                index,
+                index + 1,
+                "test",
+                None,
+                index,
+                {},
+            )
+            for index in range(3)
+        )
+    monkeypatch.setattr(inspect_module, "MAX_CAUSAL_TREE_ITEMS", 2)
+
+    tree = render_causal_tree(runpack)
+
+    assert "operation-0" in tree
+    assert "operation-1" in tree
+    assert "operation-2" not in tree
+    assert "additional causal structure omitted from text output" in tree
+    assert tree.endswith("clock inconsistencies: 0")
 
 
 def test_causal_tree_distinguishes_shared_nodes_from_cycles(tmp_path: Path) -> None:

@@ -12,6 +12,7 @@ from runtime_tools.storage import RunpackReader
 from runtime_tools.terminal import terminal_text
 
 _MAX_TREE_INDENT_DEPTH = 40
+MAX_CAUSAL_TREE_ITEMS = 10_000
 _MAX_COMPLETENESS_COUNT = (1 << 63) - 1
 
 
@@ -130,8 +131,11 @@ def render_causal_tree(path: Path) -> str:
     roots.sort(key=sort_key)
     lines = ["CAUSAL STRUCTURE"]
     visited: set[str] = set()
+    rendered_tree_items = 0
+    tree_truncated = False
 
     def append_tree(event_id: str) -> None:
+        nonlocal rendered_tree_items, tree_truncated
         active: set[str] = set()
         stack = [(event_id, 0, False)]
         while stack:
@@ -139,6 +143,10 @@ def render_causal_tree(path: Path) -> str:
             if exiting:
                 active.remove(current_id)
                 continue
+            if rendered_tree_items >= MAX_CAUSAL_TREE_ITEMS:
+                tree_truncated = True
+                return
+            rendered_tree_items += 1
             event = by_id[current_id]
             if current_id in active:
                 marker = " (cycle)"
@@ -165,12 +173,18 @@ def render_causal_tree(path: Path) -> str:
 
     for root in roots:
         append_tree(root)
+        if tree_truncated:
+            break
     for event in events:
+        if tree_truncated:
+            break
         if event.id not in visited:
             append_tree(event.id)
+    if tree_truncated:
+        lines.append("  … additional causal structure omitted from text output")
     if other_edges:
         lines.append("CAUSAL LINKS")
-        for edge in other_edges:
+        for edge in other_edges[:MAX_CAUSAL_TREE_ITEMS]:
             source = by_id.get(edge.source_event_id)
             target = by_id.get(edge.target_event_id)
             if source is None or target is None:
@@ -179,6 +193,9 @@ def render_causal_tree(path: Path) -> str:
                 f"  {terminal_text(source.name)} → {terminal_text(target.name)} "
                 f"[{terminal_text(edge.kind)}, confidence {edge.confidence:.2f}]"
             )
+        omitted_links = len(other_edges) - MAX_CAUSAL_TREE_ITEMS
+        if omitted_links > 0:
+            lines.append(f"  … {omitted_links:,} additional links omitted from text output")
     lines.append(f"clock inconsistencies: {inconsistency_count}")
     return "\n".join(lines)
 
