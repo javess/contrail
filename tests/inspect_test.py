@@ -112,6 +112,27 @@ def test_inspection_uses_normalized_execution_bounds_over_process_wall_measureme
     assert summary.wall_time_seconds == 10.0
 
 
+def test_inspection_does_not_mislabel_reserved_measurements_with_wrong_units(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "wrong-units.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("run", "run", 0, 10, (), str(tmp_path), 0, None, {}))
+        writer.add_measurements(
+            (
+                Measurement("process.cpu.user", 5.0, "By", 10, None, {}),
+                Measurement("process.cpu.system", 6.0, "By", 10, None, {}),
+                Measurement("process.memory.peak", 7.0, "s", 10, None, {}),
+            )
+        )
+
+    summary = inspect_runpack(runpack)
+
+    assert summary.cpu_user_seconds is None
+    assert summary.cpu_system_seconds is None
+    assert summary.peak_memory_bytes is None
+
+
 def test_inspection_keeps_invalid_summary_evidence_unknown(tmp_path: Path) -> None:
     runpack = tmp_path / "invalid-summary.runpack"
     with RunpackWriter(runpack) as writer:

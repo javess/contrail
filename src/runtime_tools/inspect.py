@@ -60,10 +60,10 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
     with RunpackReader(path) as reader:
         manifest = reader.manifest()
         execution = reader.execution()
-        measurements: dict[str, float] = {}
+        measurements: dict[tuple[str, str], float] = {}
         for item in reader.measurements():
-            measurements.setdefault(item.name, item.value)
-        peak_memory = _nonnegative(measurements.get("process.memory.peak"))
+            measurements.setdefault((item.name, item.unit), item.value)
+        peak_memory = _nonnegative(measurements.get(("process.memory.peak", "By")))
         wall_time = (
             (execution.finished_at_ns - execution.started_at_ns) / 1_000_000_000
             if execution.finished_at_ns is not None
@@ -81,8 +81,8 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             finished_at_ns=execution.finished_at_ns,
             exit_code=execution.exit_code,
             wall_time_seconds=wall_time,
-            cpu_user_seconds=_nonnegative(measurements.get("process.cpu.user")),
-            cpu_system_seconds=_nonnegative(measurements.get("process.cpu.system")),
+            cpu_user_seconds=_nonnegative(measurements.get(("process.cpu.user", "s"))),
+            cpu_system_seconds=_nonnegative(measurements.get(("process.cpu.system", "s"))),
             peak_memory_bytes=int(peak_memory) if peak_memory is not None else None,
             stdout_bytes=_as_int(_nested_output(execution.metadata, "stdout", "bytes")),
             stdout_sha256=_as_str(_nested_output(execution.metadata, "stdout", "sha256")),
