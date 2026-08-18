@@ -245,6 +245,16 @@ def test_reader_rejects_reversed_execution_intervals(tmp_path: Path) -> None:
         inspect_runpack(output)
 
 
+def test_reader_rejects_invalid_execution_exit_codes(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-exit-code.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="invalid-exit-code")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE executions SET exit_code = 'invalid'")
+
+    with pytest.raises(RunpackError, match="execution exit code must be an integer or null"):
+        inspect_runpack(output)
+
+
 def test_reader_rejects_non_finite_measurements(tmp_path: Path) -> None:
     output = tmp_path / "non-finite-measurement.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="non-finite-measurement")
@@ -340,6 +350,17 @@ def test_writer_rejects_reversed_execution_intervals(tmp_path: Path) -> None:
             reader.execution()
 
 
+def test_writer_rejects_boolean_execution_exit_codes(tmp_path: Path) -> None:
+    output = tmp_path / "boolean-exit-code.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="execution exit code must be an integer or null"):
+            writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), True, None, {}))
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
+            reader.execution()
+
+
 def test_writer_rejects_a_second_execution(tmp_path: Path) -> None:
     output = tmp_path / "multiple-executions.runpack"
     with RunpackWriter(output) as writer:
@@ -395,6 +416,36 @@ def test_writer_rejects_reversed_interval_when_finishing_execution(tmp_path: Pat
                     None,
                     10,
                     9,
+                    "host.wall",
+                    None,
+                    None,
+                    {},
+                ),
+                measurements=(),
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.execution().finished_at_ns is None
+        assert reader.events() == ()
+
+
+def test_writer_rejects_invalid_exit_code_when_finishing_execution(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-finish-exit-code.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, None, (), str(tmp_path), None, None, {}))
+        with pytest.raises(RunpackError, match="execution exit code must be an integer"):
+            writer.finish_execution(
+                "run",
+                finished_at_ns=1,
+                exit_code=True,
+                metadata={},
+                event=Event(
+                    "process",
+                    "process.run",
+                    "process",
+                    None,
+                    0,
+                    1,
                     "host.wall",
                     None,
                     None,

@@ -348,6 +348,7 @@ class RunpackWriter:
         started_at_ns, finished_at_ns = _execution_interval(
             execution.started_at_ns, execution.finished_at_ns
         )
+        exit_code = _integer_value(execution.exit_code, "execution exit code", optional=True)
         with self._writing():
             existing = self._connection.execute("SELECT count(*) FROM executions").fetchone()[0]
             if existing:
@@ -366,7 +367,7 @@ class RunpackWriter:
                     finished_at_ns,
                     _json(execution.command),
                     execution.working_directory,
-                    execution.exit_code,
+                    exit_code,
                     execution.revision,
                     _json(execution.metadata),
                 ),
@@ -528,6 +529,7 @@ class RunpackWriter:
         if row is None:
             raise RunpackError(f"execution does not exist: {execution_id}")
         _, normalized_finish = _execution_interval(row[0], finished_at_ns)
+        normalized_exit_code = _integer_value(exit_code, "execution exit code")
         with self._writing(), self._connection:
             self._connection.execute(
                 """
@@ -535,7 +537,7 @@ class RunpackWriter:
                 SET finished_at_ns = ?, exit_code = ?, metadata_json = ?
                 WHERE id = ?
                 """,
-                (normalized_finish, exit_code, _json(metadata), execution_id),
+                (normalized_finish, normalized_exit_code, _json(metadata), execution_id),
             )
             self._connection.execute(
                 """
@@ -612,6 +614,7 @@ class RunpackReader:
         started_at_ns, finished_at_ns = _execution_interval(
             row["started_at_ns"], row["finished_at_ns"]
         )
+        exit_code = _integer_value(row["exit_code"], "execution exit code", optional=True)
         return Execution(
             id=row["id"],
             name=row["name"],
@@ -619,7 +622,7 @@ class RunpackReader:
             finished_at_ns=finished_at_ns,
             command=tuple(command),
             working_directory=row["working_directory"],
-            exit_code=row["exit_code"],
+            exit_code=exit_code,
             revision=row["revision"],
             metadata=_object(row["metadata_json"]),
         )
