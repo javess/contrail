@@ -81,8 +81,10 @@ def _uid(item: dict[str, object]) -> str:
 
 
 def _timestamp(value: object) -> int | None:
-    if not isinstance(value, str) or not value:
+    if value is None or value == "":
         return None
+    if not isinstance(value, str):
+        raise KubernetesImportError("Kubernetes timestamp must be an RFC 3339 string")
     match = _RFC3339_TIMESTAMP.fullmatch(value)
     if match is None:
         if _RFC3339_WITHOUT_ZONE.fullmatch(value):
@@ -103,10 +105,9 @@ def _timestamp(value: object) -> int | None:
 
 
 def _integer(value: object, label: str) -> int:
-    try:
-        return int(str(value))
-    except ValueError as exc:
-        raise KubernetesImportError(f"invalid {label}: {value}") from exc
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise KubernetesImportError(f"{label} must be a non-negative integer")
+    return value
 
 
 def _attributes(item: dict[str, object]) -> dict[str, JsonValue]:

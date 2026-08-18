@@ -355,6 +355,58 @@ def test_kubernetes_snapshot_rejects_timezone_ambiguous_timestamps(tmp_path: Pat
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    ("metadata", "spec", "status", "message"),
+    (
+        (
+            {"name": "pod", "uid": "pod", "creationTimestamp": 123},
+            {"containers": []},
+            {},
+            "Kubernetes timestamp must be an RFC 3339 string",
+        ),
+        (
+            {"name": "deployment", "uid": "deployment"},
+            {"replicas": -1},
+            {},
+            "k8s.replicas.desired must be a non-negative integer",
+        ),
+    ),
+)
+def test_kubernetes_snapshot_rejects_malformed_lifecycle_scalars(
+    tmp_path: Path,
+    metadata: dict[str, object],
+    spec: dict[str, object],
+    status: dict[str, object],
+    message: str,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "malformed-lifecycle.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    kind = "Deployment" if metadata["name"] == "deployment" else "Pod"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": kind,
+                        "metadata": metadata,
+                        "spec": spec,
+                        "status": status,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KubernetesImportError, match=message):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()
+
+
 def test_kubernetes_enrichment_reports_identity_collisions_without_publishing(
     tmp_path: Path,
 ) -> None:
