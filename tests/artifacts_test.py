@@ -169,3 +169,28 @@ def test_enrichment_closes_descriptor_when_stream_creation_fails(
     assert len(closed) == 1
     assert not output.exists()
     assert not list(tmp_path.glob(".output.runpack.tmp-*"))
+
+
+def test_enrichment_preserves_primary_failure_when_temporary_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.runpack"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    unlink = Path.unlink
+
+    def fail_temporary_cleanup(path: Path, missing_ok: bool = False) -> None:
+        if path.name.startswith(".output.runpack.tmp-"):
+            raise OSError("simulated cleanup failure")
+        unlink(path, missing_ok=missing_ok)
+
+    def fail_enrichment(writer: RunpackWriter) -> None:
+        raise RuntimeError("primary enrichment failure")
+
+    monkeypatch.setattr(Path, "unlink", fail_temporary_cleanup)
+
+    with pytest.raises(RuntimeError, match="primary enrichment failure"):
+        enrich_copy(source, output, fail_enrichment)
+
+    assert not output.exists()

@@ -13,6 +13,7 @@ from pathlib import Path
 from types import TracebackType
 
 from runtime_tools import __version__
+from runtime_tools.artifacts import remove_best_effort
 from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import (
     Attachment,
@@ -591,12 +592,12 @@ class RunpackWriter:
         except sqlite3.DatabaseError as exc:
             if connection is not None:
                 connection.close()
-            path.unlink(missing_ok=True)
+            remove_best_effort(path)
             raise RunpackError(f"could not create runpack {path}: {exc}") from exc
         except BaseException:
             if connection is not None:
                 connection.close()
-            path.unlink(missing_ok=True)
+            remove_best_effort(path)
             raise
 
     @classmethod

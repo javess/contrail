@@ -86,6 +86,25 @@ def test_record_process_preserves_nonzero_exit_as_execution_outcome(tmp_path: Pa
     assert inspect_runpack(output).exit_code == 7
 
 
+def test_record_process_succeeds_when_annotation_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "captured.runpack"
+    unlink = Path.unlink
+
+    def fail_annotation_cleanup(path: Path, missing_ok: bool = False) -> None:
+        if ".annotations-" in path.name:
+            raise OSError("simulated cleanup failure")
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_annotation_cleanup)
+
+    exit_code = record_process((sys.executable, "-c", "pass"), output, name="captured")
+
+    assert exit_code == 0
+    assert inspect_runpack(output).exit_code == 0
+
+
 def test_record_process_anchors_execution_finish_to_monotonic_elapsed_time(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

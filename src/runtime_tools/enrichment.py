@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from runtime_tools.artifacts import publish_without_overwrite
+from runtime_tools.artifacts import publish_without_overwrite, remove_best_effort
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 
@@ -65,5 +65,5 @@ def enrich_copy[T](
         return result
     except BaseException:
         if temporary_created:
-            temporary.unlink(missing_ok=True)
+            remove_best_effort(temporary)
         raise

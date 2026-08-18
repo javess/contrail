@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import BinaryIO, cast
 
 from runtime_tools.annotations import AnnotationError, load_annotations
-from runtime_tools.artifacts import publish_without_overwrite
+from runtime_tools.artifacts import publish_without_overwrite, remove_best_effort
 from runtime_tools.model import (
     Attachment,
     CausalEdge,
@@ -524,9 +524,9 @@ def record_process(
             raise CaptureError(f"could not publish runpack {output}: {exc}") from exc
     except BaseException:
         if temporary_created:
-            temporary.unlink(missing_ok=True)
+            remove_best_effort(temporary)
         raise
     finally:
         if annotation_created:
-            annotation_path.unlink(missing_ok=True)
+            remove_best_effort(annotation_path)
     return exit_code

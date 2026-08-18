@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Never
 from urllib.parse import quote
 
-from runtime_tools.artifacts import publish_without_overwrite
+from runtime_tools.artifacts import publish_without_overwrite, remove_best_effort
 from runtime_tools.enrichment import enrich_copy
 from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, JsonValue
@@ -624,7 +624,7 @@ def import_otlp_json(
             raise OtelImportError(f"could not publish runpack {output}: {exc}") from exc
     except BaseException:
         if temporary_created:
-            temporary.unlink(missing_ok=True)
+            remove_best_effort(temporary)
         raise
     return OtelImportResult(
         len(entities),
