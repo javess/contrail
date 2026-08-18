@@ -218,6 +218,7 @@ def import_prometheus_response(
                 if not name:
                     raise PrometheusImportError("Prometheus series requires a __name__ label")
                 timestamp_ns = _timestamp_ns(raw_timestamp)
+                sample_value = _sample_value(raw_value)
                 if timestamp_ns < execution.started_at_ns or timestamp_ns > finished_at_ns:
                     dropped += 1
                     continue
@@ -230,7 +231,7 @@ def import_prometheus_response(
                 sample_count += 1
                 yield Measurement(
                     name,
-                    _sample_value(raw_value),
+                    sample_value,
                     labels.get("unit") or "1",
                     timestamp_ns,
                     entity_id,

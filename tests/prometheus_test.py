@@ -309,6 +309,39 @@ def test_prometheus_response_rolls_back_samples_before_a_malformed_value(
         assert reader.measurements() == ()
 
 
+def test_prometheus_response_rejects_malformed_values_outside_the_run_window(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "result": [
+                        {
+                            "metric": {"__name__": "queue_depth"},
+                            "value": [3, "NaN"],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PrometheusImportError, match="sample values must be finite"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()
+
+
 def test_prometheus_response_rolls_back_samples_over_the_input_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
