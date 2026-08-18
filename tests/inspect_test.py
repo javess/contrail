@@ -173,3 +173,32 @@ def test_inspection_keeps_invalid_summary_evidence_unknown(tmp_path: Path) -> No
     assert summary.stdout_sha256 is None
     assert summary.stderr_bytes is None
     assert summary.stderr_sha256 is None
+
+
+def test_inspection_rejects_out_of_range_otlp_completeness_counts(tmp_path: Path) -> None:
+    runpack = tmp_path / "invalid-completeness.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution(
+                "run",
+                "run",
+                0,
+                10,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {
+                    "otel": {
+                        "missing_parent_count": (1 << 63) - 1,
+                        "missing_link_count": 1,
+                        "dropped_attribute_count": 1 << 63,
+                    }
+                },
+            )
+        )
+
+    summary = inspect_runpack(runpack)
+
+    assert summary.missing_causal_references is None
+    assert summary.dropped_attribute_count is None

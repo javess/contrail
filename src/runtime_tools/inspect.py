@@ -11,6 +11,7 @@ from runtime_tools.model import Event, JsonValue
 from runtime_tools.storage import RunpackReader
 
 _MAX_TREE_INDENT_DEPTH = 40
+_MAX_COMPLETENESS_COUNT = (1 << 63) - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,9 +216,16 @@ def _missing_causal_references(metadata: dict[str, JsonValue]) -> int | None:
     total = 0
     for key in ("missing_parent_count", "missing_link_count"):
         value = otel.get(key, 0)
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+            or value > _MAX_COMPLETENESS_COUNT
+        ):
             return None
         total += value
+        if total > _MAX_COMPLETENESS_COUNT:
+            return None
     return total
 
 
@@ -228,7 +236,12 @@ def _dropped_attribute_count(metadata: dict[str, JsonValue]) -> int | None:
     if not isinstance(otel, dict):
         return None
     value = otel.get("dropped_attribute_count", 0)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 0
+        or value > _MAX_COMPLETENESS_COUNT
+    ):
         return None
     return value
 
