@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from runtime_tools.batchscope import analyze_runpack
@@ -16,6 +17,7 @@ MAX_TIMELINE_EDGES = 200_000
 MAX_TIMELINE_MEASUREMENTS = 200_000
 MAX_TIMELINE_JSON_BYTES = 64 * 1024 * 1024
 MAX_TIMELINE_TEXT_BYTES = 64 * 1024 * 1024
+MAX_TIMELINE_PAYLOAD_BYTES = 128 * 1024 * 1024
 
 
 class TimelineError(ValueError):
@@ -168,6 +170,7 @@ def build_timeline_payload(
     measurement_limit: int = MAX_TIMELINE_MEASUREMENTS,
     json_byte_limit: int = MAX_TIMELINE_JSON_BYTES,
     text_byte_limit: int = MAX_TIMELINE_TEXT_BYTES,
+    payload_byte_limit: int = MAX_TIMELINE_PAYLOAD_BYTES,
 ) -> dict[str, JsonValue]:
     if (
         event_limit <= 0
@@ -176,6 +179,7 @@ def build_timeline_payload(
         or measurement_limit <= 0
         or json_byte_limit <= 0
         or text_byte_limit <= 0
+        or payload_byte_limit <= 0
     ):
         raise TimelineError("timeline limits must be positive")
     runs: list[JsonValue] = [
@@ -203,4 +207,17 @@ def build_timeline_payload(
             )
         )
         comparison = compare_runpacks(baseline, candidate).as_json_value()
-    return {"runs": runs, "comparison": comparison}
+    payload: dict[str, JsonValue] = {"runs": runs, "comparison": comparison}
+    encoded_size = len(
+        json.dumps(
+            payload,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    )
+    if encoded_size > payload_byte_limit:
+        raise TimelineError(
+            f"timeline payload is {encoded_size:,} bytes; local UI limit is {payload_byte_limit:,}"
+        )
+    return payload
