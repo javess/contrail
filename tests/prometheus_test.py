@@ -273,6 +273,43 @@ def test_prometheus_response_rolls_back_samples_before_a_malformed_value(
         assert reader.measurements() == ()
 
 
+def test_prometheus_response_rolls_back_samples_over_the_input_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "result": [
+                        {
+                            "metric": {"__name__": "queue_depth"},
+                            "values": [[1, "3"], [2, "4"]],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(prometheus, "MAX_PROMETHEUS_SAMPLES", 1)
+
+    with pytest.raises(PrometheusImportError, match="exceeds the 1-sample input limit"):
+        import_prometheus_response(source, response, output)
+
+    assert not output.exists()
+    with RunpackReader(source) as reader:
+        assert reader.measurements() == ()
+
+
 def test_prometheus_response_does_not_guess_between_ambiguous_pod_names(
     tmp_path: Path,
 ) -> None:

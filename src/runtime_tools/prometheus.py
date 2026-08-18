@@ -20,6 +20,7 @@ class PrometheusImportError(EnrichmentError):
 
 
 MAX_PROMETHEUS_RESPONSE_BYTES = 64 * 1024 * 1024
+MAX_PROMETHEUS_SAMPLES = 1_000_000
 _MIN_RUNPACK_TIMESTAMP_NS = -(1 << 63)
 _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
 _NANOSECONDS_PER_SECOND = Decimal(1_000_000_000)
@@ -141,6 +142,7 @@ def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
         raise PrometheusImportError("Prometheus result must be a list")
 
     def samples() -> Iterator[tuple[dict[str, str], object, object]]:
+        sample_count = 0
         for raw_series in result:
             series = _object(raw_series, "Prometheus series")
             labels = _labels(series.get("metric", {}))
@@ -164,6 +166,12 @@ def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
             for raw_sample in raw_values:
                 if not isinstance(raw_sample, list) or len(raw_sample) != 2:
                     raise PrometheusImportError("Prometheus sample must be [timestamp, value]")
+                sample_count += 1
+                if sample_count > MAX_PROMETHEUS_SAMPLES:
+                    raise PrometheusImportError(
+                        "Prometheus response exceeds the "
+                        f"{MAX_PROMETHEUS_SAMPLES}-sample input limit"
+                    )
                 yield labels, raw_sample[0], raw_sample[1]
 
     return samples()
