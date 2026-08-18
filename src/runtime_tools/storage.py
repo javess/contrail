@@ -340,6 +340,15 @@ def _required_text(value: object, label: str) -> str:
     return result
 
 
+def _operation_identity(row: sqlite3.Row) -> tuple[str, str, str, str]:
+    return (
+        _required_text(row["entity_kind"], "operation entity kind"),
+        _required_text(row["entity_name"], "operation entity name"),
+        _required_text(row["event_kind"], "operation kind"),
+        _required_text(row["event_name"], "operation name"),
+    )
+
+
 def _execution_interval(started_at_ns: object, finished_at_ns: object) -> tuple[int, int | None]:
     started = _integer_value(started_at_ns, "execution start timestamp")
     finished = _integer_value(finished_at_ns, "execution finish timestamp", optional=True)
@@ -1118,12 +1127,7 @@ class RunpackReader:
             GROUP BY entity_kind, entity_name, event_kind, event_name
             """
         ).fetchall()
-        return {
-            (row["entity_kind"], row["entity_name"], row["event_kind"], row["event_name"]): int(
-                row["event_count"]
-            )
-            for row in rows
-        }
+        return {_operation_identity(row): int(row["event_count"]) for row in rows}
 
     def operation_error_counts(self) -> dict[tuple[str, str, str, str], int]:
         rows = self._execute(
@@ -1141,6 +1145,7 @@ class RunpackReader:
         ).fetchall()
         counts: dict[tuple[str, str, str, str], int] = {}
         for row in rows:
+            key = _operation_identity(row)
             attributes = _object(row["attributes_json"])
             status = attributes.get("otel.status.code")
             error_type = attributes.get("error.type")
@@ -1151,12 +1156,6 @@ class RunpackReader:
                 and bool(error_type)
             ):
                 continue
-            key = (
-                row["entity_kind"],
-                row["entity_name"],
-                row["event_kind"],
-                row["event_name"],
-            )
             counts[key] = counts.get(key, 0) + 1
         return counts
 
@@ -1168,7 +1167,13 @@ class RunpackReader:
             GROUP BY kind, name
             """
         ).fetchall()
-        return {(row["kind"], row["name"]): int(row["entity_count"]) for row in rows}
+        return {
+            (
+                _required_text(row["kind"], "entity kind"),
+                _required_text(row["name"], "entity name"),
+            ): int(row["entity_count"])
+            for row in rows
+        }
 
     def operation_duration_totals(self) -> dict[tuple[str, str, str, str], float]:
         rows = self._execute(
@@ -1188,12 +1193,7 @@ class RunpackReader:
                AND count(*) = count(event.finished_at_ns)
             """
         ).fetchall()
-        return {
-            (row["entity_kind"], row["entity_name"], row["event_kind"], row["event_name"]): float(
-                row["duration_seconds"]
-            )
-            for row in rows
-        }
+        return {_operation_identity(row): float(row["duration_seconds"]) for row in rows}
 
     def operation_max_concurrency(self) -> dict[tuple[str, str, str, str], int]:
         rows = self._execute(
@@ -1253,12 +1253,7 @@ class RunpackReader:
             GROUP BY entity_kind, entity_name, event_kind, event_name
             """
         ).fetchall()
-        return {
-            (row["entity_kind"], row["entity_name"], row["event_kind"], row["event_name"]): int(
-                row["max_concurrency"]
-            )
-            for row in rows
-        }
+        return {_operation_identity(row): int(row["max_concurrency"]) for row in rows}
 
     def edge_counts(self) -> dict[tuple[str, str, str, str, str], int]:
         rows = self._execute(
@@ -1283,11 +1278,11 @@ class RunpackReader:
         ).fetchall()
         return {
             (
-                row["source_kind"],
-                row["source_name"],
-                row["target_kind"],
-                row["target_name"],
-                row["edge_kind"],
+                _required_text(row["source_kind"], "edge source entity kind"),
+                _required_text(row["source_name"], "edge source entity name"),
+                _required_text(row["target_kind"], "edge target entity kind"),
+                _required_text(row["target_name"], "edge target entity name"),
+                _required_text(row["edge_kind"], "edge kind"),
             ): int(row["edge_count"])
             for row in rows
         }
@@ -1306,10 +1301,12 @@ class RunpackReader:
         ).fetchall()
         counts: dict[tuple[str, str, str, str, str], int] = {}
         for row in rows:
+            source_kind = _required_text(row["source_kind"], "edge source entity kind")
+            source_name = _required_text(row["source_name"], "edge source entity name")
             peer = _object(row["attributes_json"]).get("peer.service")
             if not isinstance(peer, str) or not peer:
                 continue
-            key = (row["source_kind"], row["source_name"], "service", peer, "calls")
+            key = (source_kind, source_name, "service", peer, "calls")
             counts[key] = counts.get(key, 0) + 1
         return counts
 

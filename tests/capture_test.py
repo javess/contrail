@@ -746,6 +746,88 @@ def test_reader_rejects_oversized_normalized_text(tmp_path: Path) -> None:
             reader.events()
 
 
+@pytest.mark.parametrize(
+    "accessor",
+    (
+        "operation_counts",
+        "operation_error_counts",
+        "operation_duration_totals",
+        "operation_max_concurrency",
+    ),
+)
+def test_reader_aggregate_operations_validate_dynamic_sqlite_text_types(
+    tmp_path: Path, accessor: str
+) -> None:
+    output = tmp_path / "invalid-operation-label.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="invalid-operation-label")
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            "UPDATE events SET name = ?, attributes_json = ?",
+            (sqlite3.Binary(b"not-text"), '{"error":true}'),
+        )
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="operation name must be a non-empty string"):
+            getattr(reader, accessor)()
+
+
+def test_reader_aggregate_entities_validate_dynamic_sqlite_text_types(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-entity-label.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="invalid-entity-label")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE entities SET name = ?", (sqlite3.Binary(b"not-text"),))
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="entity name must be a non-empty string"):
+            reader.entity_counts()
+
+
+@pytest.mark.parametrize("accessor", ("edge_counts", "peer_service_edge_counts"))
+def test_reader_aggregate_edges_validate_dynamic_sqlite_text_types(
+    tmp_path: Path, accessor: str
+) -> None:
+    output = tmp_path / "invalid-edge-label.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_entities(
+            (
+                Entity("source", "service", "source", None, {}),
+                Entity("target", "service", "target", None, {}),
+            )
+        )
+        writer.add_event_graph(
+            (
+                Event(
+                    "request",
+                    "client.request",
+                    "request",
+                    "source",
+                    0,
+                    1,
+                    "test",
+                    None,
+                    None,
+                    {"peer.service": "target"},
+                ),
+                Event(
+                    "target-event", "operation", "target", "target", 0, 1, "test", None, None, {}
+                ),
+            ),
+            (CausalEdge("request", "target-event", "calls", 1.0, {}),),
+        )
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            "UPDATE entities SET name = ? WHERE id = 'source'",
+            (sqlite3.Binary(b"not-text"),),
+        )
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(
+            RunpackError, match="edge source entity name must be a non-empty string"
+        ):
+            getattr(reader, accessor)()
+
+
 def test_reader_rejects_oversized_execution_command_json(tmp_path: Path) -> None:
     output = tmp_path / "oversized-command.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="oversized-command")
