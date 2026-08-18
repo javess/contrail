@@ -317,7 +317,15 @@ def _throughput(
         return None
     series, samples = next(iter(samples_by_series.items()))
     series_entities = entities_by_series[series]
-    samples.sort()
+    samples_by_timestamp: dict[int, tuple[float, float]] = {}
+    for timestamp_ns, completed, total in samples:
+        previous = samples_by_timestamp.get(timestamp_ns)
+        if previous is not None and previous != (completed, total):
+            return None
+        samples_by_timestamp[timestamp_ns] = (completed, total)
+    samples = [
+        (timestamp_ns, *values) for timestamp_ns, values in sorted(samples_by_timestamp.items())
+    ]
     latest = samples[-1]
     rate = _sample_rate(samples)
     remaining = max(0.0, latest[2] - latest[1])

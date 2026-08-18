@@ -482,6 +482,83 @@ def test_throughput_rejects_invalid_progress_and_does_not_infer_across_resets(
     assert analysis.throughput.estimated_drain_seconds is None
 
 
+def test_throughput_rejects_conflicting_samples_at_the_same_timestamp(tmp_path: Path) -> None:
+    runpack = tmp_path / "conflicting-progress.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 30, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("first", "progress", "progress", 10, 10, {"completed": 2, "total": 10}),
+                _event(
+                    "conflict",
+                    "progress",
+                    "progress",
+                    10,
+                    10,
+                    {"completed": 9, "total": 10},
+                ),
+            )
+        )
+
+    assert analyze_runpack(runpack).throughput is None
+
+
+def test_throughput_collapses_identical_samples_at_the_same_timestamp(tmp_path: Path) -> None:
+    runpack = tmp_path / "duplicate-progress.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution(
+                "progress",
+                "progress",
+                0,
+                20_000_000,
+                (),
+                str(tmp_path),
+                0,
+                None,
+                {},
+            )
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event(
+                    "first",
+                    "progress",
+                    "progress",
+                    10_000_000,
+                    10_000_000,
+                    {"completed": 2, "total": 10},
+                ),
+                _event(
+                    "second",
+                    "progress",
+                    "progress",
+                    20_000_000,
+                    20_000_000,
+                    {"completed": 4, "total": 10},
+                ),
+                _event(
+                    "duplicate",
+                    "progress",
+                    "progress",
+                    20_000_000,
+                    20_000_000,
+                    {"completed": 4, "total": 10},
+                ),
+            )
+        )
+
+    throughput = analyze_runpack(runpack).throughput
+
+    assert throughput is not None
+    assert throughput.completed == 4
+    assert throughput.rate_per_second == 200
+
+
 def test_throughput_does_not_merge_progress_from_multiple_entities(tmp_path: Path) -> None:
     runpack = tmp_path / "multiple-progress-series.runpack"
     with RunpackWriter(runpack) as writer:
