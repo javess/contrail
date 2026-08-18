@@ -86,6 +86,12 @@ def _result(
     return ClaimResult(contract.name, assertion.name, assertion.type, status, expected, observed)
 
 
+def _finite_limit(value: float, assertion: Assertion) -> float:
+    if not math.isfinite(value):
+        raise ContractError(f"{assertion.type} threshold exceeds the numeric range")
+    return value
+
+
 def _max_regression(
     contract: Contract,
     assertion: Assertion,
@@ -98,7 +104,7 @@ def _max_regression(
     expected = f"candidate {label} <= baseline + {percent:g}%"
     if change.baseline is None or change.candidate is None:
         return _result(contract, assertion, "unverifiable", expected, f"{label} unavailable")
-    limit = change.baseline * (1 + percent / 100)
+    limit = _finite_limit(change.baseline * (1 + percent / 100), assertion)
     status: ClaimStatus = "pass" if change.candidate <= limit else "fail"
     return _result(
         contract,
@@ -284,7 +290,10 @@ def _evaluate(
             if errors_only
             else candidate_operations
         )
-        limit = before * factor
+        try:
+            limit = _finite_limit(before * factor, assertion)
+        except OverflowError as exc:
+            raise ContractError(f"{assertion.type} threshold exceeds the numeric range") from exc
         return _result(
             contract,
             assertion,

@@ -437,6 +437,56 @@ def test_proofline_normalizes_numeric_threshold_overflow(tmp_path: Path) -> None
         verify_contracts(contract, baseline, candidate)
 
 
+@pytest.mark.parametrize(
+    ("assertion", "evidence"),
+    (
+        ("type: max_runtime_regression\n    percent: 1.0e+308", "runtime"),
+        (
+            (
+                "type: max_operation_count\n"
+                "    operation: db.write\n"
+                "    relative_to: baseline\n"
+                "    factor: 1.0e+308"
+            ),
+            "operation",
+        ),
+    ),
+)
+def test_proofline_rejects_thresholds_with_overflowed_limits(
+    tmp_path: Path,
+    assertion: str,
+    evidence: str,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "overflowed-limit.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=True)
+    with sqlite3.connect(baseline) as connection:
+        if evidence == "runtime":
+            connection.execute(
+                "UPDATE executions SET finished_at_ns = ?",
+                ((1 << 63) - 1,),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO events(
+                    id, kind, name, entity_id, started_at_ns, finished_at_ns,
+                    clock_domain, uncertainty_ns, sequence, attributes_json
+                ) VALUES ('write-extra', 'client.request', 'db.write', 'app',
+                          3, 4, 'test', NULL, 2, '{}')
+                """
+            )
+    contract.write_text(
+        f"name: overflowed-limit\nassertions:\n  - {assertion}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="threshold exceeds the numeric range"):
+        verify_contracts(contract, baseline, candidate)
+
+
 def test_proofline_keeps_structural_claims_unverifiable_after_annotation_failure(
     tmp_path: Path,
 ) -> None:
