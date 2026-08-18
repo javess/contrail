@@ -27,6 +27,7 @@ SCHEMA_VERSION = "1.1"
 SCHEMA_MAJOR_VERSION = "1"
 APPLICATION_ID = 0x4354524C  # CTRL
 MAX_RUNPACK_JSON_BYTES = 4 * 1024 * 1024
+MAX_RUNPACK_TEXT_BYTES = 4 * 1024 * 1024
 _MIN_INTEGER = -(1 << 63)
 _MAX_INTEGER = (1 << 63) - 1
 _REQUIRED_TABLES = {
@@ -256,6 +257,10 @@ def _text_value(value: object, label: str, *, optional: bool = False) -> str | N
     if not isinstance(value, str) or not value:
         suffix = " or null" if optional else ""
         raise RunpackError(f"{label} must be a non-empty string{suffix}")
+    if len(value.encode("utf-8", errors="surrogatepass")) > MAX_RUNPACK_TEXT_BYTES:
+        raise RunpackError(
+            f"{label} exceeds the {MAX_RUNPACK_TEXT_BYTES}-byte runpack text field limit"
+        )
     return value
 
 
@@ -429,7 +434,7 @@ def _validate_connection(connection: sqlite3.Connection) -> None:
     row = connection.execute("SELECT value FROM manifest WHERE key = 'schema_version'").fetchone()
     if row is None:
         raise RunpackError("runpack has no schema version")
-    version = str(row[0])
+    version = _required_text(row[0], "runpack schema version")
     version_parts = version.split(".")
     if not version_parts or any(not part.isdigit() for part in version_parts):
         raise RunpackError(f"runpack schema version is invalid: {version!r}")
@@ -809,7 +814,12 @@ class RunpackReader:
 
     def manifest(self) -> dict[str, str]:
         rows = self._execute("SELECT key, value FROM manifest ORDER BY key").fetchall()
-        return {str(row["key"]): str(row["value"]) for row in rows}
+        return {
+            _required_text(row["key"], "manifest key"): _required_text(
+                row["value"], "manifest value"
+            )
+            for row in rows
+        }
 
     def measurements(self) -> tuple[Measurement, ...]:
         rows = self._execute(

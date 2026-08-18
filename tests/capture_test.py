@@ -18,6 +18,7 @@ from runtime_tools.inspect import render_summary
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import (
     MAX_RUNPACK_JSON_BYTES,
+    MAX_RUNPACK_TEXT_BYTES,
     RunpackError,
     RunpackReader,
     RunpackWriter,
@@ -381,6 +382,29 @@ def test_reader_rejects_oversized_normalized_json(tmp_path: Path) -> None:
 
     with pytest.raises(RunpackError, match="runpack JSON exceeds"):
         inspect_runpack(output)
+
+
+def test_writer_rejects_oversized_normalized_text(tmp_path: Path) -> None:
+    output = tmp_path / "oversized-text-write.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="entity name exceeds"):
+            writer.add_entity(
+                Entity("entity", "service", "x" * (MAX_RUNPACK_TEXT_BYTES + 1), None, {})
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.entities() == ()
+
+
+def test_reader_rejects_oversized_normalized_text(tmp_path: Path) -> None:
+    output = tmp_path / "oversized-text-read.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="oversized-text")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE events SET name = ?", ("x" * (MAX_RUNPACK_TEXT_BYTES + 1),))
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="event name exceeds"):
+            reader.events()
 
 
 def test_reader_rejects_oversized_execution_command_json(tmp_path: Path) -> None:
