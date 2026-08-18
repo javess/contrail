@@ -147,7 +147,9 @@ def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
         raise PrometheusImportError("Prometheus response status is not success")
     data = _object(root.get("data"), "Prometheus data")
     result_type = data.get("resultType")
-    if result_type is not None and result_type not in {"matrix", "vector"}:
+    if result_type is not None and (
+        not isinstance(result_type, str) or result_type not in {"matrix", "vector"}
+    ):
         raise PrometheusImportError(
             "Prometheus resultType must be matrix or vector for sample import"
         )

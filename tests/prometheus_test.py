@@ -176,6 +176,8 @@ def test_prometheus_response_rejects_timestamps_outside_the_runpack_range(
     ("result_type", "series", "message"),
     (
         ("scalar", [1, "3"], "resultType must be matrix or vector"),
+        ([], {}, "resultType must be matrix or vector"),
+        ({}, {}, "resultType must be matrix or vector"),
         (
             "matrix",
             {"metric": {"__name__": "depth"}, "value": [1, "3"]},
@@ -208,7 +210,7 @@ def test_prometheus_response_rejects_timestamps_outside_the_runpack_range(
 )
 def test_prometheus_response_rejects_inconsistent_result_types(
     tmp_path: Path,
-    result_type: str,
+    result_type: object,
     series: object,
     message: str,
 ) -> None:
