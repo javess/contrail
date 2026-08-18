@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 from runtime_tools import record_process
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
@@ -288,6 +289,64 @@ def test_compare_runpacks_treats_changed_stderr_as_different_behavior(tmp_path: 
     assert diff.stderr_equivalent is False
     assert diff.outcome == "different"
     assert "stderr:      different" in render_diff(diff, "text")
+
+
+def test_compare_runpacks_reports_selected_environment_drift_without_hashes(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    environments = (
+        (
+            baseline,
+            {
+                "CI": "baseline-ci-hash",
+                "LANG": "same-hash",
+                "TZ": "baseline-tz-hash",
+            },
+        ),
+        (
+            candidate,
+            {
+                "LANG": "same-hash",
+                "PYTHONHASHSEED": "candidate-seed-hash",
+                "TZ": "candidate-tz-hash",
+            },
+        ),
+    )
+    for path, selected in environments:
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(
+                    path.stem,
+                    path.stem,
+                    0,
+                    1,
+                    (),
+                    str(tmp_path),
+                    0,
+                    None,
+                    cast(Any, {"environment": {"selected_value_sha256": selected}}),
+                )
+            )
+
+    diff = compare_runpacks(baseline, candidate)
+    report = render_diff(diff, "text")
+
+    assert [(change.variable, change.change_kind) for change in diff.environment_changes] == [
+        ("CI", "removed"),
+        ("PYTHONHASHSEED", "added"),
+        ("TZ", "changed"),
+    ]
+    assert "Environment changes" in report
+    assert "  PYTHONHASHSEED: added" in report
+    assert "baseline-tz-hash" not in report
+    assert json.loads(render_diff(diff, "json"))["environment_changes"][2] == {
+        "baseline_present": True,
+        "candidate_present": True,
+        "change_kind": "changed",
+        "variable": "TZ",
+    }
 
 
 def test_compare_runpacks_keeps_outcome_unknown_when_stderr_evidence_is_missing(

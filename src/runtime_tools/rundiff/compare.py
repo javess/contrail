@@ -104,6 +104,29 @@ class EdgeCountChange:
 
 
 @dataclass(frozen=True, slots=True)
+class EnvironmentChange:
+    variable: str
+    baseline_present: bool
+    candidate_present: bool
+
+    @property
+    def change_kind(self) -> Literal["added", "removed", "changed"]:
+        if not self.baseline_present:
+            return "added"
+        if not self.candidate_present:
+            return "removed"
+        return "changed"
+
+    def as_json_value(self) -> dict[str, JsonValue]:
+        return {
+            "variable": self.variable,
+            "baseline_present": self.baseline_present,
+            "candidate_present": self.candidate_present,
+            "change_kind": self.change_kind,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionDiff:
     baseline_id: str
     baseline_name: str
@@ -124,6 +147,7 @@ class ExecutionDiff:
     operation_count_changes: tuple[OperationCountChange, ...]
     operation_duration_changes: tuple[OperationDurationChange, ...]
     edge_count_changes: tuple[EdgeCountChange, ...]
+    environment_changes: tuple[EnvironmentChange, ...]
 
     def as_json_value(self) -> dict[str, JsonValue]:
         return {
@@ -148,6 +172,7 @@ class ExecutionDiff:
                 change.as_json_value() for change in self.operation_duration_changes
             ],
             "edge_count_changes": [change.as_json_value() for change in self.edge_count_changes],
+            "environment_changes": [change.as_json_value() for change in self.environment_changes],
         }
 
 
@@ -259,16 +284,40 @@ def _all_edge_counts(reader: RunpackReader) -> dict[tuple[str, str, str, str, st
     return counts
 
 
+def _selected_environment(metadata: dict[str, JsonValue]) -> dict[str, str]:
+    environment = metadata.get("environment")
+    if not isinstance(environment, dict):
+        return {}
+    selected = environment.get("selected_value_sha256")
+    if not isinstance(selected, dict):
+        return {}
+    return {
+        variable: identity for variable, identity in selected.items() if isinstance(identity, str)
+    }
+
+
+def _environment_changes(
+    baseline: dict[str, str], candidate: dict[str, str]
+) -> tuple[EnvironmentChange, ...]:
+    return tuple(
+        EnvironmentChange(variable, variable in baseline, variable in candidate)
+        for variable in sorted(baseline.keys() | candidate.keys())
+        if baseline.get(variable) != candidate.get(variable)
+    )
+
+
 def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff:
     baseline_summary = inspect_runpack(baseline_path)
     candidate_summary = inspect_runpack(candidate_path)
     baseline_analysis = analyze_runpack(baseline_path)
     candidate_analysis = analyze_runpack(candidate_path)
     with RunpackReader(baseline_path) as baseline_reader:
+        baseline_environment = _selected_environment(baseline_reader.execution().metadata)
         baseline_operations = baseline_reader.operation_counts()
         baseline_durations = baseline_reader.operation_duration_totals()
         baseline_edges = _all_edge_counts(baseline_reader)
     with RunpackReader(candidate_path) as candidate_reader:
+        candidate_environment = _selected_environment(candidate_reader.execution().metadata)
         candidate_operations = candidate_reader.operation_counts()
         candidate_durations = candidate_reader.operation_duration_totals()
         candidate_edges = _all_edge_counts(candidate_reader)
@@ -324,4 +373,5 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
             candidate_operations,
         ),
         edge_count_changes=_edge_changes(baseline_edges, candidate_edges),
+        environment_changes=_environment_changes(baseline_environment, candidate_environment),
     )

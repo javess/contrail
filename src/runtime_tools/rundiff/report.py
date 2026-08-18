@@ -86,6 +86,11 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
     _append_edges(lines, "New runtime dependencies", new_edges)
     _append_edges(lines, "Removed runtime dependencies", removed_edges)
     _append_edges(lines, "Changed runtime dependencies", changed_edges)
+    if diff.environment_changes:
+        lines.extend(("", "Environment changes"))
+        lines.extend(
+            f"  {change.variable}: {change.change_kind}" for change in diff.environment_changes
+        )
     if (
         not diff.operation_count_changes
         and not diff.operation_duration_changes
