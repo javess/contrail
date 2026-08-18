@@ -700,7 +700,7 @@ class RunpackWriter:
     def expand_execution_bounds(self, started_at_ns: int, finished_at_ns: int | None) -> None:
         normalized_start, normalized_finish = _execution_interval(started_at_ns, finished_at_ns)
         with self._writing():
-            self._connection.execute(
+            cursor = self._connection.execute(
                 """
             UPDATE executions
             SET started_at_ns = min(started_at_ns, ?),
@@ -716,6 +716,8 @@ class RunpackWriter:
                     normalized_finish,
                 ),
             )
+            if cursor.rowcount != 1:
+                raise RunpackError("runpack must contain exactly one execution to expand")
             self._connection.commit()
 
     def set_execution_metadata(

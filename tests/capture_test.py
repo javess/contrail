@@ -907,6 +907,13 @@ def test_writer_rejects_invalid_execution_bound_expansions(
     assert (execution.started_at_ns, execution.finished_at_ns) == (0, 1)
 
 
+def test_execution_bound_expansion_requires_an_execution(tmp_path: Path) -> None:
+    output = tmp_path / "empty-expansion.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="exactly one execution to expand"):
+            writer.expand_execution_bounds(0, 1)
+
+
 def test_execution_bound_expansion_does_not_close_an_open_execution(tmp_path: Path) -> None:
     output = tmp_path / "open-expansion.runpack"
     with RunpackWriter(output) as writer:
