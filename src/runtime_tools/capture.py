@@ -73,7 +73,7 @@ def _git_revision(cwd: Path) -> str | None:
             text=True,
             timeout=2,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
     return result.stdout.strip() or None
 
@@ -193,6 +193,8 @@ def _wait_with_usage(
             break
         except InterruptedError:
             continue
+        except OSError as exc:
+            raise CaptureError(f"could not collect captured process status: {exc}") from exc
     exit_code = os.waitstatus_to_exitcode(status)
     process.returncode = exit_code
     return exit_code, usage

@@ -410,6 +410,32 @@ def test_process_cleanup_reaps_a_child_that_exits_during_signaling(
     assert waits[-1] is None
 
 
+def test_capture_normalizes_child_status_collection_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = SimpleNamespace(pid=123, returncode=None)
+
+    def fail_wait(pid: int, options: int) -> None:
+        raise ChildProcessError("status was collected elsewhere")
+
+    monkeypatch.setattr(os, "wait4", fail_wait)
+
+    with pytest.raises(CaptureError, match="could not collect captured process status"):
+        capture._wait_with_usage(cast(subprocess.Popen[bytes], process))
+
+
+def test_capture_ignores_optional_git_revision_os_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_git(*args: Any, **kwargs: Any) -> None:
+        raise PermissionError("git cannot execute")
+
+    monkeypatch.setattr(subprocess, "run", fail_git)
+
+    assert capture._git_revision(tmp_path) is None
+
+
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:
     output = tmp_path / "existing.runpack"
     output.write_bytes(b"keep me")
