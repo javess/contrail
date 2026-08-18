@@ -867,6 +867,48 @@ def test_kubernetes_snapshot_rejects_malformed_running_container_state(
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    ("state", "message"),
+    (
+        ({"waiting": "invalid"}, "waiting container state must be an object"),
+        (
+            {"running": {}, "terminated": {}},
+            "container state cannot contain more than one",
+        ),
+    ),
+)
+def test_kubernetes_snapshot_rejects_invalid_container_state_unions(
+    tmp_path: Path,
+    state: dict[str, object],
+    message: str,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "invalid-state.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("worker", "pod"),
+                        "spec": {"containers": [{"name": "worker", "resources": {}}]},
+                        "status": {"containerStatuses": [{"name": "worker", "state": state}]},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KubernetesImportError, match=message):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()
+
+
 def test_kubernetes_fallback_identity_includes_namespace(tmp_path: Path) -> None:
     base = tmp_path / "base.runpack"
     snapshot = tmp_path / "namespaces.json"

@@ -251,17 +251,29 @@ def _replica_attributes(item: dict[str, object], status: dict[str, object]) -> d
     return {name: _integer(value, name) for name, value in fields if value is not None}
 
 
+def _container_state(status: dict[str, object]) -> dict[str, dict[str, object]]:
+    state = _object(status.get("state", {}), "container state")
+    variants: dict[str, dict[str, object]] = {}
+    for name in ("waiting", "running", "terminated"):
+        value = state.get(name)
+        if value is not None:
+            variants[name] = _object(value, f"{name} container state")
+    if len(variants) > 1:
+        raise KubernetesImportError(
+            "container state cannot contain more than one of waiting, running, or terminated"
+        )
+    return variants
+
+
 def _pod_finish(status: dict[str, object]) -> int | None:
     container_statuses = _container_statuses(status)
     if not container_statuses:
         return None
     finishes = []
     for container_status in container_statuses.values():
-        state = _object(container_status.get("state", {}), "container state")
-        raw_terminated = state.get("terminated")
-        if raw_terminated is None:
+        terminated = _container_state(container_status).get("terminated")
+        if terminated is None:
             return None
-        terminated = _object(raw_terminated, "terminated container state")
         value = _timestamp(terminated.get("finishedAt"))
         if value is None:
             return None
@@ -300,13 +312,11 @@ def _resource_map(value: object) -> dict[str, JsonValue]:
 
 
 def _container_interval(status: dict[str, object]) -> tuple[int | None, int | None]:
-    state = _object(status.get("state", {}), "container state")
-    raw_running = state.get("running")
-    running = _object(raw_running, "running container state") if raw_running is not None else {}
-    raw_terminated = state.get("terminated")
+    state = _container_state(status)
+    running = state.get("running", {})
+    terminated = state.get("terminated")
     started = _timestamp(running.get("startedAt"))
-    if raw_terminated is not None:
-        terminated = _object(raw_terminated, "terminated container state")
+    if terminated is not None:
         terminated_started = _timestamp(terminated.get("startedAt"))
         if terminated_started is not None:
             started = terminated_started
