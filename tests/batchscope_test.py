@@ -437,7 +437,35 @@ def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> N
 
     analysis = analyze_runpack(runpack)
 
-    assert {item.classification for item in analysis.bottlenecks} == {"external_dependency"}
+    finding = next(
+        item for item in analysis.bottlenecks if item.classification == "external_dependency"
+    )
+    assert finding.evidence == "client operations occupy 0.060s of a 0.100s critical path"
+    assert finding.confidence == 0.75
+
+
+def test_batchscope_marks_external_dependency_inference_as_lower_confidence(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "inferred-external.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("external", "external", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("root", "run", "root", 0, 100_000_000))
+        writer.add_event(_event("database", "client.request", "database", 20_000_000, 80_000_000))
+        writer.add_causal_edge(CausalEdge("root", "database", "parent", 0.5, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    finding = next(
+        item for item in analysis.bottlenecks if item.classification == "external_dependency"
+    )
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.certainty == "inferred"
+    assert finding.evidence == "inferred client operations occupy 0.060s of a 0.100s critical path"
+    assert finding.confidence == 0.5
 
 
 def test_batchscope_classifies_failed_scheduling_as_capacity_starvation(

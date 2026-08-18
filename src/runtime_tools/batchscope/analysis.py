@@ -608,10 +608,11 @@ def _bottlenecks(
             Bottleneck(
                 "external_dependency",
                 (
-                    f"client operations occupy {client_seconds:.3f}s of a "
+                    ("inferred " if critical.certainty == "inferred" else "")
+                    + f"client operations occupy {client_seconds:.3f}s of a "
                     f"{critical.duration_seconds:.3f}s critical path"
                 ),
-                0.75,
+                0.75 if critical.certainty == "observed" else 0.5,
             )
         )
     straggler = _straggler_tail(events, total)
