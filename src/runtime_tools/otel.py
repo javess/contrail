@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import uuid
@@ -10,8 +11,9 @@ from pathlib import Path
 from typing import Never
 
 from runtime_tools.artifacts import publish_without_overwrite
+from runtime_tools.enrichment import enrich_copy
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, JsonValue
-from runtime_tools.storage import RunpackWriter
+from runtime_tools.storage import RunpackReader, RunpackWriter
 
 
 class OtelImportError(ValueError):
@@ -28,6 +30,16 @@ class OtelImportResult:
     edge_count: int
     missing_parent_count: int
     missing_link_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class OtelLogImportResult:
+    event_count: int
+    edge_count: int
+    new_entity_count: int
+    dropped_outside_window: int
+    missing_span_count: int
+    ambiguous_service_count: int
 
 
 def _typed_value(value: object) -> JsonValue:
@@ -351,3 +363,189 @@ def import_otlp_json(
         missing_parent_count,
         missing_link_count,
     )
+
+
+def _log_name(body: JsonValue) -> str:
+    if not isinstance(body, str) or not body:
+        return "log"
+    if len(body) <= 120:
+        return body
+    return f"{body[:117]}..."
+
+
+def import_otlp_logs(
+    runpack: Path,
+    source: Path,
+    output: Path,
+    *,
+    include_raw: bool = False,
+) -> OtelLogImportResult:
+    """Add bounded OTLP/JSON log records to an existing execution."""
+    document, raw_document = _load_document(source)
+    resource_logs = _as_list(document.get("resourceLogs"), "resourceLogs")
+    with RunpackReader(runpack) as reader:
+        execution = reader.execution()
+        existing_entities = reader.entities()
+        existing_events = reader.events()
+
+    services: dict[str, list[str]] = {}
+    for entity in existing_entities:
+        if entity.kind == "service":
+            services.setdefault(entity.name, []).append(entity.id)
+    spans: dict[tuple[str, str], list[Event]] = {}
+    for event in existing_events:
+        trace_id = event.attributes.get("otel.trace_id")
+        span_id = event.attributes.get("otel.span_id")
+        if isinstance(trace_id, str) and isinstance(span_id, str):
+            spans.setdefault((trace_id, span_id), []).append(event)
+
+    entities: list[Entity] = []
+    events: list[Event] = []
+    edges: list[CausalEdge] = []
+    dropped = 0
+    missing_spans = 0
+    ambiguous_services = 0
+
+    for resource_index, raw_resource_logs in enumerate(resource_logs):
+        resource_group = _as_object(raw_resource_logs, "resourceLogs entry")
+        resource = _as_object(resource_group.get("resource", {}), "resource")
+        resource_attributes = _attributes(resource.get("attributes", []))
+        raw_service_name = resource_attributes.get("service.name", "unknown-service")
+        service_name = str(raw_service_name)
+        service_matches = services.get(service_name, [])
+        new_entity: Entity | None = None
+        if len(service_matches) == 1:
+            entity_id = service_matches[0]
+        else:
+            entity_id = uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"{execution.id}:otel-log-resource:{resource_index}:{service_name}",
+            ).hex
+            new_entity = Entity(entity_id, "service", service_name, None, resource_attributes)
+
+        resource_event_count = 0
+        scope_logs = _as_list(resource_group.get("scopeLogs", []), "scopeLogs")
+        for scope_index, raw_scope_logs in enumerate(scope_logs):
+            scope_group = _as_object(raw_scope_logs, "scopeLogs entry")
+            scope = _as_object(scope_group.get("scope", {}), "scope")
+            scope_name = scope.get("name", "")
+            if not isinstance(scope_name, str):
+                raise OtelImportError("log scope name must be a string")
+            log_records = _as_list(scope_group.get("logRecords", []), "logRecords")
+            for record_index, raw_log_record in enumerate(log_records):
+                record = _as_object(raw_log_record, "log record")
+                raw_timestamp = record.get("timeUnixNano")
+                if raw_timestamp in (None, ""):
+                    raw_timestamp = record.get("observedTimeUnixNano")
+                timestamp_ns = _timestamp(raw_timestamp, "log timestamp")
+                if timestamp_ns is not None and (
+                    timestamp_ns < execution.started_at_ns
+                    or (
+                        execution.finished_at_ns is not None
+                        and timestamp_ns > execution.finished_at_ns
+                    )
+                ):
+                    dropped += 1
+                    continue
+
+                trace_id_value = record.get("traceId", "")
+                span_id_value = record.get("spanId", "")
+                if not isinstance(trace_id_value, str) or not isinstance(span_id_value, str):
+                    raise OtelImportError("log traceId and spanId must be strings")
+                trace_id = trace_id_value
+                span_id = span_id_value
+                if bool(trace_id) != bool(span_id):
+                    raise OtelImportError("log records must contain traceId and spanId together")
+
+                raw_body = record.get("body")
+                body = _typed_value(raw_body) if raw_body is not None else None
+                attributes = _attributes(record.get("attributes", []))
+                attributes["log.body"] = body
+                if scope_name:
+                    attributes["otel.scope.name"] = scope_name
+                severity_text = record.get("severityText")
+                if severity_text is not None:
+                    if not isinstance(severity_text, str):
+                        raise OtelImportError("log severityText must be a string")
+                    attributes["log.severity_text"] = severity_text
+                if "severityNumber" in record:
+                    try:
+                        severity_number = int(str(record["severityNumber"]))
+                    except ValueError as exc:
+                        raise OtelImportError("log severityNumber must be an integer") from exc
+                    attributes["log.severity_number"] = severity_number
+                if trace_id:
+                    attributes["otel.trace_id"] = trace_id
+                    attributes["otel.span_id"] = span_id
+
+                event_id = (
+                    "otel:log:"
+                    + uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"{execution.id}:{resource_index}:{scope_index}:{record_index}",
+                    ).hex
+                )
+                event_entity_id = entity_id
+                if trace_id:
+                    span_matches = spans.get((trace_id, span_id), [])
+                    if len(span_matches) == 1:
+                        span = span_matches[0]
+                        edges.append(
+                            CausalEdge(
+                                span.id,
+                                event_id,
+                                "emits",
+                                1.0,
+                                {"source": "otel-log"},
+                            )
+                        )
+                    else:
+                        missing_spans += 1
+                events.append(
+                    Event(
+                        event_id,
+                        "log.record",
+                        _log_name(body),
+                        event_entity_id,
+                        timestamp_ns,
+                        None,
+                        f"otel-log-resource-{resource_index}-scope-{scope_index}",
+                        None,
+                        record_index,
+                        attributes,
+                    )
+                )
+                resource_event_count += 1
+
+        if resource_event_count and new_entity is not None:
+            entities.append(new_entity)
+        if resource_event_count and len(service_matches) > 1:
+            ambiguous_services += 1
+
+    def append(writer: RunpackWriter) -> OtelLogImportResult:
+        writer.add_entities(entities)
+        writer.add_events(events)
+        writer.add_causal_edges(edges)
+        if include_raw:
+            writer.add_attachments(
+                (
+                    Attachment(
+                        id="raw:otlp-logs:" + hashlib.sha256(raw_document).hexdigest(),
+                        kind="raw",
+                        name=source.name,
+                        media_type="application/json",
+                        content=raw_document,
+                        attributes={"adapter": "otlp-logs"},
+                    ),
+                )
+            )
+        return OtelLogImportResult(
+            len(events),
+            len(edges),
+            len(entities),
+            dropped,
+            missing_spans,
+            ambiguous_services,
+        )
+
+    return enrich_copy(runpack, output, append)

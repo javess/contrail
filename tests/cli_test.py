@@ -136,6 +136,94 @@ def test_runtime_cli_imports_otlp_json_and_prints_causal_tree(tmp_path: Path) ->
     assert "checkout :: charge [operation] 0.002ms" in inspected.stdout
 
 
+def test_runtime_cli_enriches_a_runpack_with_otlp_logs(tmp_path: Path) -> None:
+    trace = tmp_path / "trace.json"
+    logs = tmp_path / "logs.json"
+    base = tmp_path / "base.runpack"
+    output = tmp_path / "logs.runpack"
+    trace.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "10",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "5",
+                                        "body": {"stringValue": "hello"},
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    imported = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "import-otel",
+            str(trace),
+            "--output",
+            str(base),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    enriched = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "enrich-otel-logs",
+            str(base),
+            str(logs),
+            "--output",
+            str(output),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert imported.returncode == 0
+    assert enriched.returncode == 0
+    assert "added 1 OTLP log records and 1 span correlations" in enriched.stderr
+    assert output.is_file()
+
+
 def test_runtime_cli_reports_corrupt_runpack_without_traceback(tmp_path: Path) -> None:
     runpack = tmp_path / "corrupt.runpack"
     runpack.write_bytes(b"not sqlite")

@@ -12,7 +12,7 @@ from runtime_tools import __version__
 from runtime_tools.capture import CaptureError, record_process
 from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
 from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
-from runtime_tools.otel import OtelImportError, import_otlp_json
+from runtime_tools.otel import OtelImportError, import_otlp_json, import_otlp_logs
 from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
 from runtime_tools.query import QueryError, query_runpack, render_query
 from runtime_tools.storage import RunpackError
@@ -70,6 +70,16 @@ def _parser() -> argparse.ArgumentParser:
     prometheus.add_argument("runpack", type=Path)
     prometheus.add_argument("response", type=Path)
     prometheus.add_argument("--output", type=Path, required=True)
+
+    otel_logs = subparsers.add_parser("enrich-otel-logs", help="add bounded OTLP/JSON log records")
+    otel_logs.add_argument("runpack", type=Path)
+    otel_logs.add_argument("source", type=Path)
+    otel_logs.add_argument("--output", type=Path, required=True)
+    otel_logs.add_argument(
+        "--include-raw",
+        action="store_true",
+        help="store the source OTLP logs JSON in the runpack",
+    )
 
     query = subparsers.add_parser("query", help="run bounded read-only SQL over a runpack")
     query.add_argument("runpack", type=Path)
@@ -148,6 +158,21 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"added {prometheus_result.sample_count} Prometheus samples "
                 f"({prometheus_result.dropped_outside_window} outside the run window) "
+                f"to {args.output}",
+                file=sys.stderr,
+            )
+            return 0
+        if args.subcommand == "enrich-otel-logs":
+            logs_result = import_otlp_logs(
+                args.runpack,
+                args.source,
+                args.output,
+                include_raw=args.include_raw,
+            )
+            print(
+                f"added {logs_result.event_count} OTLP log records and "
+                f"{logs_result.edge_count} span correlations "
+                f"({logs_result.dropped_outside_window} outside the run window) "
                 f"to {args.output}",
                 file=sys.stderr,
             )
