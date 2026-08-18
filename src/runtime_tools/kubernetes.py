@@ -270,6 +270,8 @@ def import_kubernetes_snapshot(
         kind = str(item.get("kind", ""))
         if kind in _WORKLOAD_KINDS:
             uid = _uid(item)
+            if uid in entity_by_uid:
+                raise KubernetesImportError(f"duplicate Kubernetes object uid: {uid}")
             entity_by_uid[uid] = f"k8s:{kind.lower()}:{uid}"
             if kind == "Node":
                 node_uid_by_name[_name(item)] = uid

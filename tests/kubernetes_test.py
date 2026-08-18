@@ -10,7 +10,7 @@ from runtime_tools.inspect import inspect_runpack
 from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
 from runtime_tools.model import CausalEdge, Entity, Event, Execution
 from runtime_tools.otel import import_otlp_json
-from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
+from runtime_tools.storage import RunpackReader, RunpackWriter
 
 
 def _metadata(name: str, uid: str, **extra: object) -> dict[str, object]:
@@ -379,7 +379,7 @@ def test_kubernetes_enrichment_reports_identity_collisions_without_publishing(
         encoding="utf-8",
     )
 
-    with pytest.raises(RunpackError, match="UNIQUE constraint failed"):
+    with pytest.raises(KubernetesImportError, match="duplicate Kubernetes object uid: duplicate"):
         import_kubernetes_snapshot(base, snapshot, output)
 
     assert not output.exists()
