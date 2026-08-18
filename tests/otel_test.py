@@ -1004,6 +1004,45 @@ def test_otlp_json_import_rejects_invalid_bytes_attributes(tmp_path: Path, encod
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("name", "bad-\ud800", "span name must be valid UTF-8"),
+        (
+            "attributes",
+            [{"key": "bad-\ud800", "value": {"stringValue": "value"}}],
+            "OTLP attribute key must be valid UTF-8",
+        ),
+        (
+            "attributes",
+            [{"key": "key", "value": {"stringValue": "bad-\ud800"}}],
+            "OTLP stringValue must be valid UTF-8",
+        ),
+    ),
+)
+def test_otlp_json_import_rejects_unpaired_surrogates_at_the_adapter_boundary(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    source = tmp_path / "surrogate.json"
+    output = tmp_path / "surrogate.runpack"
+    span = {
+        "traceId": "trace",
+        "spanId": "span",
+        "startTimeUnixNano": "1",
+        "endTimeUnixNano": "2",
+        field: value,
+    }
+    source.write_text(
+        json.dumps({"resourceSpans": [{"scopeSpans": [{"spans": [span]}]}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match=message):
+        import_otlp_json(source, output, name="surrogate")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_duplicate_attribute_keys(tmp_path: Path) -> None:
     source = tmp_path / "duplicate-attribute.json"
     output = tmp_path / "duplicate-attribute.runpack"

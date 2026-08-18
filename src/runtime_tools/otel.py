@@ -63,6 +63,14 @@ class OtelLogImportResult:
     dropped_attribute_count: int
 
 
+def _validate_utf8(value: str, label: str) -> str:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise OtelImportError(f"{label} must be valid UTF-8") from exc
+    return value
+
+
 def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
     if depth > MAX_OTLP_ATTRIBUTE_DEPTH:
         raise OtelImportError(f"OTLP attribute nesting exceeds {MAX_OTLP_ATTRIBUTE_DEPTH} levels")
@@ -75,7 +83,7 @@ def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
         string = value["stringValue"]
         if not isinstance(string, str):
             raise OtelImportError("OTLP stringValue is invalid")
-        return string
+        return _validate_utf8(string, "OTLP stringValue")
     if "boolValue" in value:
         boolean = value["boolValue"]
         if not isinstance(boolean, bool):
@@ -138,6 +146,7 @@ def _attributes(raw: object, *, depth: int = 0) -> dict[str, JsonValue]:
         if not isinstance(item, dict) or not isinstance(item.get("key"), str):
             raise OtelImportError("OTLP attribute must contain a string key")
         key = item["key"]
+        _validate_utf8(key, "OTLP attribute key")
         if key in result:
             raise OtelImportError(f"duplicate OTLP attribute key: {key}")
         result[key] = _typed_value(item.get("value"), depth=depth)
@@ -161,7 +170,7 @@ def _identifier(value: object, label: str, *, optional: bool = False) -> str:
         return ""
     if not isinstance(value, str) or not value:
         raise OtelImportError(f"{label} must be a non-empty string")
-    return value
+    return _validate_utf8(value, label)
 
 
 def _semantic_name(value: object, label: str, *, default: str) -> str:
@@ -169,7 +178,7 @@ def _semantic_name(value: object, label: str, *, default: str) -> str:
         return default
     if not isinstance(value, str):
         raise OtelImportError(f"{label} must be a string")
-    return value or default
+    return _validate_utf8(value, label) or default
 
 
 def _integral_decimal(value: object) -> Decimal:
@@ -749,7 +758,9 @@ def import_otlp_logs(
                 if severity_text is not None:
                     if not isinstance(severity_text, str):
                         raise OtelImportError("log severityText must be a string")
-                    attributes["log.severity_text"] = severity_text
+                    attributes["log.severity_text"] = _validate_utf8(
+                        severity_text, "log severityText"
+                    )
                 if "severityNumber" in record:
                     attributes["log.severity_number"] = _severity_number(record["severityNumber"])
                 if trace_id:
