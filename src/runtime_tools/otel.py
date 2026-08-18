@@ -164,6 +164,20 @@ def _event_id(trace_id: str, span_id: str) -> str:
     return f"otel:{trace_id}:{span_id}"
 
 
+def _validate_parent_hierarchy(parent_edges: list[tuple[str, str]]) -> None:
+    parent_by_child = {child: parent for parent, child in parent_edges}
+    complete: set[str] = set()
+    for child in parent_by_child:
+        trail: set[str] = set()
+        current = child
+        while current in parent_by_child and current not in complete:
+            if current in trail:
+                raise OtelImportError("OTLP parent relationships contain a cycle")
+            trail.add(current)
+            current = parent_by_child[current]
+        complete.update(trail)
+
+
 def _reject_json_constant(value: str) -> Never:
     raise ValueError(f"non-finite JSON constant: {value}")
 
@@ -301,13 +315,16 @@ def import_otlp_json(
     started_at_ns = min(starts)
     finished_at_ns = max(finishes) if len(finishes) == len(events) else None
     edges: list[CausalEdge] = []
+    parent_edges: list[tuple[str, str]] = []
     missing_parent_count = 0
     for trace_id, parent_span_id, child_id in parent_references:
         parent_id = _event_id(trace_id, parent_span_id)
         if parent_id not in known_events:
             missing_parent_count += 1
             continue
+        parent_edges.append((parent_id, child_id))
         edges.append(CausalEdge(parent_id, child_id, "parent", 1.0, {"source": "otel"}))
+    _validate_parent_hierarchy(parent_edges)
     missing_link_count = 0
     known_links: set[tuple[str, str]] = set()
     for trace_id, span_id, target_id, attributes in link_references:

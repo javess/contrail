@@ -266,6 +266,47 @@ def test_otlp_json_import_normalizes_asynchronous_span_links(tmp_path: Path) -> 
     assert "publish → consume [link, confidence 1.00]" in tree
 
 
+def test_otlp_json_import_rejects_cyclic_parent_relationships(tmp_path: Path) -> None:
+    source = tmp_path / "cycle.json"
+    output = tmp_path / "cycle.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "a",
+                                        "parentSpanId": "b",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "4",
+                                    },
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "b",
+                                        "parentSpanId": "a",
+                                        "startTimeUnixNano": "2",
+                                        "endTimeUnixNano": "3",
+                                    },
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="OTLP parent relationships contain a cycle"):
+        import_otlp_json(source, output, name="cycle")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_can_preserve_raw_source_explicitly(tmp_path: Path) -> None:
     source = tmp_path / "raw.json"
     output = tmp_path / "raw.runpack"
