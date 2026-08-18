@@ -421,6 +421,39 @@ def test_annotation_loader_rejects_conflicting_lifecycle_records(
             ),
             "parent relationships contain a cycle",
         ),
+        (
+            (
+                {
+                    "record": "event_instant",
+                    "id": "first",
+                    "kind": "event",
+                    "name": "first",
+                    "timestamp_ns": 1,
+                },
+                {
+                    "record": "event_instant",
+                    "id": "second",
+                    "kind": "event",
+                    "name": "second",
+                    "timestamp_ns": 1,
+                },
+                {
+                    "record": "event_instant",
+                    "id": "child",
+                    "kind": "event",
+                    "name": "child",
+                    "timestamp_ns": 2,
+                    "parent_id": "first",
+                },
+                {
+                    "record": "link",
+                    "source_id": "second",
+                    "target_id": "child",
+                    "relation": "parent",
+                },
+            ),
+            "event cannot have multiple parents",
+        ),
     ),
 )
 def test_annotation_loader_rejects_incomplete_or_cyclic_causality(

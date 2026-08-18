@@ -226,9 +226,14 @@ def _append_parent_edge(
 
 
 def _validate_parent_hierarchy(edges: list[CausalEdge]) -> None:
-    parent_by_child = {
-        edge.target_event_id: edge.source_event_id for edge in edges if edge.kind == "parent"
-    }
+    parent_by_child: dict[str, str] = {}
+    for edge in edges:
+        if edge.kind != "parent":
+            continue
+        parent = parent_by_child.get(edge.target_event_id)
+        if parent is not None and parent != edge.source_event_id:
+            raise AnnotationError("annotation event cannot have multiple parents")
+        parent_by_child[edge.target_event_id] = edge.source_event_id
     complete: set[str] = set()
     for child in parent_by_child:
         trail: set[str] = set()
