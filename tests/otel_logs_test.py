@@ -5,8 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.model import Entity, Event, Execution
 from runtime_tools.otel import OtelImportError, import_otlp_logs
+from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 
@@ -223,3 +225,48 @@ def test_otlp_logs_reject_partial_trace_correlation_without_publishing(tmp_path:
         import_otlp_logs(source, logs, output)
 
     assert not output.exists()
+
+
+def test_otlp_logs_do_not_masquerade_as_operations_or_critical_work(tmp_path: Path) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "resource": {
+                            "attributes": [{"key": "service.name", "value": {"stringValue": "api"}}]
+                        },
+                        "scopeLogs": [
+                            {
+                                "logRecords": [
+                                    {
+                                        "timeUnixNano": "5",
+                                        "body": {"stringValue": "diagnostic message"},
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    import_otlp_logs(source, logs, output)
+
+    diff = compare_runpacks(source, output)
+    baseline_analysis = analyze_runpack(source)
+    enriched_analysis = analyze_runpack(output)
+
+    assert diff.operation_count_changes == ()
+    assert diff.operation_duration_changes == ()
+    assert diff.edge_count_changes == ()
+    assert baseline_analysis.critical_path is not None
+    assert enriched_analysis.critical_path is not None
+    assert enriched_analysis.critical_path.event_ids == baseline_analysis.critical_path.event_ids

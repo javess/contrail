@@ -529,6 +529,13 @@ def analyze_runpack(path: Path) -> BatchAnalysis:
         events = reader.events()
         edges = reader.causal_edges()
         clock_inconsistent = reader.clock_inconsistency_count() > 0
+    events = tuple(event for event in events if event.kind != "log.record")
+    event_ids = {event.id for event in events}
+    edges = tuple(
+        edge
+        for edge in edges
+        if edge.source_event_id in event_ids and edge.target_event_id in event_ids
+    )
     edge_values = tuple(
         (edge.source_event_id, edge.target_event_id, edge.confidence) for edge in edges
     )

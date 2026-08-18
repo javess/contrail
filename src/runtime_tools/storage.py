@@ -757,6 +757,7 @@ class RunpackReader:
                 count(*) AS event_count
             FROM events AS event
             LEFT JOIN entities AS entity ON entity.id = event.entity_id
+            WHERE event.kind != 'log.record'
             GROUP BY entity_kind, entity_name, event_kind, event_name
             """
         ).fetchall()
@@ -779,6 +780,7 @@ class RunpackReader:
                     / 1000000000.0 AS duration_seconds
             FROM events AS event
             LEFT JOIN entities AS entity ON entity.id = event.entity_id
+            WHERE event.kind != 'log.record'
             GROUP BY entity_kind, entity_name, event_kind, event_name
             HAVING count(*) = count(event.started_at_ns)
                AND count(*) = count(event.finished_at_ns)
@@ -806,6 +808,8 @@ class RunpackReader:
             JOIN events AS target_event ON target_event.id = edge.target_event_id
             LEFT JOIN entities AS source_entity ON source_entity.id = source_event.entity_id
             LEFT JOIN entities AS target_entity ON target_entity.id = target_event.entity_id
+            WHERE source_event.kind != 'log.record'
+              AND target_event.kind != 'log.record'
             GROUP BY source_kind, source_name, target_kind, target_name, edge_kind
             """
         ).fetchall()
