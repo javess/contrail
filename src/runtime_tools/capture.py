@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
@@ -39,6 +39,7 @@ class CaptureError(ValueError):
 MAX_CAPTURE_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_POST_EXIT_DRAIN_BYTES = 1024 * 1024
 PROCESS_TERMINATION_TIMEOUT_SECONDS = 1.0
+_STATUS_POLL_EVENT = threading.Event()
 _IDENTIFIED_ENVIRONMENT_VARIABLES = (
     "CI",
     "CUDA_VISIBLE_DEVICES",
@@ -186,15 +187,21 @@ def _peak_memory_bytes(value: float) -> float:
 
 def _wait_with_usage(
     process: subprocess.Popen[bytes],
+    output_pumps: tuple[Future[OutputDigest], ...] = (),
 ) -> tuple[int, resource.struct_rusage]:
     while True:
+        for future in output_pumps:
+            if future.done():
+                future.result()
         try:
-            _, status, usage = os.wait4(process.pid, 0)
-            break
+            child_pid, status, usage = os.wait4(process.pid, os.WNOHANG)
         except InterruptedError:
             continue
         except OSError as exc:
             raise CaptureError(f"could not collect captured process status: {exc}") from exc
+        if child_pid == process.pid:
+            break
+        _STATUS_POLL_EVENT.wait(0.01)
     exit_code = os.waitstatus_to_exitcode(status)
     process.returncode = exit_code
     return exit_code, usage
@@ -384,7 +391,9 @@ def record_process(
                         stderr_result = executor.submit(
                             _pump, stderr_pipe, stderr, capture_output_limit, process_done
                         )
-                        exit_code, process_usage = _wait_with_usage(process)
+                        exit_code, process_usage = _wait_with_usage(
+                            process, (stdout_result, stderr_result)
+                        )
                         process_done.set()
                         stdout_digest = stdout_result.result()
                         stderr_digest = stderr_result.result()

@@ -622,7 +622,9 @@ def test_record_process_terminates_child_when_capture_is_interrupted(
         children.append(child)
         return child
 
-    def interrupt_wait(process: subprocess.Popen[bytes]) -> None:
+    def interrupt_wait(
+        process: subprocess.Popen[bytes], output_pumps: tuple[object, ...] = ()
+    ) -> None:
         raise KeyboardInterrupt
 
     monkeypatch.setattr(subprocess, "Popen", tracked_popen)
@@ -674,6 +676,42 @@ def test_record_process_terminates_child_when_output_pump_submission_fails(
     assert children[-1].poll() is not None
     assert not output.exists()
     assert not tuple(tmp_path.glob(".pump-failure.runpack.tmp-*"))
+
+
+def test_record_process_terminates_child_when_an_output_pump_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "failed-pump.runpack"
+    children: list[subprocess.Popen[bytes]] = []
+    real_popen = subprocess.Popen
+
+    def tracked_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        child: subprocess.Popen[bytes] = real_popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    def fail_pump(*args: object, **kwargs: object) -> None:
+        raise OSError("simulated output read failure")
+
+    monkeypatch.setattr(subprocess, "Popen", tracked_popen)
+    monkeypatch.setattr(capture, "_pump", fail_pump)
+    started = time.monotonic()
+
+    with pytest.raises(OSError, match="simulated output read failure"):
+        record_process(
+            (
+                sys.executable,
+                "-c",
+                "import sys, time; sys.stdout.write('x' * 10000000); time.sleep(30)",
+            ),
+            output,
+            name="failed-pump",
+        )
+
+    assert time.monotonic() - started < 5
+    assert children[-1].poll() is not None
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".failed-pump.runpack.tmp-*"))
 
 
 def test_record_process_terminates_child_when_output_pipe_setup_is_incomplete(
