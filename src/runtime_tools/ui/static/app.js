@@ -32,6 +32,8 @@ function renderSummary() {
   ];
   const warningMessages = [];
   if (run.summary.annotation_error) warningMessages.push(`Annotations ignored: ${escapeHtml(run.summary.annotation_error)}`);
+  if (run.summary.missing_causal_references == null) warningMessages.push("Causal completeness metadata invalid");
+  else if (run.summary.missing_causal_references > 0) warningMessages.push(`${run.summary.missing_causal_references} unresolved causal references`);
   const incompleteStreams = ["stdout", "stderr"].filter(stream => run.summary[`${stream}_complete`] === false);
   if (incompleteStreams.length) warningMessages.push(`Incomplete output identity: ${incompleteStreams.join(", ")}`);
   const warning = warningMessages.map(message => `<div class="metric warning"><span>Evidence warning</span><strong>${message}</strong></div>`).join("");
@@ -72,7 +74,8 @@ function renderComparison() {
   const environment = diff.environment_changes.slice(0, 5).map(item => `${escapeHtml(item.variable)} (${escapeHtml(item.change_kind)})`).join(", ") || "no selected drift";
   const annotationWarnings = [["Baseline", diff.baseline_annotation_error], ["Candidate", diff.candidate_annotation_error]].filter(([, error]) => error).map(([side, error]) => `<p class="evidence-warning">${side} annotations ignored: ${escapeHtml(error)}</p>`).join("");
   const outputWarnings = [["Baseline", diff.baseline_incomplete_streams], ["Candidate", diff.candidate_incomplete_streams]].filter(([, streams]) => streams.length).map(([side, streams]) => `<p class="evidence-warning">${side} output identity incomplete: ${escapeHtml(streams.join(", "))}</p>`).join("");
-  const warnings = annotationWarnings + outputWarnings;
+  const causalWarnings = [["Baseline", diff.baseline_missing_causal_references], ["Candidate", diff.candidate_missing_causal_references]].filter(([, count]) => count == null || count > 0).map(([side, count]) => `<p class="evidence-warning">${side} ${count == null ? "causal completeness metadata invalid" : `${count} unresolved causal references`}</p>`).join("");
+  const warnings = annotationWarnings + outputWarnings + causalWarnings;
   const timing = `${warnings}<p>Outcome: ${escapeHtml(diff.outcome)}</p><p>Stdout: ${fmtEquivalence(diff.output_equivalent)} · stderr: ${fmtEquivalence(diff.stderr_equivalent)}</p><p>Runtime: ${fmtDuration(diff.wall_time.baseline)} → <span class="positive">${fmtDuration(diff.wall_time.candidate)}</span></p><p>Critical path: ${fmtDuration(diff.critical_path.baseline)} → <span class="positive">${fmtDuration(diff.critical_path.candidate)}</span></p><p>Environment: ${environment}</p>`;
   document.querySelector("#comparison-grid").innerHTML = `<div class="change-list"><h3>Outcome & timing</h3>${timing}</div><div class="change-list"><h3>Entities</h3>${entities}</div><div class="change-list"><h3>Operation counts</h3>${operations}</div><div class="change-list"><h3>Max concurrency</h3>${concurrency}</div><div class="change-list"><h3>Duration shifts</h3>${durations}</div><div class="change-list"><h3>Dependencies</h3>${edges}</div>`;
 }

@@ -27,7 +27,8 @@ Supported assertions are intentionally mechanical:
 - `max_runtime_regression` and `max_peak_memory_regression` compare numeric
   evidence with a percentage allowance;
 - `forbid_new_dependency` fails only when the named edge was absent from the
-  baseline and present in the candidate;
+  baseline and present in the candidate. It remains unverifiable when either
+  OTLP import reports unresolved parent or link references;
 - `max_operation_count` aggregates a semantic operation name across entities
   and constrains it relative to the baseline.
 

@@ -512,3 +512,21 @@ def test_compare_runpacks_surfaces_incomplete_annotation_evidence(tmp_path: Path
     assert diff.baseline_annotation_error is None
     assert diff.candidate_annotation_error == "invalid annotation JSON on line 1"
     assert "candidate: annotations ignored" in render_diff(diff, "text")
+
+
+def test_compare_runpacks_surfaces_unresolved_causal_references(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=False)
+    with sqlite3.connect(candidate) as connection:
+        row = connection.execute("SELECT metadata_json FROM executions").fetchone()
+        metadata = json.loads(row[0])
+        metadata["otel"] = {"missing_parent_count": 2, "missing_link_count": 1}
+        connection.execute("UPDATE executions SET metadata_json = ?", (json.dumps(metadata),))
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.baseline_missing_causal_references == 0
+    assert diff.candidate_missing_causal_references == 3
+    assert "candidate: 3 unresolved causal references" in render_diff(diff, "text")

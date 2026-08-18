@@ -88,6 +88,7 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "diff.entity_count_changes" in javascript
     assert "diff.operation_concurrency_changes" in javascript
     assert "diff.baseline_incomplete_streams" in javascript
+    assert "diff.candidate_missing_causal_references" in javascript
     assert "Remaining after compute" in javascript
     assert "No constraint classified from available evidence" in javascript
 

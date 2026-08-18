@@ -36,6 +36,7 @@ class ExecutionSummary:
     stderr_sha256: str | None
     stderr_complete: bool | None
     annotation_error: str | None
+    missing_causal_references: int | None
     record_counts: dict[str, int]
 
     def as_json_value(self) -> dict[str, JsonValue]:
@@ -88,6 +89,7 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             stderr_sha256=_as_str(_nested_output(execution.metadata, "stderr", "sha256")),
             stderr_complete=_stream_complete(execution.metadata, "stderr"),
             annotation_error=_annotation_error(execution.metadata),
+            missing_causal_references=_missing_causal_references(execution.metadata),
             record_counts=reader.counts(),
         )
 
@@ -192,6 +194,21 @@ def _annotation_error(metadata: dict[str, JsonValue]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _missing_causal_references(metadata: dict[str, JsonValue]) -> int | None:
+    otel = metadata.get("otel")
+    if otel is None:
+        return 0
+    if not isinstance(otel, dict):
+        return None
+    total = 0
+    for key in ("missing_parent_count", "missing_link_count"):
+        value = otel.get(key, 0)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+        total += value
+    return total
+
+
 def _stream_complete(metadata: dict[str, JsonValue], stream: str) -> bool | None:
     output = metadata.get("output")
     if not isinstance(output, dict):
@@ -233,6 +250,7 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
         f"stdout:   {stdout}",
         f"stderr:   {stderr}",
         f"annotations: ignored ({summary.annotation_error})" if summary.annotation_error else None,
+        _causality_summary(summary.missing_causal_references),
         (
             "records:  "
             f"{summary.record_counts['entities']} entities, "
@@ -243,6 +261,14 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
         ),
     ]
     return "\n".join(line for line in lines if line is not None)
+
+
+def _causality_summary(missing_references: int | None) -> str | None:
+    if missing_references is None:
+        return "causality: invalid OTLP completeness metadata"
+    if missing_references:
+        return f"causality: {missing_references} unresolved OTLP references"
+    return None
 
 
 def _format_outcome(summary: ExecutionSummary) -> str:

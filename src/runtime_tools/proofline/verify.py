@@ -129,6 +129,21 @@ def _incomplete_output_observation(diff: ExecutionDiff) -> str | None:
     return f"output identity incomplete ({'; '.join(incomplete)})"
 
 
+def _incomplete_causal_observation(diff: ExecutionDiff) -> str | None:
+    incomplete = []
+    for side, count in (
+        ("baseline", diff.baseline_missing_causal_references),
+        ("candidate", diff.candidate_missing_causal_references),
+    ):
+        if count is None:
+            incomplete.append(f"{side}: completeness unknown")
+        elif count:
+            incomplete.append(f"{side}: {count} unresolved references")
+    if not incomplete:
+        return None
+    return f"causal evidence incomplete ({'; '.join(incomplete)})"
+
+
 def _evaluate(
     contract: Contract,
     assertion: Assertion,
@@ -166,6 +181,15 @@ def _evaluate(
                 "unverifiable",
                 f"no new dependency {source} -> {target}",
                 "annotation evidence incomplete",
+            )
+        causal_observation = _incomplete_causal_observation(diff)
+        if causal_observation is not None:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"no new dependency {source} -> {target}",
+                causal_observation,
             )
         violation = next(
             (

@@ -182,6 +182,8 @@ class ExecutionDiff:
     match_level: Literal["aggregate"]
     baseline_annotation_error: str | None
     candidate_annotation_error: str | None
+    baseline_missing_causal_references: int | None
+    candidate_missing_causal_references: int | None
     baseline_incomplete_streams: tuple[str, ...]
     candidate_incomplete_streams: tuple[str, ...]
     outcome: Outcome
@@ -207,6 +209,8 @@ class ExecutionDiff:
             "match_level": self.match_level,
             "baseline_annotation_error": self.baseline_annotation_error,
             "candidate_annotation_error": self.candidate_annotation_error,
+            "baseline_missing_causal_references": self.baseline_missing_causal_references,
+            "candidate_missing_causal_references": self.candidate_missing_causal_references,
             "baseline_incomplete_streams": list(self.baseline_incomplete_streams),
             "candidate_incomplete_streams": list(self.candidate_incomplete_streams),
             "outcome": self.outcome,
@@ -472,6 +476,8 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         match_level="aggregate",
         baseline_annotation_error=baseline_summary.annotation_error,
         candidate_annotation_error=candidate_summary.annotation_error,
+        baseline_missing_causal_references=baseline_summary.missing_causal_references,
+        candidate_missing_causal_references=candidate_summary.missing_causal_references,
         baseline_incomplete_streams=_incomplete_streams(baseline_summary),
         candidate_incomplete_streams=_incomplete_streams(candidate_summary),
         outcome=_outcome(exit_equivalent, output_equivalent, stderr_equivalent),

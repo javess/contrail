@@ -17,29 +17,40 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         f"candidate: {diff.candidate_name} ({diff.candidate_id[:8]})",
         f"matching:  {diff.match_level}",
     ]
+    warnings: list[str] = []
     annotation_errors = (
         ("baseline", diff.baseline_annotation_error),
         ("candidate", diff.candidate_annotation_error),
     )
-    if any(error is not None for _, error in annotation_errors):
-        lines.extend(("", "Evidence warnings"))
-        lines.extend(
-            f"  {side}: annotations ignored ({error})"
-            for side, error in annotation_errors
-            if error is not None
-        )
+    warnings.extend(
+        f"  {side}: annotations ignored ({error})"
+        for side, error in annotation_errors
+        if error is not None
+    )
     incomplete_streams = (
         ("baseline", diff.baseline_incomplete_streams),
         ("candidate", diff.candidate_incomplete_streams),
     )
-    if any(streams for _, streams in incomplete_streams):
-        if not any(error is not None for _, error in annotation_errors):
-            lines.extend(("", "Evidence warnings"))
-        lines.extend(
-            f"  {side}: incomplete {', '.join(streams)} identity"
-            for side, streams in incomplete_streams
-            if streams
+    warnings.extend(
+        f"  {side}: incomplete {', '.join(streams)} identity"
+        for side, streams in incomplete_streams
+        if streams
+    )
+    causal_references = (
+        ("baseline", diff.baseline_missing_causal_references),
+        ("candidate", diff.candidate_missing_causal_references),
+    )
+    warnings.extend(
+        (
+            f"  {side}: causal completeness metadata invalid"
+            if count is None
+            else f"  {side}: {count} unresolved causal references"
         )
+        for side, count in causal_references
+        if count is None or count > 0
+    )
+    if warnings:
+        lines.extend(("", "Evidence warnings", *warnings))
     lines.extend(
         (
             "",

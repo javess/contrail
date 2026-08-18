@@ -297,3 +297,35 @@ def test_proofline_reports_incomplete_output_identity_as_unverifiable(tmp_path: 
 
     assert report.results[0].status == "unverifiable"
     assert report.results[0].observed == "output identity incomplete (baseline: stdout)"
+
+
+def test_proofline_keeps_dependency_claims_unverifiable_with_causal_gaps(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "dependency.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=False)
+    with sqlite3.connect(candidate) as connection:
+        row = connection.execute("SELECT metadata_json FROM executions").fetchone()
+        metadata = json.loads(row[0])
+        metadata["otel"] = {"missing_parent_count": 2, "missing_link_count": 1}
+        connection.execute("UPDATE executions SET metadata_json = ?", (json.dumps(metadata),))
+    contract.write_text(
+        """
+name: dependencies
+assertions:
+  - type: forbid_new_dependency
+    from: api
+    to: database
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = verify_contracts(contract, baseline, candidate)
+
+    assert report.results[0].status == "unverifiable"
+    assert report.results[0].observed == (
+        "causal evidence incomplete (candidate: 3 unresolved references)"
+    )
