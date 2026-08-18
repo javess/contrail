@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from runtime_tools.model import JsonValue
+from runtime_tools.yaml_support import load_yaml
 
 SUPPORTED_ASSERTIONS = {
     "output_equivalent",
@@ -96,7 +97,7 @@ def _parse_contract(value: object, default_name: str) -> Contract:
 
 def load_contracts(path: Path) -> tuple[Contract, ...]:
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document = load_yaml(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise ContractError(f"could not read contract file: {path}") from exc
     except yaml.YAMLError as exc:

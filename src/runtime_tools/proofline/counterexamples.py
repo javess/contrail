@@ -13,6 +13,7 @@ from hypothesis.strategies import SearchStrategy, fixed_dictionaries, integers
 
 from runtime_tools.proofline.contracts import ContractError
 from runtime_tools.proofline.experiments import ExperimentResult, run_experiment
+from runtime_tools.yaml_support import load_yaml
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +44,7 @@ def _integer(value: object, label: str) -> int:
 
 def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document = load_yaml(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise ContractError(f"could not read parameter file: {path}") from exc
     except yaml.YAMLError as exc:

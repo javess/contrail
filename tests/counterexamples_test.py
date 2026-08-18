@@ -100,3 +100,28 @@ parameters:
             workload=Path("workload.py"),
             output_dir=tmp_path / "output",
         )
+
+
+def test_counterexample_search_rejects_duplicate_parameter_keys(tmp_path: Path) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(
+        """
+parameters:
+  value:
+    type: integer
+    min: 0
+    min: 2
+    max: 3
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="found duplicate key 'min'"):
+        search_counterexample(
+            tmp_path / "contract.yaml",
+            parameters,
+            baseline_ref="main",
+            candidate_ref="candidate",
+            workload=Path("workload.py"),
+            output_dir=tmp_path / "output",
+        )

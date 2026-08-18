@@ -194,7 +194,7 @@ assertions:
         encoding="utf-8",
     )
 
-    with pytest.raises(ContractError, match="cannot contain recursive values"):
+    with pytest.raises(ContractError, match="recursive"):
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 
@@ -211,3 +211,20 @@ def test_proofline_rejects_negative_regression_thresholds(tmp_path: Path) -> Non
 
     with pytest.raises(ContractError, match="percent cannot be negative"):
         verify_contracts(contract, baseline, candidate)
+
+
+def test_proofline_rejects_duplicate_contract_keys(tmp_path: Path) -> None:
+    contract = tmp_path / "duplicate.yaml"
+    contract.write_text(
+        """
+name: duplicate
+assertions:
+  - type: max_runtime_regression
+    percent: 10
+    percent: 100
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="found duplicate key 'percent'"):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
