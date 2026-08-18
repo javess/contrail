@@ -212,6 +212,8 @@ def _owner_uid(item: dict[str, object]) -> str | None:
     for raw_owner in owners:
         owner = _object(raw_owner, "ownerReferences entry")
         uid = _required_string(owner.get("uid"), "ownerReferences uid")
+        if uid in owner_uids:
+            raise KubernetesImportError(f"duplicate ownerReferences uid: {uid}")
         owner_uids.append(uid)
         controller = owner.get("controller")
         if controller is not None and not isinstance(controller, bool):

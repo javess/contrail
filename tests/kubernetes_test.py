@@ -284,6 +284,19 @@ def test_kubernetes_rejects_multiple_controller_owners() -> None:
         kubernetes._owner_uid(item)
 
 
+def test_kubernetes_rejects_duplicate_owner_references() -> None:
+    item: dict[str, object] = {
+        "kind": "Pod",
+        "metadata": {
+            "name": "worker",
+            "ownerReferences": [{"uid": "job"}, {"uid": "job"}],
+        },
+    }
+
+    with pytest.raises(KubernetesImportError, match="duplicate ownerReferences uid: job"):
+        kubernetes._owner_uid(item)
+
+
 def test_kubernetes_snapshot_rejects_self_ownership_before_enrichment(
     tmp_path: Path,
 ) -> None:
