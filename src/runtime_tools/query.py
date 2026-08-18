@@ -107,8 +107,8 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
         raise QueryError("query limit must be positive")
     if limit > MAX_QUERY_ROWS:
         raise QueryError(f"query limit cannot exceed {MAX_QUERY_ROWS}")
-    with RunpackReader(path):
-        pass
+    with RunpackReader(path) as reader:
+        reader.execution()
     uri = f"{path.resolve().as_uri()}?mode=ro"
     completed_steps = 0
     work_limit_reached = False

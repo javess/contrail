@@ -16,6 +16,7 @@ from runtime_tools.query import (
     query_runpack,
     render_query,
 )
+from runtime_tools.storage import RunpackError, RunpackWriter
 
 
 def test_runpack_query_returns_bounded_structured_rows(tmp_path: Path) -> None:
@@ -34,6 +35,15 @@ def test_runpack_query_returns_bounded_structured_rows(tmp_path: Path) -> None:
     payload = json.loads(render_query(result, "json"))
     assert payload["rows"] == [["process.run", Path(sys.executable).name]]
     assert "kind" in render_query(result, "table")
+
+
+def test_runpack_query_requires_exactly_one_execution(tmp_path: Path) -> None:
+    runpack = tmp_path / "empty.runpack"
+    with RunpackWriter(runpack):
+        pass
+
+    with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
+        query_runpack(runpack, "SELECT name FROM events")
 
 
 def test_runpack_query_preserves_duplicate_columns_in_jsonl(tmp_path: Path) -> None:
