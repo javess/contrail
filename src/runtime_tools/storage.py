@@ -28,6 +28,7 @@ SCHEMA_MAJOR_VERSION = "1"
 APPLICATION_ID = 0x4354524C  # CTRL
 MAX_RUNPACK_JSON_BYTES = 4 * 1024 * 1024
 MAX_RUNPACK_TEXT_BYTES = 4 * 1024 * 1024
+MAX_RUNPACK_ATTACHMENT_BYTES = 64 * 1024 * 1024
 _MIN_INTEGER = -(1 << 63)
 _MAX_INTEGER = (1 << 63) - 1
 _REQUIRED_TABLES = {
@@ -228,10 +229,17 @@ def _checked_json(value: object) -> JsonValue:
 
 def _blob(value: object) -> bytes:
     if isinstance(value, bytes):
-        return value
-    if isinstance(value, memoryview):
-        return value.tobytes()
-    raise RunpackError("invalid binary attachment content in runpack")
+        content = value
+    elif isinstance(value, memoryview):
+        content = value.tobytes()
+    else:
+        raise RunpackError("invalid binary attachment content in runpack")
+    if len(content) > MAX_RUNPACK_ATTACHMENT_BYTES:
+        raise RunpackError(
+            "attachment content exceeds the "
+            f"{MAX_RUNPACK_ATTACHMENT_BYTES}-byte runpack field limit"
+        )
+    return content
 
 
 def _measurement_value(value: object) -> float:

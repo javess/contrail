@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import pytest
 
-from runtime_tools import CaptureError, capture, inspect_runpack, record_process
+from runtime_tools import CaptureError, capture, inspect_runpack, record_process, storage
 from runtime_tools.inspect import render_summary
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import (
@@ -524,6 +524,38 @@ def test_reader_normalizes_invalid_attachment_content(tmp_path: Path) -> None:
 
     with RunpackReader(output) as reader:
         with pytest.raises(RunpackError, match="invalid binary attachment content"):
+            reader.attachments()
+
+
+def test_writer_rejects_oversized_attachment_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "oversized-attachment-write.runpack"
+    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="attachment content exceeds"):
+            writer.add_attachments(
+                (Attachment("large", "raw", "large", "application/octet-stream", b"x" * 9, {}),)
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.attachments() == ()
+
+
+def test_reader_rejects_oversized_attachment_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "oversized-attachment-read.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="oversized-attachment")
+    with sqlite3.connect(output) as connection:
+        connection.execute(
+            "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?)",
+            ("large", "raw", "large", "application/octet-stream", b"x" * 9, "{}"),
+        )
+    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="attachment content exceeds"):
             reader.attachments()
 
 
