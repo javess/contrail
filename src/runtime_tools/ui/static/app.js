@@ -93,7 +93,7 @@ function renderFilters() {
 
 function renderTimeline() {
   const run = currentRun();
-  const totalNs = Math.max(1, Math.round((run.summary.wall_time_seconds || 0) * 1e9));
+  const totalNs = run.timeline_duration_ns;
   const entities = new Map(run.entities.map(entity => [entity.id, entity]));
   const visible = run.events.filter(event => (!state.entity || event.entity_id === state.entity) && (!state.kind || event.kind === state.kind));
   const timed = visible.filter(event => event.start_offset_ns != null);
@@ -118,8 +118,8 @@ function renderTimeline() {
   }).join("");
   const untimedLane = untimed.length ? `<div class="lane untimed-lane"><div class="lane-label">Untimed evidence<small>${untimed.length} events · no fabricated position</small></div><div class="untimed-track">${untimed.map(event => `<button class="untimed-event" data-id="${escapeHtml(event.id)}" data-kind="${escapeHtml(event.kind)}">${escapeHtml(event.name)}</button>`).join("")}</div></div>` : "";
   document.querySelector("#timeline").innerHTML = `<div class="timeline-inner" style="width:${width}%">${lanes || (!untimedLane ? '<div class="lane-label">No matching events</div>' : '')}${untimedLane}</div>`;
-  const midpoint = run.summary.wall_time_seconds == null ? null : run.summary.wall_time_seconds / 2;
-  document.querySelector("#axis").innerHTML = `<span>0</span><span>${fmtDuration(midpoint)}</span><span>${fmtDuration(run.summary.wall_time_seconds)}</span>`;
+  const timelineSeconds = nsToSeconds(totalNs);
+  document.querySelector("#axis").innerHTML = `<span>0</span><span>${fmtDuration(timelineSeconds / 2)}</span><span>${fmtDuration(timelineSeconds)}</span>`;
   document.querySelectorAll(".event, .untimed-event").forEach(button => button.addEventListener("click", () => showDetail(visible.find(event => event.id === button.dataset.id), entities)));
 }
 

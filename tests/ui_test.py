@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from runtime_tools import record_process
+from runtime_tools.model import Entity, Event, Execution
+from runtime_tools.storage import RunpackWriter
 from runtime_tools.ui import TimelineError, build_timeline_payload, create_server
 
 
@@ -29,6 +31,9 @@ def test_timeline_payload_exposes_normalized_evidence_and_comparison(tmp_path: P
     summary = baseline_value["summary"]
     assert isinstance(summary, dict)
     assert summary["name"] == "baseline"
+    timeline_duration_ns = baseline_value["timeline_duration_ns"]
+    assert isinstance(timeline_duration_ns, int)
+    assert timeline_duration_ns > 0
     events = baseline_value["events"]
     assert isinstance(events, list)
     first_event = events[0]
@@ -54,6 +59,29 @@ def test_timeline_payload_exposes_normalized_evidence_and_comparison(tmp_path: P
     comparison = payload["comparison"]
     assert isinstance(comparison, dict)
     assert comparison["outcome"] == "equivalent"
+
+
+def test_timeline_derives_an_extent_for_open_executions(tmp_path: Path) -> None:
+    runpack = tmp_path / "open.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("open", "open", 100, None, (), str(tmp_path), None, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(
+            Event("work", "operation", "work", "worker", 110, 150, "test", None, None, {})
+        )
+
+    payload = build_timeline_payload(runpack)
+
+    runs = payload["runs"]
+    assert isinstance(runs, list)
+    run = runs[0]
+    assert isinstance(run, dict)
+    assert run["timeline_duration_ns"] == 50
+    summary = run["summary"]
+    assert isinstance(summary, dict)
+    assert summary["wall_time_seconds"] is None
 
 
 def test_local_ui_serves_packaged_assets_and_read_only_data(tmp_path: Path) -> None:
@@ -107,6 +135,7 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "No constraint classified from available evidence" in javascript
     assert "Untimed evidence" in javascript
     assert "event.start_offset_ns != null" in javascript
+    assert "run.timeline_duration_ns" in javascript
     assert "Causal links" in javascript
     assert "Clock domain" in javascript
     assert "Resource measurements" in javascript

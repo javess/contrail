@@ -57,6 +57,21 @@ def _measurement_value(measurement: Measurement, execution_start_ns: int) -> dic
     }
 
 
+def _timeline_duration_ns(
+    events: tuple[Event, ...], execution_start_ns: int, execution_finish_ns: int | None
+) -> int:
+    known_ends = []
+    for event in events:
+        timestamp = (
+            event.finished_at_ns if event.finished_at_ns is not None else event.started_at_ns
+        )
+        if timestamp is not None:
+            known_ends.append(timestamp - execution_start_ns)
+    if execution_finish_ns is not None:
+        known_ends.append(execution_finish_ns - execution_start_ns)
+    return max(1, *known_ends)
+
+
 def _run_value(
     path: Path,
     event_limit: int,
@@ -103,6 +118,9 @@ def _run_value(
     analysis = analyze_runpack(path)
     return {
         "summary": summary.as_json_value(),
+        "timeline_duration_ns": _timeline_duration_ns(
+            events, summary.started_at_ns, summary.finished_at_ns
+        ),
         "entities": [
             {
                 "id": entity.id,
