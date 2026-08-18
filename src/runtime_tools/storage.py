@@ -754,12 +754,19 @@ class RunpackWriter:
             )
 
     def add_attachments(self, attachments: Iterable[Attachment]) -> None:
-        values = tuple(_attachment_values(attachment) for attachment in attachments)
+        values: list[tuple[object, ...]] = []
         added_bytes = 0
-        for value in values:
+        for attachment in attachments:
+            value = _attachment_values(attachment)
             content = value[4]
             assert isinstance(content, bytes)
             added_bytes += len(content)
+            if added_bytes > MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES:
+                raise RunpackError(
+                    "attachment content exceeds the "
+                    f"{MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES}-byte aggregate runpack limit"
+                )
+            values.append(value)
         with self._writing(), self._connection:
             self._connection.executescript(_ATTACHMENTS_SCHEMA)
             existing_bytes = self._connection.execute(

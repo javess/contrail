@@ -9,7 +9,7 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Buffer
+from collections.abc import Buffer, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -881,6 +881,26 @@ def test_writer_rejects_oversized_aggregate_attachment_content(
                     Attachment("second", "raw", "second", "text/plain", b"def", {}),
                 )
             )
+
+    with RunpackReader(output) as reader:
+        assert reader.attachments() == ()
+
+
+def test_writer_stops_consuming_attachments_at_the_aggregate_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "bounded-attachments-write.runpack"
+    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+
+    def attachments() -> Iterator[Attachment]:
+        yield Attachment("first", "raw", "first", "text/plain", b"abc", {})
+        yield Attachment("second", "raw", "second", "text/plain", b"def", {})
+        raise AssertionError("attachment producer was consumed past the aggregate limit")
+
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="aggregate runpack limit"):
+            writer.add_attachments(attachments())
 
     with RunpackReader(output) as reader:
         assert reader.attachments() == ()
