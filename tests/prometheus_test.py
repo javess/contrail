@@ -184,6 +184,53 @@ def test_prometheus_response_does_not_guess_between_ambiguous_pod_names(
     assert measurement.entity_id is None
 
 
+def test_prometheus_response_rejects_conflicting_pod_identity_labels(tmp_path: Path) -> None:
+    source = tmp_path / "source.runpack"
+    response = tmp_path / "metrics.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(
+            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(
+            Entity(
+                "pod",
+                "pod",
+                "worker-a",
+                None,
+                {"k8s.uid": "pod-uid", "k8s.namespace": "demo"},
+            )
+        )
+    response.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "result": [
+                        {
+                            "metric": {
+                                "__name__": "queue_depth",
+                                "pod_uid": "pod-uid",
+                                "pod": "worker-b",
+                                "namespace": "demo",
+                            },
+                            "value": [1, "3"],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_prometheus_response(source, response, output)
+
+    assert result.matched_entity_count == 0
+    with RunpackReader(output) as reader:
+        measurement = next(item for item in reader.measurements() if item.name == "queue_depth")
+    assert measurement.entity_id is None
+
+
 def test_prometheus_response_requires_a_closed_execution_window(tmp_path: Path) -> None:
     source = tmp_path / "source.runpack"
     response = tmp_path / "metrics.json"

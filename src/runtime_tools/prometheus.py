@@ -68,7 +68,10 @@ def _entity_for(labels: dict[str, str], entities: tuple[Entity, ...]) -> str | N
         matches = tuple(
             entity.id
             for entity in entities
-            if entity.kind == "pod" and entity.attributes.get("k8s.uid") == pod_uid
+            if entity.kind == "pod"
+            and entity.attributes.get("k8s.uid") == pod_uid
+            and (pod_name is None or entity.name == pod_name)
+            and (namespace is None or entity.attributes.get("k8s.namespace") == namespace)
         )
         return matches[0] if len(matches) == 1 else None
     if pod_name:
