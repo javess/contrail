@@ -82,6 +82,8 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "stderr_equivalent" in javascript
     assert "nsToSeconds(event.duration_ns)" in javascript
     assert "run.summary.record_counts.attachments" in javascript
+    assert "Evidence warning" in javascript
+    assert "diff.candidate_annotation_error" in javascript
     assert "Remaining after compute" in javascript
     assert "No constraint classified from available evidence" in javascript
 

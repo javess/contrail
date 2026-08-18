@@ -50,6 +50,8 @@ main { padding: 26px 34px 60px; }
 .metric { background: var(--panel); padding: 16px; min-height: 82px; }
 .metric span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
 .metric strong { display: block; margin-top: 10px; font: 500 20px/1 system-ui, sans-serif; }
+.metric.warning { grid-column: 1 / -1; min-height: auto; border-left: 3px solid var(--danger); }
+.metric.warning strong { color: var(--danger); font: 500 13px/1.4 system-ui, sans-serif; }
 
 .segmented { display: flex; border: 1px solid var(--line); }
 .segmented button { border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--muted); padding: 10px 14px; cursor: pointer; }
@@ -80,6 +82,7 @@ main { padding: 26px 34px 60px; }
 .change-list { padding: 16px 18px; border-right: 1px solid var(--line); min-height: 110px; }
 .change-list:last-child { border-right: 0; }
 .change-list p { font-size: 12px; line-height: 1.7; }
+.change-list .evidence-warning { color: var(--danger); margin-bottom: 8px; }
 .positive { color: var(--danger); }
 
 .controls { display: flex; gap: 16px; align-items: center; }
