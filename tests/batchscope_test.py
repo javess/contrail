@@ -424,6 +424,23 @@ def test_batchscope_json_report_rejects_non_finite_facts() -> None:
         render_analysis(analysis, "json")
 
 
+def test_batchscope_text_preserves_submillisecond_duration_evidence() -> None:
+    analysis = BatchAnalysis(
+        "run",
+        "run",
+        0.0001,
+        (LifecyclePhase("brief", 0.0001, "explicit"),),
+        None,
+        None,
+        (),
+    )
+
+    report = render_analysis(analysis, "text")
+
+    assert "total: 100.0µs" in report
+    assert "brief                       100.0µs" in report
+
+
 def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> None:
     runpack = tmp_path / "external.runpack"
     with RunpackWriter(runpack) as writer:

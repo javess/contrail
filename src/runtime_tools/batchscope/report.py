@@ -75,6 +75,8 @@ def _append_omitted(lines: list[str], total: int) -> None:
 def _duration(value: float | None) -> str:
     if value is None:
         return "unknown"
+    if value < 0.001:
+        return f"{value * 1_000_000:.1f}µs"
     if value < 1:
         return f"{value * 1000:.1f}ms"
     return f"{value:.3f}s"
