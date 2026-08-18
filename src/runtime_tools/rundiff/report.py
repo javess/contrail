@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 
 from runtime_tools.rundiff.compare import EdgeCountChange, ExecutionDiff, ValueChange
+from runtime_tools.terminal import terminal_text
 
 
 def render_diff(diff: ExecutionDiff, output_format: str) -> str:
@@ -13,8 +14,8 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         return json.dumps(diff.as_json_value(), indent=2, sort_keys=True)
     lines = [
         "RUNTIME DIFF",
-        f"baseline:  {diff.baseline_name} ({diff.baseline_id[:8]})",
-        f"candidate: {diff.candidate_name} ({diff.candidate_id[:8]})",
+        f"baseline:  {terminal_text(diff.baseline_name)} ({terminal_text(diff.baseline_id[:8])})",
+        f"candidate: {terminal_text(diff.candidate_name)} ({terminal_text(diff.candidate_id[:8])})",
         f"matching:  {diff.match_level}",
     ]
     warnings: list[str] = []
@@ -23,7 +24,7 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         ("candidate", diff.candidate_annotation_error),
     )
     warnings.extend(
-        f"  {side}: annotations ignored ({error})"
+        f"  {side}: annotations ignored ({terminal_text(error)})"
         for side, error in annotation_errors
         if error is not None
     )
@@ -91,7 +92,7 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
     if diff.entity_count_changes:
         lines.extend(("", "Entity changes"))
         lines.extend(
-            f"  {change.entity_name} [{change.entity_kind}]: "
+            f"  {terminal_text(change.entity_name)} [{terminal_text(change.entity_kind)}]: "
             f"{change.baseline:,} → {change.candidate:,} ({change.change_kind})"
             for change in diff.entity_count_changes
         )
@@ -100,8 +101,9 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         for index, change in enumerate(diff.operation_count_changes, 1):
             percent = _percent(change.percent, change.baseline, change.candidate)
             lines.append(
-                f"  {index}. {change.entity_name} :: {change.operation_name} "
-                f"[{change.operation_kind}]"
+                f"  {index}. {terminal_text(change.entity_name)} :: "
+                f"{terminal_text(change.operation_name)} "
+                f"[{terminal_text(change.operation_kind)}]"
             )
             lines.append(f"     {change.baseline:,} → {change.candidate:,} {percent}")
     if diff.operation_error_count_changes:
@@ -109,8 +111,9 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         for index, change in enumerate(diff.operation_error_count_changes, 1):
             percent = _percent(change.percent, change.baseline, change.candidate)
             lines.append(
-                f"  {index}. {change.entity_name} :: {change.operation_name} "
-                f"[{change.operation_kind}]"
+                f"  {index}. {terminal_text(change.entity_name)} :: "
+                f"{terminal_text(change.operation_name)} "
+                f"[{terminal_text(change.operation_kind)}]"
             )
             lines.append(f"     {change.baseline:,} → {change.candidate:,} {percent}")
     if diff.operation_concurrency_changes:
@@ -122,8 +125,9 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 concurrency_change.candidate,
             )
             lines.append(
-                f"  {index}. {concurrency_change.entity_name} :: "
-                f"{concurrency_change.operation_name} [{concurrency_change.operation_kind}]"
+                f"  {index}. {terminal_text(concurrency_change.entity_name)} :: "
+                f"{terminal_text(concurrency_change.operation_name)} "
+                f"[{terminal_text(concurrency_change.operation_kind)}]"
             )
             lines.append(
                 f"     {concurrency_change.baseline:,} → {concurrency_change.candidate:,} {percent}"
@@ -137,8 +141,9 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
                 duration_change.candidate_seconds,
             )
             lines.append(
-                f"  {index}. {duration_change.entity_name} :: "
-                f"{duration_change.operation_name} [{duration_change.operation_kind}]"
+                f"  {index}. {terminal_text(duration_change.entity_name)} :: "
+                f"{terminal_text(duration_change.operation_name)} "
+                f"[{terminal_text(duration_change.operation_kind)}]"
             )
             lines.append(
                 f"     {_duration(duration_change.baseline_seconds)} → "
@@ -157,7 +162,8 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
     if diff.environment_changes:
         lines.extend(("", "Environment changes"))
         lines.extend(
-            f"  {change.variable}: {change.change_kind}" for change in diff.environment_changes
+            f"  {terminal_text(change.variable)}: {change.change_kind}"
+            for change in diff.environment_changes
         )
     if (
         not diff.entity_count_changes
@@ -182,7 +188,8 @@ def _append_edges(lines: list[str], title: str, edges: tuple[EdgeCountChange, ..
     lines.extend(("", title))
     for edge in edges:
         lines.append(
-            f"  {edge.source_name} → {edge.target_name} [{edge.relation}]: "
+            f"  {terminal_text(edge.source_name)} → {terminal_text(edge.target_name)} "
+            f"[{terminal_text(edge.relation)}]: "
             f"{edge.baseline:,} → {edge.candidate:,}"
         )
 

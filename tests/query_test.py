@@ -49,6 +49,18 @@ def test_runpack_query_preserves_duplicate_columns_in_jsonl(tmp_path: Path) -> N
     }
 
 
+def test_runpack_query_escapes_terminal_control_characters(tmp_path: Path) -> None:
+    runpack = tmp_path / "query.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="query")
+
+    result = query_runpack(runpack, 'SELECT char(27) || "[31m" AS "line\nname"')
+    table = render_query(result, "table")
+
+    assert "\x1b" not in table
+    assert r"line\nname" in table
+    assert r"\x1b[31m" in table
+
+
 def test_runpack_query_truncates_without_loading_the_full_result(tmp_path: Path) -> None:
     runpack = tmp_path / "query.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="query")

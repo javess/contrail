@@ -9,6 +9,7 @@ from pathlib import Path
 
 from runtime_tools.model import Event, JsonValue
 from runtime_tools.storage import RunpackReader
+from runtime_tools.terminal import terminal_text
 
 _MAX_TREE_INDENT_DEPTH = 40
 _MAX_COMPLETENESS_COUNT = (1 << 63) - 1
@@ -140,8 +141,11 @@ def render_causal_tree(path: Path) -> str:
                 marker = " (already shown)"
             else:
                 marker = ""
-            service = entity_names.get(event.entity_id or "", "unowned")
-            label = f"{service} :: {event.name} [{event.kind}] {_event_duration(event)}{marker}"
+            service = terminal_text(entity_names.get(event.entity_id or "", "unowned"))
+            label = (
+                f"{service} :: {terminal_text(event.name)} "
+                f"[{terminal_text(event.kind)}] {_event_duration(event)}{marker}"
+            )
             visible_depth = min(depth, _MAX_TREE_INDENT_DEPTH)
             depth_marker = f"… depth {depth} … " if depth > _MAX_TREE_INDENT_DEPTH else ""
             lines.append(f"{'  ' * visible_depth}{depth_marker}{label}")
@@ -167,7 +171,8 @@ def render_causal_tree(path: Path) -> str:
             if source is None or target is None:
                 continue
             lines.append(
-                f"  {source.name} → {target.name} [{edge.kind}, confidence {edge.confidence:.2f}]"
+                f"  {terminal_text(source.name)} → {terminal_text(target.name)} "
+                f"[{terminal_text(edge.kind)}, confidence {edge.confidence:.2f}]"
             )
     lines.append(f"clock inconsistencies: {inconsistency_count}")
     return "\n".join(lines)
@@ -273,20 +278,27 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
     stdout = _format_output(summary.stdout_bytes, summary.stdout_sha256, summary.stdout_complete)
     stderr = _format_output(summary.stderr_bytes, summary.stderr_sha256, summary.stderr_complete)
     revision = summary.revision or "unknown"
-    command = shlex.join(summary.command) if summary.command else "(telemetry import)"
+    command = (
+        terminal_text(shlex.join(summary.command)) if summary.command else "(telemetry import)"
+    )
     lines = [
-        f"RUN {summary.name}",
-        f"id:       {summary.id}",
-        f"schema:   {summary.schema_version} (producer {summary.producer_version})",
+        f"RUN {terminal_text(summary.name)}",
+        f"id:       {terminal_text(summary.id)}",
+        f"schema:   {terminal_text(summary.schema_version)} "
+        f"(producer {terminal_text(summary.producer_version)})",
         f"command:  {command}",
-        f"revision: {revision}",
+        f"revision: {terminal_text(revision)}",
         f"outcome:  {_format_outcome(summary)}",
         f"runtime:  {duration}",
         f"cpu:      {_format_cpu(summary)}",
         f"memory:   {peak} peak",
         f"stdout:   {stdout}",
         f"stderr:   {stderr}",
-        f"annotations: ignored ({summary.annotation_error})" if summary.annotation_error else None,
+        (
+            f"annotations: ignored ({terminal_text(summary.annotation_error)})"
+            if summary.annotation_error
+            else None
+        ),
         _causality_summary(summary.missing_causal_references),
         _semantic_completeness_summary(summary.dropped_attribute_count),
         (

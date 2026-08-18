@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from runtime_tools.batchscope.analysis import BatchAnalysis
+from runtime_tools.terminal import terminal_text
 
 
 def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
@@ -12,13 +13,16 @@ def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
         return json.dumps(analysis.as_json_value(), indent=2, sort_keys=True)
     lines = [
         "BATCHSCOPE",
-        f"run:   {analysis.name} ({analysis.execution_id[:8]})",
+        f"run:   {terminal_text(analysis.name)} ({terminal_text(analysis.execution_id[:8])})",
         f"total: {_duration(analysis.total_seconds)}",
         "",
         "Lifecycle",
     ]
     for phase in analysis.lifecycle:
-        lines.append(f"  {phase.name:<24} {_duration(phase.duration_seconds):>10}  {phase.source}")
+        lines.append(
+            f"  {terminal_text(phase.name):<24} "
+            f"{_duration(phase.duration_seconds):>10}  {phase.source}"
+        )
     lines.extend(("", "Critical path"))
     if analysis.critical_path is None:
         lines.append("  unavailable")
@@ -28,7 +32,7 @@ def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
         lines.append(f"  active execution: {_duration(path.active_seconds)}")
         lines.append(f"  causal waiting: {_duration(path.waiting_seconds)}")
         lines.append(f"  parallel slack: {_duration(path.parallel_slack_seconds)}")
-        lines.append(f"  {' → '.join(path.event_names)}")
+        lines.append(f"  {' → '.join(terminal_text(name) for name in path.event_names)}")
     lines.extend(("", "Throughput"))
     if analysis.throughput is None:
         lines.append("  no progress evidence")
@@ -49,8 +53,8 @@ def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
     if not analysis.bottlenecks:
         lines.append("  none classified from available evidence")
     for bottleneck in analysis.bottlenecks:
-        lines.append(f"  {bottleneck.classification} ({bottleneck.confidence:.0%})")
-        lines.append(f"    {bottleneck.evidence}")
+        lines.append(f"  {terminal_text(bottleneck.classification)} ({bottleneck.confidence:.0%})")
+        lines.append(f"    {terminal_text(bottleneck.evidence)}")
     return "\n".join(lines)
 
 

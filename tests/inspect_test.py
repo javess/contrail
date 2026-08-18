@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from runtime_tools.inspect import inspect_runpack, render_causal_tree
+from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.storage import RunpackWriter
 
@@ -72,6 +72,26 @@ def test_causal_tree_distinguishes_shared_nodes_from_cycles(tmp_path: Path) -> N
 
     assert "shared [operation] 0.000ms (already shown)" in tree
     assert "cycle-a [operation] 0.000ms (cycle)" in tree
+
+
+def test_text_inspection_escapes_terminal_control_characters(tmp_path: Path) -> None:
+    runpack = tmp_path / "controls.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("run", "unsafe\x1b[31m", 0, 1, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(
+            Event("event", "operation", "line\nbreak", "worker", 0, 1, "test", None, None, {})
+        )
+
+    summary = render_summary(inspect_runpack(runpack), "text")
+    tree = render_causal_tree(runpack)
+
+    assert "\x1b" not in summary
+    assert r"unsafe\x1b[31m" in summary
+    assert "line\nbreak" not in tree
+    assert r"line\nbreak" in tree
 
 
 def test_inspection_preserves_base_measurements_after_additive_enrichment(

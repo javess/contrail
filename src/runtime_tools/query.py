@@ -10,6 +10,7 @@ from pathlib import Path
 
 from runtime_tools.model import JsonValue
 from runtime_tools.storage import RunpackReader
+from runtime_tools.terminal import terminal_text
 
 
 class QueryError(ValueError):
@@ -156,12 +157,13 @@ def render_query(result: QueryResult, output_format: str) -> str:
             json.dumps(dict(zip(result.columns, row, strict=True)), allow_nan=False, sort_keys=True)
             for row in result.rows
         )
-    widths = [len(column) for column in result.columns]
+    rendered_columns = [terminal_text(column) for column in result.columns]
+    widths = [len(column) for column in rendered_columns]
     rendered_rows = [[_display(value) for value in row] for row in result.rows]
     for row in rendered_rows:
         for index, value in enumerate(row):
             widths[index] = min(60, max(widths[index], len(value)))
-    header = "  ".join(column.ljust(widths[index]) for index, column in enumerate(result.columns))
+    header = "  ".join(column.ljust(widths[index]) for index, column in enumerate(rendered_columns))
     divider = "  ".join("-" * width for width in widths)
     lines = [header, divider]
     for row in rendered_rows:
@@ -180,4 +182,4 @@ def _display(value: JsonValue) -> str:
         return json.dumps(value, separators=(",", ":"), sort_keys=True)
     if value is None:
         return "NULL"
-    return str(value)
+    return terminal_text(value)
