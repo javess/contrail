@@ -11,15 +11,16 @@ import yaml
 from runtime_tools.model import JsonValue
 from runtime_tools.yaml_support import YamlInputError, load_yaml_file
 
-SUPPORTED_ASSERTIONS = {
-    "output_equivalent",
-    "result_equivalence",
-    "max_runtime_regression",
-    "max_peak_memory_regression",
-    "forbid_new_dependency",
-    "max_operation_count",
-    "max_operation_error_count",
+_ASSERTION_FIELDS = {
+    "output_equivalent": set(),
+    "result_equivalence": set(),
+    "max_runtime_regression": {"percent"},
+    "max_peak_memory_regression": {"percent"},
+    "forbid_new_dependency": {"from", "to"},
+    "max_operation_count": {"operation", "relative_to", "factor"},
+    "max_operation_error_count": {"operation", "relative_to", "factor"},
 }
+SUPPORTED_ASSERTIONS = set(_ASSERTION_FIELDS)
 MAX_CONTRACT_BYTES = 1024 * 1024
 
 
@@ -75,8 +76,15 @@ def _required_string(value: JsonValue, label: str) -> str:
     return value
 
 
+def _reject_unknown_fields(value: dict[str, JsonValue], allowed: set[str], label: str) -> None:
+    unknown = sorted(value.keys() - allowed)
+    if unknown:
+        raise ContractError(f"{label} contains unsupported fields: {', '.join(unknown)}")
+
+
 def _parse_contract(value: object, default_name: str) -> Contract:
     raw = _object(value, "contract")
+    _reject_unknown_fields(raw, {"name", "description", "assertions"}, "contract")
     name_value = raw.get("name", default_name)
     name = _required_string(name_value, "contract name")
     description_value = raw.get("description")
@@ -91,6 +99,11 @@ def _parse_contract(value: object, default_name: str) -> Contract:
         assertion_type = _required_string(config.get("type"), f"assertion {index} type")
         if assertion_type not in SUPPORTED_ASSERTIONS:
             raise ContractError(f"unsupported assertion type: {assertion_type}")
+        _reject_unknown_fields(
+            config,
+            {"type", "name", *_ASSERTION_FIELDS[assertion_type]},
+            f"{assertion_type} assertion",
+        )
         assertion_name_value = config.get("name", assertion_type.replace("_", "-"))
         assertion_name = _required_string(assertion_name_value, f"assertion {index} name")
         assertions.append(Assertion(assertion_type, assertion_name, config))
@@ -111,6 +124,7 @@ def load_contracts(path: Path) -> tuple[Contract, ...]:
     raw_contracts = root.get("contracts")
     if raw_contracts is None:
         return (_parse_contract(root, path.stem),)
+    _reject_unknown_fields(root, {"contracts"}, "contract document")
     if not isinstance(raw_contracts, list) or not raw_contracts:
         raise ContractError("contracts must be a non-empty list")
     return tuple(

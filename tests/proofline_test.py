@@ -186,6 +186,34 @@ def test_proofline_rejects_unsupported_assertion_type(tmp_path: Path) -> None:
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 
+@pytest.mark.parametrize(
+    "document",
+    (
+        """
+name: typo
+assertions:
+  - type: max_runtime_regression
+    percent: 10
+    percnet: 100
+""",
+        """
+name: typo
+description: ignored
+contracts:
+  - name: nested
+    assertions:
+      - type: output_equivalent
+""",
+    ),
+)
+def test_proofline_rejects_unknown_contract_fields(tmp_path: Path, document: str) -> None:
+    contract = tmp_path / "unknown-field.yaml"
+    contract.write_text(document, encoding="utf-8")
+
+    with pytest.raises(ContractError, match="contains unsupported fields"):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
 def test_proofline_rejects_recursive_yaml_values(tmp_path: Path) -> None:
     contract = tmp_path / "recursive.yaml"
     contract.write_text(

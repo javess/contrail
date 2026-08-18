@@ -37,5 +37,6 @@ Supported assertions are intentionally mechanical:
 
 An assertion with missing required evidence is `UNVERIFIABLE` and makes the
 verification fail. Invalid or unsupported contracts are errors rather than
-silently skipped claims. `proofline verify` exits 0 for a full pass, 1 for a
-failed or unverifiable claim, and 2 for invalid input.
+silently skipped claims. Unknown contract or assertion fields are also errors,
+so misspelled thresholds cannot be ignored. `proofline verify` exits 0 for a
+full pass, 1 for a failed or unverifiable claim, and 2 for invalid input.
