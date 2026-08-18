@@ -212,6 +212,42 @@ def test_kubernetes_completion_only_evidence_expands_execution_bounds(tmp_path: 
     assert event.finished_at_ns == 20
 
 
+def test_kubernetes_start_only_evidence_expands_closed_execution_bounds(tmp_path: Path) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "live-pod.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 10, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata(
+                            "worker",
+                            "pod-uid",
+                            creationTimestamp="1970-01-01T00:00:00.000000020Z",
+                        ),
+                        "spec": {"containers": []},
+                        "status": {},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_kubernetes_snapshot(base, snapshot, output)
+
+    with RunpackReader(output) as reader:
+        execution = reader.execution()
+        event = reader.events()[0]
+    assert execution.finished_at_ns == 20
+    assert event.started_at_ns == 20
+    assert event.finished_at_ns is None
+
+
 def test_kubernetes_snapshot_keeps_delimited_entity_identities_distinct(
     tmp_path: Path,
 ) -> None:
