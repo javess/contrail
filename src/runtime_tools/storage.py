@@ -916,13 +916,26 @@ class RunpackReader:
             FROM causal_edges AS edge
             JOIN events AS parent ON parent.id = edge.source_event_id
             JOIN events AS child ON child.id = edge.target_event_id
-            WHERE edge.kind = 'parent'
-              AND (
-                (parent.started_at_ns IS NOT NULL AND child.started_at_ns IS NOT NULL
-                 AND child.started_at_ns < parent.started_at_ns)
-                OR
-                (parent.finished_at_ns IS NOT NULL AND child.finished_at_ns IS NOT NULL
-                 AND child.finished_at_ns > parent.finished_at_ns)
+            WHERE (
+                edge.kind = 'parent'
+                AND (
+                    (parent.started_at_ns IS NOT NULL AND child.started_at_ns IS NOT NULL
+                     AND parent.started_at_ns - child.started_at_ns
+                         > COALESCE(parent.uncertainty_ns, 0)
+                           + COALESCE(child.uncertainty_ns, 0))
+                    OR
+                    (parent.finished_at_ns IS NOT NULL AND child.finished_at_ns IS NOT NULL
+                     AND child.finished_at_ns - parent.finished_at_ns
+                         > COALESCE(parent.uncertainty_ns, 0)
+                           + COALESCE(child.uncertainty_ns, 0))
+                )
+            ) OR (
+                edge.kind != 'parent'
+                AND parent.started_at_ns IS NOT NULL
+                AND child.started_at_ns IS NOT NULL
+                AND parent.started_at_ns - child.started_at_ns
+                    > COALESCE(parent.uncertainty_ns, 0)
+                      + COALESCE(child.uncertainty_ns, 0)
               )
             """
         ).fetchone()

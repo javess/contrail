@@ -546,6 +546,40 @@ def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> Non
     assert analysis.critical_path.certainty == "inferred"
 
 
+def test_reversed_non_parent_causality_makes_critical_path_inferred(tmp_path: Path) -> None:
+    runpack = tmp_path / "reversed-cause.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("reversed", "reversed", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("cause", "operation", "cause", 50_000_000, 60_000_000))
+        writer.add_event(_event("effect", "operation", "effect", 10_000_000, 20_000_000))
+        writer.add_causal_edge(CausalEdge("cause", "effect", "causes", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.certainty == "inferred"
+
+
+def test_clock_uncertainty_can_cover_apparent_parent_skew(tmp_path: Path) -> None:
+    runpack = tmp_path / "uncertain-clock.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("uncertain", "uncertain", 0, 100, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(Event("parent", "run", "parent", "worker", 10, 90, "test", 5, None, {}))
+        writer.add_event(Event("child", "operation", "child", "worker", 5, 95, "test", 5, None, {}))
+        writer.add_causal_edge(CausalEdge("parent", "child", "parent", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.certainty == "observed"
+
+
 def test_causal_cycle_makes_critical_path_inferred(tmp_path: Path) -> None:
     runpack = tmp_path / "cycle.runpack"
     with RunpackWriter(runpack) as writer:
