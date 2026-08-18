@@ -20,6 +20,11 @@ class PrometheusImportError(EnrichmentError):
 
 
 MAX_PROMETHEUS_RESPONSE_BYTES = 64 * 1024 * 1024
+_MIN_RUNPACK_TIMESTAMP_NS = -(1 << 63)
+_MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
+_NANOSECONDS_PER_SECOND = Decimal(1_000_000_000)
+_MIN_RUNPACK_TIMESTAMP_SECONDS = Decimal(_MIN_RUNPACK_TIMESTAMP_NS) / _NANOSECONDS_PER_SECOND
+_MAX_RUNPACK_TIMESTAMP_SECONDS = Decimal(_MAX_RUNPACK_TIMESTAMP_NS) / _NANOSECONDS_PER_SECOND
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,9 +42,14 @@ def _object(value: object, label: str) -> dict[str, object]:
 
 def _timestamp_ns(value: object) -> int:
     try:
-        return int(Decimal(str(value)) * 1_000_000_000)
+        seconds = Decimal(str(value))
     except (InvalidOperation, OverflowError, ValueError) as exc:
         raise PrometheusImportError(f"invalid Prometheus sample timestamp: {value}") from exc
+    if not seconds.is_finite():
+        raise PrometheusImportError(f"invalid Prometheus sample timestamp: {value}")
+    if not _MIN_RUNPACK_TIMESTAMP_SECONDS <= seconds <= _MAX_RUNPACK_TIMESTAMP_SECONDS:
+        raise PrometheusImportError("Prometheus sample timestamp exceeds the runpack range")
+    return int(seconds * _NANOSECONDS_PER_SECOND)
 
 
 def _sample_value(value: object) -> float:
