@@ -530,3 +530,15 @@ def test_annotation_loader_rejects_oversized_streams_before_decoding(
 
     with pytest.raises(AnnotationError, match="annotations exceed the 32-byte input limit"):
         load_annotations(annotation_path, entity_id="process")
+
+
+def test_annotation_loader_rejects_too_many_records_before_parsing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    annotation_path = tmp_path / "too-many.jsonl"
+    annotation_path.write_bytes(b"{}\n{}\n{}\n")
+    monkeypatch.setattr(annotations_module, "MAX_ANNOTATION_RECORDS", 2)
+
+    with pytest.raises(AnnotationError, match="annotations exceed the 2-record input limit"):
+        load_annotations(annotation_path, entity_id="process")

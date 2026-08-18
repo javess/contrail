@@ -16,6 +16,7 @@ class AnnotationError(ValueError):
 
 _MAX_TIMESTAMP_NS = (1 << 63) - 1
 MAX_ANNOTATION_STREAM_BYTES = 64 * 1024 * 1024
+MAX_ANNOTATION_RECORDS = 200_000
 _RECORD_FIELDS = {
     "event_start": {"record", "id", "kind", "name", "timestamp_ns", "parent_id", "attributes"},
     "event_end": {"record", "id", "timestamp_ns", "error"},
@@ -93,10 +94,17 @@ def load_annotations(
         raise AnnotationError(
             f"captured annotations exceed the {MAX_ANNOTATION_STREAM_BYTES}-byte input limit"
         )
+    record_count = raw.count(b"\n") + int(bool(raw) and not raw.endswith(b"\n"))
+    if record_count > MAX_ANNOTATION_RECORDS:
+        raise AnnotationError(
+            f"captured annotations exceed the {MAX_ANNOTATION_RECORDS}-record input limit"
+        )
     try:
-        lines = raw.decode("utf-8").splitlines()
+        lines = raw.decode("utf-8").split("\n")
     except UnicodeDecodeError as exc:
         raise AnnotationError("captured annotations must be UTF-8") from exc
+    if lines and not lines[-1]:
+        lines.pop()
     for line_number, line in enumerate(lines, 1):
         try:
             record = _object(json.loads(line, parse_constant=_reject_json_constant), "annotation")
