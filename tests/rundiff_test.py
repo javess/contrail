@@ -155,6 +155,7 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
 
     diff = compare_runpacks(baseline, candidate)
 
+    assert diff.match_level == "aggregate"
     assert diff.outcome == "different"
     assert diff.exit_code_equivalent is True
     assert diff.output_equivalent is True
@@ -214,6 +215,20 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
         ("gateway", "metadata", "new"),
         ("gateway", "database", "changed"),
     ]
+
+
+def test_compare_runpacks_marks_repeated_semantic_shapes_as_structural(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    record_process((sys.executable, "-c", "print('same')"), baseline, name="baseline")
+    record_process((sys.executable, "-c", "print('same')"), candidate, name="candidate")
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.baseline_id != diff.candidate_id
+    assert diff.match_level == "structural"
 
 
 def test_compare_runpacks_omits_unrepresentable_cpu_percentages(tmp_path: Path) -> None:

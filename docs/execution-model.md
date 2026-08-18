@@ -78,9 +78,9 @@ Execution, entity, and event IDs are unique within an artifact. Generated IDs
 are opaque. Repeatable logical identity belongs in semantic keys such as entity
 kind/name, operation name, stage path, attributes, and source-local sequence.
 RunDiff marks artifacts with the same execution ID as exact matches. Distinct
-executions compare aggregate semantic keys rather than assuming event or entity
-IDs survive repetition. Structural matching remains a future layer over the
-same identity model.
+executions with the same entity, operation, and dependency key sets are
+structural matches. Changed shapes fall back to aggregate semantic comparison;
+neither level assumes event or entity IDs survive repetition.
 
 ## Query implications
 

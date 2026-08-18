@@ -180,7 +180,7 @@ class ExecutionDiff:
     baseline_name: str
     candidate_id: str
     candidate_name: str
-    match_level: Literal["exact", "aggregate"]
+    match_level: Literal["exact", "structural", "aggregate"]
     baseline_annotation_error: str | None
     candidate_annotation_error: str | None
     baseline_missing_causal_references: int | None
@@ -527,12 +527,22 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         or candidate_summary.dropped_attribute_count > 0
         else baseline_errors == candidate_errors
     )
+    if baseline_summary.id == candidate_summary.id:
+        match_level: Literal["exact", "structural", "aggregate"] = "exact"
+    elif (
+        baseline_entities.keys() == candidate_entities.keys()
+        and baseline_operations.keys() == candidate_operations.keys()
+        and baseline_edges.keys() == candidate_edges.keys()
+    ):
+        match_level = "structural"
+    else:
+        match_level = "aggregate"
     return ExecutionDiff(
         baseline_id=baseline_summary.id,
         baseline_name=baseline_summary.name,
         candidate_id=candidate_summary.id,
         candidate_name=candidate_summary.name,
-        match_level=("exact" if baseline_summary.id == candidate_summary.id else "aggregate"),
+        match_level=match_level,
         baseline_annotation_error=baseline_summary.annotation_error,
         candidate_annotation_error=candidate_summary.annotation_error,
         baseline_missing_causal_references=baseline_summary.missing_causal_references,
