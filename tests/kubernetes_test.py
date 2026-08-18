@@ -584,6 +584,51 @@ def test_kubernetes_snapshot_preserves_rfc3339_nanoseconds(tmp_path: Path) -> No
     assert pod.started_at_ns == 123_456_789
 
 
+def test_kubernetes_snapshot_keeps_partially_terminated_pods_open(tmp_path: Path) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "running-pod.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("worker", "pod"),
+                        "spec": {
+                            "containers": [
+                                {"name": "finished", "resources": {}},
+                                {"name": "running", "resources": {}},
+                            ]
+                        },
+                        "status": {
+                            "containerStatuses": [
+                                {
+                                    "name": "finished",
+                                    "state": {"terminated": {"finishedAt": "1970-01-01T00:00:01Z"}},
+                                },
+                                {
+                                    "name": "running",
+                                    "state": {"running": {"startedAt": "1970-01-01T00:00:00Z"}},
+                                },
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_kubernetes_snapshot(base, snapshot, output)
+
+    with RunpackReader(output) as reader:
+        pod = next(event for event in reader.events() if event.kind == "workload.pod")
+    assert pod.finished_at_ns is None
+
+
 def test_kubernetes_fallback_identity_includes_namespace(tmp_path: Path) -> None:
     base = tmp_path / "base.runpack"
     snapshot = tmp_path / "namespaces.json"

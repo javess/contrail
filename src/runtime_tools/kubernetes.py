@@ -209,14 +209,21 @@ def _replica_attributes(item: dict[str, object], status: dict[str, object]) -> d
 
 
 def _pod_finish(status: dict[str, object]) -> int | None:
+    container_statuses = _container_statuses(status)
+    if not container_statuses:
+        return None
     finishes = []
-    for container_status in _container_statuses(status).values():
+    for container_status in container_statuses.values():
         state = _object(container_status.get("state", {}), "container state")
-        terminated = _object(state.get("terminated", {}), "terminated container state")
+        raw_terminated = state.get("terminated")
+        if raw_terminated is None:
+            return None
+        terminated = _object(raw_terminated, "terminated container state")
         value = _timestamp(terminated.get("finishedAt"))
-        if value is not None:
-            finishes.append(value)
-    return max(finishes) if finishes else None
+        if value is None:
+            return None
+        finishes.append(value)
+    return max(finishes)
 
 
 def _container_statuses(status: dict[str, object]) -> dict[str, dict[str, object]]:
