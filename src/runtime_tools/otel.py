@@ -21,6 +21,8 @@ class OtelImportError(ValueError):
 
 
 _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
+_MIN_OTLP_INT = -(1 << 63)
+_MAX_OTLP_INT = (1 << 63) - 1
 MAX_OTLP_DOCUMENT_BYTES = 64 * 1024 * 1024
 MAX_OTLP_ATTRIBUTE_DEPTH = 64
 _OTLP_VALUE_FIELDS = (
@@ -74,9 +76,12 @@ def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
         return boolean
     if "intValue" in value:
         try:
-            return int(str(value["intValue"]))
+            integer = int(str(value["intValue"]))
         except ValueError as exc:
             raise OtelImportError("OTLP intValue is invalid") from exc
+        if not _MIN_OTLP_INT <= integer <= _MAX_OTLP_INT:
+            raise OtelImportError("OTLP intValue exceeds the signed 64-bit range")
+        return integer
     if "doubleValue" in value:
         try:
             number = float(str(value["doubleValue"]))
