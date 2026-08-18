@@ -1201,6 +1201,27 @@ def test_instant_events_preserve_causal_waiting_on_the_critical_path(tmp_path: P
     assert analysis.critical_path.certainty == "observed"
 
 
+def test_critical_path_ties_prefer_observed_work_over_point_chains(tmp_path: Path) -> None:
+    runpack = tmp_path / "active-tie.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("active-tie", "active-tie", 0, 30_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_event(_event("work", "operation", "work", 0, 30_000_000))
+        writer.add_event(_event("published", "event", "published", 0, 0))
+        writer.add_event(_event("observed", "event", "observed", 30_000_000, 30_000_000))
+        writer.add_causal_edge(CausalEdge("published", "observed", "causes", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.critical_path is not None
+    assert analysis.critical_path.event_ids == ("work",)
+    assert analysis.critical_path.duration_seconds == 0.03
+    assert analysis.critical_path.active_seconds == 0.03
+    assert analysis.critical_path.waiting_seconds == 0.0
+
+
 def test_untimed_events_preserve_causality_but_make_the_path_inferred(tmp_path: Path) -> None:
     runpack = tmp_path / "partial-timing.runpack"
     with RunpackWriter(runpack) as writer:

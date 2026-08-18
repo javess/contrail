@@ -162,8 +162,8 @@ def _has_complete_interval(event: Event) -> bool:
     return event.started_at_ns is not None and event.finished_at_ns is not None
 
 
-def _path_key(path: _Path) -> tuple[bool, int, int]:
-    return bool(path.intervals), path.duration_ns, path.length
+def _path_key(path: _Path) -> tuple[bool, int, int, int]:
+    return bool(path.intervals), path.duration_ns, path.active_ns, path.length
 
 
 def _critical_path(
