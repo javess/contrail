@@ -483,15 +483,20 @@ def import_kubernetes_snapshot(
                         {"source": "kubernetes"},
                     )
                 )
+    event_uids: set[str] = set()
     for item in items:
         if _kind(item) != "Event":
             continue
+        event_uid = _uid(item)
+        if event_uid in event_uids:
+            raise KubernetesImportError(f"duplicate Kubernetes Event uid: {event_uid}")
+        event_uids.add(event_uid)
         involved = _object(item.get("involvedObject", {}), "Event involvedObject")
         involved_uid = _optional_string(involved.get("uid"), "Event involvedObject.uid")
         involved_entity_id = entity_by_uid.get(involved_uid)
         if involved_entity_id is None:
             continue
-        event_id = f"k8s:event:{_uid(item)}"
+        event_id = f"k8s:event:{event_uid}"
         event_timestamp = _timestamp(item.get("eventTime"))
         if event_timestamp is None:
             event_timestamp = _timestamp(_metadata(item).get("creationTimestamp"))

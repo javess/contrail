@@ -505,6 +505,38 @@ def test_kubernetes_enrichment_reports_identity_collisions_without_publishing(
     assert not output.exists()
 
 
+def test_kubernetes_enrichment_rejects_duplicate_event_uids(tmp_path: Path) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "duplicate-events.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Event",
+                        "metadata": _metadata("first", "duplicate"),
+                        "involvedObject": {"uid": "missing"},
+                    },
+                    {
+                        "kind": "Event",
+                        "metadata": _metadata("second", "duplicate"),
+                        "involvedObject": {"uid": "missing"},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KubernetesImportError, match="duplicate Kubernetes Event uid: duplicate"):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()
+
+
 @pytest.mark.parametrize(
     ("items", "message"),
     (
