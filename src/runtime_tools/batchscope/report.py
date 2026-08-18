@@ -12,7 +12,7 @@ MAX_TEXT_SECTION_ITEMS = 100
 
 def render_analysis(analysis: BatchAnalysis, output_format: str) -> str:
     if output_format == "json":
-        return json.dumps(analysis.as_json_value(), indent=2, sort_keys=True)
+        return json.dumps(analysis.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
     lines = [
         "BATCHSCOPE",
         f"run:   {terminal_text(analysis.name)} ({terminal_text(analysis.execution_id[:8])})",

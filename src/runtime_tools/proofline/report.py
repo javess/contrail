@@ -12,7 +12,7 @@ MAX_TEXT_RESULTS = 100
 
 def render_verification(report: VerificationReport, output_format: str) -> str:
     if output_format == "json":
-        return json.dumps(report.as_json_value(), indent=2, sort_keys=True)
+        return json.dumps(report.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
     lines = ["PROOFLINE", "", f"{len(report.results)} claims evaluated", ""]
     prioritized = sorted(
         enumerate(report.results),

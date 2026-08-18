@@ -302,7 +302,7 @@ def _stream_complete(metadata: dict[str, JsonValue], stream: str) -> bool | None
 
 def render_summary(summary: ExecutionSummary, output_format: str) -> str:
     if output_format == "json":
-        return json.dumps(summary.as_json_value(), indent=2, sort_keys=True)
+        return json.dumps(summary.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
     duration = (
         "in progress" if summary.wall_time_seconds is None else f"{summary.wall_time_seconds:.3f}s"
     )

@@ -13,7 +13,7 @@ MAX_TEXT_SECTION_ITEMS = 100
 
 def render_diff(diff: ExecutionDiff, output_format: str) -> str:
     if output_format == "json":
-        return json.dumps(diff.as_json_value(), indent=2, sort_keys=True)
+        return json.dumps(diff.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
     lines = [
         "RUNTIME DIFF",
         f"baseline:  {terminal_text(diff.baseline_name)} ({terminal_text(diff.baseline_id[:8])})",

@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"proofline: {terminal_text(exc)}", file=sys.stderr)
         return 2
     if experiment is not None and args.format == "json":
-        print(json.dumps(experiment.as_json_value(), indent=2, sort_keys=True))
+        print(json.dumps(experiment.as_json_value(), allow_nan=False, indent=2, sort_keys=True))
     else:
         print(render_verification(report, args.format))
     if experiment is not None and args.format == "text":

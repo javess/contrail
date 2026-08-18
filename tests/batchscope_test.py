@@ -342,6 +342,13 @@ def test_batchscope_text_report_bounds_repeated_sections() -> None:
     assert report.count("1 additional items omitted from text output") == 3
 
 
+def test_batchscope_json_report_rejects_non_finite_facts() -> None:
+    analysis = BatchAnalysis("run", "run", float("nan"), (), None, None, ())
+
+    with pytest.raises(ValueError, match="Out of range float values are not JSON compliant"):
+        render_analysis(analysis, "json")
+
+
 def test_batchscope_classifies_dominant_external_dependency(tmp_path: Path) -> None:
     runpack = tmp_path / "external.runpack"
     with RunpackWriter(runpack) as writer:
