@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import fcntl
 import json
 import os
 import time
@@ -31,12 +32,16 @@ def _write(record: dict[str, JsonValue]) -> None:
     payload = (json.dumps(record, allow_nan=False, separators=(",", ":")) + "\n").encode()
     descriptor = os.open(Path(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
     try:
-        remaining = memoryview(payload)
-        while remaining:
-            written = os.write(descriptor, remaining)
-            if written <= 0:
-                raise OSError("could not append annotation record")
-            remaining = remaining[written:]
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            remaining = memoryview(payload)
+            while remaining:
+                written = os.write(descriptor, remaining)
+                if written <= 0:
+                    raise OSError("could not append annotation record")
+                remaining = remaining[written:]
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
     finally:
         os.close(descriptor)
 

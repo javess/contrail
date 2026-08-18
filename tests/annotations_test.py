@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -97,6 +98,31 @@ def test_annotation_writer_completes_short_writes(
     record = json.loads(annotations.read_text(encoding="utf-8"))
     assert record["name"] == "short-write"
     assert record["attributes"] == {"detail": "complete"}
+
+
+def test_annotation_writer_keeps_concurrent_short_writes_as_complete_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", str(annotations))
+    write = os.write
+
+    def short_write(descriptor: int, data: bytes | bytearray | memoryview) -> int:
+        return write(descriptor, data[:17])
+
+    monkeypatch.setattr(os, "write", short_write)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        tuple(
+            executor.map(
+                lambda index: runtime.event(f"event-{index}", payload="x" * 1_000),
+                range(100),
+            )
+        )
+
+    records = [json.loads(line) for line in annotations.read_text().splitlines()]
+    assert len(records) == 100
+    assert {record["name"] for record in records} == {f"event-{index}" for index in range(100)}
 
 
 def test_scope_restores_parent_context_when_end_write_fails(
