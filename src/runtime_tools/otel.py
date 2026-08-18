@@ -345,6 +345,12 @@ def import_otlp_json(
             scope = _as_object(scope_group.get("scope", {}), "scope")
             scope_name = _semantic_name(scope.get("name"), "span scope name", default="")
             spans = _as_list(scope_group.get("spans", []), "spans")
+            if spans:
+                dropped_attribute_count = _bounded_count_total(
+                    dropped_attribute_count,
+                    scope.get("droppedAttributesCount"),
+                    "dropped OTLP attributes",
+                )
             for raw_span in spans:
                 span = _as_object(raw_span, "span")
                 dropped_attribute_count = _bounded_count_total(
@@ -611,6 +617,7 @@ def import_otlp_logs(
             scope = _as_object(scope_group.get("scope", {}), "scope")
             scope_name = _semantic_name(scope.get("name"), "log scope name", default="")
             log_records = _as_list(scope_group.get("logRecords", []), "logRecords")
+            scope_event_count = 0
             for record_index, raw_log_record in enumerate(log_records):
                 record = _as_object(raw_log_record, "log record")
                 raw_timestamp = record.get("timeUnixNano")
@@ -700,6 +707,13 @@ def import_otlp_logs(
                     )
                 )
                 resource_event_count += 1
+                scope_event_count += 1
+            if scope_event_count:
+                dropped_attribute_count = _bounded_count_total(
+                    dropped_attribute_count,
+                    scope.get("droppedAttributesCount"),
+                    "scope droppedAttributesCount",
+                )
 
         if resource_event_count and new_entity is not None:
             entities.append(new_entity)

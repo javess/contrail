@@ -156,12 +156,13 @@ def test_otlp_logs_accumulate_exporter_dropped_attributes(tmp_path: Path) -> Non
                         "resource": {"droppedAttributesCount": 3},
                         "scopeLogs": [
                             {
+                                "scope": {"droppedAttributesCount": 5},
                                 "logRecords": [
                                     {
                                         "timeUnixNano": "5",
                                         "droppedAttributesCount": "4",
                                     }
-                                ]
+                                ],
                             }
                         ],
                     }
@@ -173,8 +174,8 @@ def test_otlp_logs_accumulate_exporter_dropped_attributes(tmp_path: Path) -> Non
 
     result = import_otlp_logs(source, logs, output)
 
-    assert result.dropped_attribute_count == 7
-    assert inspect_runpack(output).dropped_attribute_count == 9
+    assert result.dropped_attribute_count == 12
+    assert inspect_runpack(output).dropped_attribute_count == 14
 
 
 @pytest.mark.parametrize("severity", (True, "INVALID", -1, 25))

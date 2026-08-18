@@ -380,6 +380,7 @@ def test_otlp_json_import_surfaces_exporter_dropped_attributes(tmp_path: Path) -
                         "resource": {"droppedAttributesCount": 1},
                         "scopeSpans": [
                             {
+                                "scope": {"droppedAttributesCount": 4},
                                 "spans": [
                                     {
                                         "traceId": "trace",
@@ -388,7 +389,7 @@ def test_otlp_json_import_surfaces_exporter_dropped_attributes(tmp_path: Path) -
                                         "endTimeUnixNano": "2",
                                         "droppedAttributesCount": "2",
                                     }
-                                ]
+                                ],
                             }
                         ],
                     }
@@ -401,8 +402,8 @@ def test_otlp_json_import_surfaces_exporter_dropped_attributes(tmp_path: Path) -
     import_otlp_json(source, output, name="dropped-attributes")
 
     summary = inspect_runpack(output)
-    assert summary.dropped_attribute_count == 3
-    assert "semantics: 3 exporter-dropped OTLP attributes" in render_summary(summary, "text")
+    assert summary.dropped_attribute_count == 7
+    assert "semantics: 7 exporter-dropped OTLP attributes" in render_summary(summary, "text")
 
 
 @pytest.mark.parametrize("code", (True, -1, 3, "INVALID", ""))
