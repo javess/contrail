@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sqlite3
+from collections import deque
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -288,6 +289,8 @@ def _entity_values(entity: Entity) -> tuple[object, ...]:
 
 
 def _validate_entity_hierarchy(entities: tuple[Entity, ...]) -> None:
+    if any(entity.id == entity.parent_entity_id for entity in entities):
+        raise RunpackError("entity cannot be its own parent")
     parent_by_child = {
         entity.id: entity.parent_entity_id
         for entity in entities
@@ -305,6 +308,31 @@ def _validate_entity_hierarchy(entities: tuple[Entity, ...]) -> None:
             assert parent is not None
             current = parent
         complete.update(trail)
+
+
+def _parent_first_entities(entities: tuple[Entity, ...]) -> tuple[Entity, ...]:
+    _validate_entity_hierarchy(entities)
+    entity_ids = {entity.id for entity in entities}
+    children: dict[str, list[int]] = {}
+    dependencies = [0] * len(entities)
+    for index, entity in enumerate(entities):
+        parent_id = entity.parent_entity_id
+        if parent_id is not None and parent_id in entity_ids:
+            dependencies[index] = 1
+            children.setdefault(parent_id, []).append(index)
+    ready = deque(index for index, dependency in enumerate(dependencies) if dependency == 0)
+    ordered: list[Entity] = []
+    while ready:
+        index = ready.popleft()
+        entity = entities[index]
+        ordered.append(entity)
+        for child_index in children.get(entity.id, ()):
+            dependencies[child_index] -= 1
+            if dependencies[child_index] == 0:
+                ready.append(child_index)
+    if len(ordered) != len(entities):
+        raise RunpackError("entity parent relationships contain a cycle")
+    return tuple(ordered)
 
 
 def _event_values(event: Event) -> tuple[object, ...]:
@@ -525,13 +553,14 @@ class RunpackWriter:
             self._connection.commit()
 
     def add_entities(self, entities: Iterable[Entity]) -> None:
+        ordered = _parent_first_entities(tuple(entities))
         with self._writing(), self._connection:
             self._connection.executemany(
                 """
                 INSERT INTO entities(id, kind, name, parent_entity_id, attributes_json)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (_entity_values(entity) for entity in entities),
+                (_entity_values(entity) for entity in ordered),
             )
 
     def add_event(self, event: Event) -> None:

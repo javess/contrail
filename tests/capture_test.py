@@ -529,6 +529,40 @@ def test_writer_rejects_self_parented_entities(tmp_path: Path) -> None:
         assert reader.entities() == ()
 
 
+def test_bulk_entity_write_accepts_children_before_parents(tmp_path: Path) -> None:
+    output = tmp_path / "unordered-entities.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_entities(
+            (
+                Entity("container", "container", "container", "pod", {}),
+                Entity("pod", "pod", "pod", "job", {}),
+                Entity("job", "job", "job", None, {}),
+            )
+        )
+
+    with RunpackReader(output) as reader:
+        entities = {entity.id: entity for entity in reader.entities()}
+    assert entities["container"].parent_entity_id == "pod"
+    assert entities["pod"].parent_entity_id == "job"
+
+
+def test_bulk_entity_write_rejects_parent_cycles_before_inserting(tmp_path: Path) -> None:
+    output = tmp_path / "cyclic-entities.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        with pytest.raises(RunpackError, match="entity parent relationships contain a cycle"):
+            writer.add_entities(
+                (
+                    Entity("first", "worker", "first", "second", {}),
+                    Entity("second", "worker", "second", "first", {}),
+                )
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.entities() == ()
+
+
 def test_reader_rejects_cyclic_entity_parent_relationships(tmp_path: Path) -> None:
     output = tmp_path / "entity-cycle.runpack"
     with RunpackWriter(output) as writer:
