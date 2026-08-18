@@ -702,6 +702,48 @@ def test_otlp_json_import_rejects_non_string_string_attributes(tmp_path: Path) -
     assert not output.exists()
 
 
+def test_otlp_json_import_rejects_ambiguous_attribute_values(tmp_path: Path) -> None:
+    source = tmp_path / "ambiguous-attribute.json"
+    output = tmp_path / "ambiguous-attribute.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                        "attributes": [
+                                            {
+                                                "key": "ambiguous",
+                                                "value": {
+                                                    "stringValue": "one",
+                                                    "intValue": "1",
+                                                },
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="exactly one value variant"):
+        import_otlp_json(source, output, name="ambiguous-attribute")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_duplicate_attribute_keys(tmp_path: Path) -> None:
     source = tmp_path / "duplicate-attribute.json"
     output = tmp_path / "duplicate-attribute.runpack"

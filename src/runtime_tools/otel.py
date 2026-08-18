@@ -23,6 +23,15 @@ class OtelImportError(ValueError):
 _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
 MAX_OTLP_DOCUMENT_BYTES = 64 * 1024 * 1024
 MAX_OTLP_ATTRIBUTE_DEPTH = 64
+_OTLP_VALUE_FIELDS = (
+    "stringValue",
+    "boolValue",
+    "intValue",
+    "doubleValue",
+    "bytesValue",
+    "arrayValue",
+    "kvlistValue",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +59,9 @@ def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
         raise OtelImportError(f"OTLP attribute nesting exceeds {MAX_OTLP_ATTRIBUTE_DEPTH} levels")
     if not isinstance(value, dict):
         raise OtelImportError("OTLP attribute value must be an object")
+    variants = tuple(field for field in _OTLP_VALUE_FIELDS if field in value)
+    if len(variants) > 1:
+        raise OtelImportError("OTLP attribute value must contain exactly one value variant")
     if "stringValue" in value:
         string = value["stringValue"]
         if not isinstance(string, str):
