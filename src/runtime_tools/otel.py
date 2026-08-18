@@ -71,6 +71,10 @@ def _validate_utf8(value: str, label: str) -> str:
     return value
 
 
+def _source_name(source: Path) -> str:
+    return _validate_utf8(source.name, "OTLP source filename")
+
+
 def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
     if depth > MAX_OTLP_ATTRIBUTE_DEPTH:
         raise OtelImportError(f"OTLP attribute nesting exceeds {MAX_OTLP_ATTRIBUTE_DEPTH} levels")
@@ -377,6 +381,7 @@ def import_otlp_json(
         raise OtelImportError(f"refusing to overwrite existing runpack: {output}")
     if not output.parent.is_dir():
         raise OtelImportError(f"output directory does not exist: {output.parent}")
+    source_name = _source_name(source)
     document, raw_document = _load_document(source)
     resource_spans = _as_list(document.get("resourceSpans"), "resourceSpans")
     execution_id = uuid.uuid4().hex
@@ -575,7 +580,7 @@ def import_otlp_json(
                     exit_code=None,
                     revision=None,
                     metadata={
-                        "capture": {"adapter": "otlp-json", "source": source.name},
+                        "capture": {"adapter": "otlp-json", "source": source_name},
                         "otel": {
                             "trace_count": len(trace_ids),
                             "missing_parent_count": missing_parent_count,
@@ -594,7 +599,7 @@ def import_otlp_json(
                         Attachment(
                             id=f"raw:otlp-json:{execution_id}",
                             kind="raw",
-                            name=source.name,
+                            name=source_name,
                             media_type="application/json",
                             content=raw_document,
                             attributes={"adapter": "otlp-json"},
@@ -654,6 +659,7 @@ def import_otlp_logs(
     include_raw: bool = False,
 ) -> OtelLogImportResult:
     """Add bounded OTLP/JSON log records to an existing execution."""
+    source_name = _source_name(source)
     document, raw_document = _load_document(source)
     source_identity = hashlib.sha256(raw_document).hexdigest()
     resource_logs = _as_list(document.get("resourceLogs"), "resourceLogs")
@@ -863,7 +869,7 @@ def import_otlp_logs(
                     Attachment(
                         id="raw:otlp-logs:" + source_identity,
                         kind="raw",
-                        name=source.name,
+                        name=source_name,
                         media_type="application/json",
                         content=raw_document,
                         attributes={"adapter": "otlp-logs"},

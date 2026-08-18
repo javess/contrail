@@ -539,6 +539,18 @@ def test_otlp_logs_reject_invalid_identifier_unicode_at_the_adapter_boundary(
     assert not output.exists()
 
 
+def test_otlp_logs_reject_non_utf8_source_filenames(tmp_path: Path) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs-\udcff.json"
+    output = tmp_path / "enriched.runpack"
+    _base_runpack(source, tmp_path)
+
+    with pytest.raises(OtelImportError, match="OTLP source filename must be valid UTF-8"):
+        import_otlp_logs(source, logs, output)
+
+    assert not output.exists()
+
+
 def test_otlp_logs_do_not_masquerade_as_operations_or_critical_work(tmp_path: Path) -> None:
     source = tmp_path / "base.runpack"
     logs = tmp_path / "logs.json"

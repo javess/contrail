@@ -1102,6 +1102,16 @@ def test_otlp_json_import_rejects_unpaired_surrogates_at_the_adapter_boundary(
     assert not output.exists()
 
 
+def test_otlp_json_import_rejects_non_utf8_source_filenames(tmp_path: Path) -> None:
+    source = tmp_path / "trace-\udcff.json"
+    output = tmp_path / "trace.runpack"
+
+    with pytest.raises(OtelImportError, match="OTLP source filename must be valid UTF-8"):
+        import_otlp_json(source, output, name="trace")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_duplicate_attribute_keys(tmp_path: Path) -> None:
     source = tmp_path / "duplicate-attribute.json"
     output = tmp_path / "duplicate-attribute.runpack"
