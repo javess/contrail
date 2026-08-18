@@ -402,6 +402,57 @@ def test_otlp_json_import_rejects_duplicate_attribute_keys(tmp_path: Path) -> No
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    ("resource_attributes", "span_name", "message"),
+    (
+        (
+            [{"key": "service.name", "value": {"intValue": "7"}}],
+            "work",
+            "service.name must be a string",
+        ),
+        ([], {"unexpected": "object"}, "span name must be a string"),
+    ),
+)
+def test_otlp_json_import_rejects_malformed_semantic_names(
+    tmp_path: Path,
+    resource_attributes: list[dict[str, object]],
+    span_name: object,
+    message: str,
+) -> None:
+    source = tmp_path / "malformed-name.json"
+    output = tmp_path / "malformed-name.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "resource": {"attributes": resource_attributes},
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "name": span_name,
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match=message):
+        import_otlp_json(source, output, name="malformed-name")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_non_string_span_identifiers(tmp_path: Path) -> None:
     source = tmp_path / "malformed-id.json"
     output = tmp_path / "malformed-id.runpack"

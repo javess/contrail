@@ -122,6 +122,14 @@ def _identifier(value: object, label: str, *, optional: bool = False) -> str:
     return value
 
 
+def _semantic_name(value: object, label: str, *, default: str) -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise OtelImportError(f"{label} must be a string")
+    return value or default
+
+
 def _timestamp(value: object, label: str) -> int | None:
     if value in (None, ""):
         return None
@@ -205,8 +213,11 @@ def import_otlp_json(
         resource_group = _as_object(raw_resource_spans, "resourceSpans entry")
         resource = _as_object(resource_group.get("resource", {}), "resource")
         resource_attributes = _attributes(resource.get("attributes", []))
-        service_name_value = resource_attributes.get("service.name", "unknown-service")
-        service_name = str(service_name_value)
+        service_name = _semantic_name(
+            resource_attributes.get("service.name"),
+            "service.name",
+            default="unknown-service",
+        )
         entity_id = uuid.uuid5(
             uuid.NAMESPACE_URL,
             f"{execution_id}:otel-resource:{resource_index}:{service_name}",
@@ -217,7 +228,7 @@ def import_otlp_json(
         for raw_scope_spans in scope_spans:
             scope_group = _as_object(raw_scope_spans, "scopeSpans entry")
             scope = _as_object(scope_group.get("scope", {}), "scope")
-            scope_name = str(scope.get("name", ""))
+            scope_name = _semantic_name(scope.get("name"), "span scope name", default="")
             spans = _as_list(scope_group.get("spans", []), "spans")
             for raw_span in spans:
                 span = _as_object(raw_span, "span")
@@ -270,7 +281,7 @@ def import_otlp_json(
                     Event(
                         id=event_id,
                         kind=_span_kind(span.get("kind")),
-                        name=str(span.get("name", "unnamed")),
+                        name=_semantic_name(span.get("name"), "span name", default="unnamed"),
                         entity_id=entity_id,
                         started_at_ns=started_at_ns,
                         finished_at_ns=finished_at_ns,
@@ -419,8 +430,11 @@ def import_otlp_logs(
         resource_group = _as_object(raw_resource_logs, "resourceLogs entry")
         resource = _as_object(resource_group.get("resource", {}), "resource")
         resource_attributes = _attributes(resource.get("attributes", []))
-        raw_service_name = resource_attributes.get("service.name", "unknown-service")
-        service_name = str(raw_service_name)
+        service_name = _semantic_name(
+            resource_attributes.get("service.name"),
+            "service.name",
+            default="unknown-service",
+        )
         service_matches = services.get(service_name, [])
         new_entity: Entity | None = None
         if len(service_matches) == 1:
@@ -437,9 +451,7 @@ def import_otlp_logs(
         for scope_index, raw_scope_logs in enumerate(scope_logs):
             scope_group = _as_object(raw_scope_logs, "scopeLogs entry")
             scope = _as_object(scope_group.get("scope", {}), "scope")
-            scope_name = scope.get("name", "")
-            if not isinstance(scope_name, str):
-                raise OtelImportError("log scope name must be a string")
+            scope_name = _semantic_name(scope.get("name"), "log scope name", default="")
             log_records = _as_list(scope_group.get("logRecords", []), "logRecords")
             for record_index, raw_log_record in enumerate(log_records):
                 record = _as_object(raw_log_record, "log record")
