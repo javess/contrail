@@ -170,6 +170,18 @@ def test_runpack_query_counts_json_structure_toward_result_limit(
         query_runpack(runpack, "SELECT '' AS value")
 
 
+def test_runpack_query_bounds_column_metadata_without_result_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runpack = tmp_path / "query.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="query")
+    monkeypatch.setattr(query, "MAX_QUERY_RESULT_BYTES", 16)
+
+    with pytest.raises(QueryError, match="query result exceeded the byte limit of 16"):
+        query_runpack(runpack, "SELECT 1 AS long_column WHERE 0")
+
+
 def test_runpack_query_bounds_individual_values(tmp_path: Path) -> None:
     runpack = tmp_path / "query.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="query")

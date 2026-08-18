@@ -127,6 +127,10 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
                 + _encoded_size(list(columns))
                 + len(b',"rows":[],"truncated":false}')
             )
+            if result_bytes > MAX_QUERY_RESULT_BYTES:
+                raise QueryError(
+                    f"query result exceeded the byte limit of {MAX_QUERY_RESULT_BYTES}"
+                )
             truncated = False
             while True:
                 raw_row = cursor.fetchone()
