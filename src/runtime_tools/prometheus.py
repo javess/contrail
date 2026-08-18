@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -88,7 +89,7 @@ def _reject_json_constant(value: str) -> Never:
     raise ValueError(f"non-finite JSON constant: {value}")
 
 
-def _load(source: Path) -> list[tuple[dict[str, str], object, object]]:
+def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
     try:
         document = json.loads(
             source.read_text(encoding="utf-8"), parse_constant=_reject_json_constant
@@ -106,20 +107,22 @@ def _load(source: Path) -> list[tuple[dict[str, str], object, object]]:
     result = data.get("result")
     if not isinstance(result, list):
         raise PrometheusImportError("Prometheus result must be a list")
-    samples = []
-    for raw_series in result:
-        series = _object(raw_series, "Prometheus series")
-        labels = _labels(series.get("metric", {}))
-        raw_values = series.get("values")
-        if raw_values is None and "value" in series:
-            raw_values = [series["value"]]
-        if not isinstance(raw_values, list):
-            raise PrometheusImportError("Prometheus series requires value or values")
-        for raw_sample in raw_values:
-            if not isinstance(raw_sample, list) or len(raw_sample) != 2:
-                raise PrometheusImportError("Prometheus sample must be [timestamp, value]")
-            samples.append((labels, raw_sample[0], raw_sample[1]))
-    return samples
+
+    def samples() -> Iterator[tuple[dict[str, str], object, object]]:
+        for raw_series in result:
+            series = _object(raw_series, "Prometheus series")
+            labels = _labels(series.get("metric", {}))
+            raw_values = series.get("values")
+            if raw_values is None and "value" in series:
+                raw_values = [series["value"]]
+            if not isinstance(raw_values, list):
+                raise PrometheusImportError("Prometheus series requires value or values")
+            for raw_sample in raw_values:
+                if not isinstance(raw_sample, list) or len(raw_sample) != 2:
+                    raise PrometheusImportError("Prometheus sample must be [timestamp, value]")
+                yield labels, raw_sample[0], raw_sample[1]
+
+    return samples()
 
 
 def import_prometheus_response(
@@ -131,38 +134,42 @@ def import_prometheus_response(
     with RunpackReader(runpack) as reader:
         execution = reader.execution()
         entities = reader.entities()
-    if execution.finished_at_ns is None:
+    finished_at_ns = execution.finished_at_ns
+    if finished_at_ns is None:
         raise PrometheusImportError("Prometheus import requires a finished execution window")
-    measurements: list[Measurement] = []
-    dropped = 0
-    matched_entities: set[str] = set()
-    for labels, raw_timestamp, raw_value in raw_samples:
-        name = labels.get("__name__")
-        if not name:
-            raise PrometheusImportError("Prometheus series requires a __name__ label")
-        timestamp_ns = _timestamp_ns(raw_timestamp)
-        if timestamp_ns < execution.started_at_ns or timestamp_ns > execution.finished_at_ns:
-            dropped += 1
-            continue
-        entity_id = _entity_for(labels, entities)
-        if entity_id is not None:
-            matched_entities.add(entity_id)
-        attributes: dict[str, JsonValue] = {
-            key: value for key, value in labels.items() if key != "__name__"
-        }
-        measurements.append(
-            Measurement(
-                name,
-                _sample_value(raw_value),
-                labels.get("unit", "1"),
-                timestamp_ns,
-                entity_id,
-                attributes,
-            )
-        )
 
     def append(writer: RunpackWriter) -> PrometheusImportResult:
-        writer.add_measurements(measurements)
-        return PrometheusImportResult(len(measurements), dropped, len(matched_entities))
+        sample_count = 0
+        dropped = 0
+        matched_entities: set[str] = set()
+
+        def measurements() -> Iterator[Measurement]:
+            nonlocal sample_count, dropped
+            for labels, raw_timestamp, raw_value in raw_samples:
+                name = labels.get("__name__")
+                if not name:
+                    raise PrometheusImportError("Prometheus series requires a __name__ label")
+                timestamp_ns = _timestamp_ns(raw_timestamp)
+                if timestamp_ns < execution.started_at_ns or timestamp_ns > finished_at_ns:
+                    dropped += 1
+                    continue
+                entity_id = _entity_for(labels, entities)
+                if entity_id is not None:
+                    matched_entities.add(entity_id)
+                attributes: dict[str, JsonValue] = {
+                    key: value for key, value in labels.items() if key != "__name__"
+                }
+                sample_count += 1
+                yield Measurement(
+                    name,
+                    _sample_value(raw_value),
+                    labels.get("unit", "1"),
+                    timestamp_ns,
+                    entity_id,
+                    attributes,
+                )
+
+        writer.add_measurements(measurements())
+        return PrometheusImportResult(sample_count, dropped, len(matched_entities))
 
     return enrich_copy(runpack, output, append)
