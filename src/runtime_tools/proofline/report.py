@@ -14,7 +14,11 @@ def render_verification(report: VerificationReport, output_format: str) -> str:
     if output_format == "json":
         return json.dumps(report.as_json_value(), indent=2, sort_keys=True)
     lines = ["PROOFLINE", "", f"{len(report.results)} claims evaluated", ""]
-    visible_results = report.results[:MAX_TEXT_RESULTS]
+    prioritized = sorted(
+        enumerate(report.results),
+        key=lambda item: (item[1].status == "pass", item[0]),
+    )[:MAX_TEXT_RESULTS]
+    visible_results = tuple(result for _, result in sorted(prioritized))
     for result in visible_results:
         lines.append(f"{result.status.upper():<12} {terminal_text(result.name)}")
     omitted = len(report.results) - MAX_TEXT_RESULTS

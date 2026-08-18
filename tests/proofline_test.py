@@ -196,6 +196,30 @@ def test_proofline_text_report_bounds_claim_details() -> None:
     assert len(json.loads(render_verification(report, "json"))["results"]) == 101
 
 
+def test_proofline_text_report_prioritizes_late_failures() -> None:
+    passing = tuple(
+        ClaimResult("contract", f"pass-{index}", "output_equivalent", "pass", "same", "same")
+        for index in range(100)
+    )
+    failure = ClaimResult(
+        "contract",
+        "late-failure",
+        "output_equivalent",
+        "fail",
+        "same",
+        "different",
+    )
+
+    text_report = render_verification(
+        VerificationReport("baseline", "candidate", (*passing, failure)),
+        "text",
+    )
+
+    assert "late-failure" in text_report
+    assert "Failure\n  Contract: contract" in text_report
+    assert "pass-99" not in text_report
+
+
 def test_proofline_cli_returns_failure_and_machine_readable_evidence(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"
