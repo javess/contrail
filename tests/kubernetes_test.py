@@ -595,3 +595,60 @@ def test_kubernetes_snapshot_rejects_malformed_identity_metadata(
         import_kubernetes_snapshot(base, snapshot, output)
 
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    (
+        ("kind", "Kubernetes kind must be a non-empty string"),
+        ("owner", "ownerReferences uid must be a non-empty string"),
+        ("container", "container name must be a non-empty string"),
+        ("resources", "container resource quantities must map strings to strings"),
+    ),
+)
+def test_kubernetes_snapshot_rejects_malformed_relationship_text(
+    tmp_path: Path,
+    case: str,
+    message: str,
+) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "malformed-relationships.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    item: dict[str, object] = {
+        "kind": "Pod",
+        "metadata": _metadata("pod", "pod"),
+        "spec": {
+            "containers": [
+                {
+                    "name": "worker",
+                    "resources": {"requests": {"cpu": "1"}},
+                }
+            ]
+        },
+        "status": {},
+    }
+    if case == "kind":
+        item["kind"] = {"unexpected": "object"}
+    elif case == "owner":
+        metadata = item["metadata"]
+        assert isinstance(metadata, dict)
+        metadata["ownerReferences"] = [{"uid": 7}]
+    else:
+        spec = item["spec"]
+        assert isinstance(spec, dict)
+        containers = spec["containers"]
+        assert isinstance(containers, list)
+        container = containers[0]
+        assert isinstance(container, dict)
+        if case == "container":
+            container["name"] = {"unexpected": "object"}
+        else:
+            container["resources"] = {"requests": {"cpu": 1}}
+    snapshot.write_text(json.dumps({"items": [item]}), encoding="utf-8")
+
+    with pytest.raises(KubernetesImportError, match=message):
+        import_kubernetes_snapshot(base, snapshot, output)
+
+    assert not output.exists()

@@ -53,12 +53,26 @@ def _metadata(item: dict[str, object]) -> dict[str, object]:
     return _object(item.get("metadata", {}), "Kubernetes metadata")
 
 
+def _required_string(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise KubernetesImportError(f"{label} must be a non-empty string")
+    return value
+
+
+def _optional_string(value: object, label: str) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise KubernetesImportError(f"{label} must be a string")
+    return value
+
+
+def _kind(item: dict[str, object]) -> str:
+    return _required_string(item.get("kind"), "Kubernetes kind")
+
+
 def _name(item: dict[str, object]) -> str:
-    metadata = _metadata(item)
-    name = metadata.get("name")
-    if not isinstance(name, str) or not name:
-        raise KubernetesImportError("Kubernetes object requires metadata.name")
-    return name
+    return _required_string(_metadata(item).get("name"), "metadata.name")
 
 
 def _namespace(metadata: dict[str, object]) -> str:
@@ -74,7 +88,7 @@ def _uid(item: dict[str, object]) -> str:
     metadata = _metadata(item)
     value = metadata.get("uid")
     if value is None or value == "":
-        return f"name:{item.get('kind', 'unknown')}:{_namespace(metadata)}:{_name(item)}"
+        return f"name:{_kind(item)}:{_namespace(metadata)}:{_name(item)}"
     if not isinstance(value, str):
         raise KubernetesImportError("metadata.uid must be a string")
     return value
@@ -148,22 +162,27 @@ def _load(source: Path) -> list[dict[str, object]]:
 
 
 def _owner_uid(item: dict[str, object]) -> str | None:
-    owners = _metadata(item).get("ownerReferences", [])
-    if not isinstance(owners, list):
+    owners = _metadata(item).get("ownerReferences")
+    if owners is None:
         return None
+    if not isinstance(owners, list):
+        raise KubernetesImportError("ownerReferences must be a list")
     fallback: str | None = None
-    for owner in owners:
-        if isinstance(owner, dict) and owner.get("uid"):
-            uid = str(owner["uid"])
-            if owner.get("controller") is True:
-                return uid
-            if fallback is None:
-                fallback = uid
+    for raw_owner in owners:
+        owner = _object(raw_owner, "ownerReferences entry")
+        uid = _required_string(owner.get("uid"), "ownerReferences uid")
+        controller = owner.get("controller")
+        if controller is not None and not isinstance(controller, bool):
+            raise KubernetesImportError("ownerReferences controller must be a boolean")
+        if controller is True:
+            return uid
+        if fallback is None:
+            fallback = uid
     return fallback
 
 
 def _replica_attributes(item: dict[str, object], status: dict[str, object]) -> dict[str, JsonValue]:
-    spec = _object(item.get("spec", {}), f"{item.get('kind', 'workload')} spec")
+    spec = _object(item.get("spec", {}), f"{_kind(item)} spec")
     fields = (
         ("k8s.replicas.desired", spec.get("replicas")),
         ("k8s.replicas.current", status.get("replicas")),
@@ -175,37 +194,37 @@ def _replica_attributes(item: dict[str, object], status: dict[str, object]) -> d
 
 def _pod_finish(status: dict[str, object]) -> int | None:
     finishes = []
-    container_statuses = status.get("containerStatuses", [])
-    if isinstance(container_statuses, list):
-        for raw_status in container_statuses:
-            if not isinstance(raw_status, dict):
-                continue
-            state = raw_status.get("state", {})
-            if not isinstance(state, dict):
-                continue
-            terminated = state.get("terminated", {})
-            if isinstance(terminated, dict):
-                value = _timestamp(terminated.get("finishedAt"))
-                if value is not None:
-                    finishes.append(value)
+    for container_status in _container_statuses(status).values():
+        state = _object(container_status.get("state", {}), "container state")
+        terminated = _object(state.get("terminated", {}), "terminated container state")
+        value = _timestamp(terminated.get("finishedAt"))
+        if value is not None:
+            finishes.append(value)
     return max(finishes) if finishes else None
 
 
 def _container_statuses(status: dict[str, object]) -> dict[str, dict[str, object]]:
-    raw_statuses = status.get("containerStatuses", [])
-    if not isinstance(raw_statuses, list):
+    raw_statuses = status.get("containerStatuses")
+    if raw_statuses is None:
         return {}
-    result = {}
+    if not isinstance(raw_statuses, list):
+        raise KubernetesImportError("containerStatuses must be a list")
+    result: dict[str, dict[str, object]] = {}
     for raw_status in raw_statuses:
-        if isinstance(raw_status, dict) and raw_status.get("name"):
-            result[str(raw_status["name"])] = raw_status
+        container_status = _object(raw_status, "container status")
+        name = _required_string(container_status.get("name"), "container status name")
+        if name in result:
+            raise KubernetesImportError(f"duplicate container status name: {name}")
+        result[name] = container_status
     return result
 
 
 def _resource_map(value: object) -> dict[str, JsonValue]:
-    if not isinstance(value, dict):
-        return {}
-    return {str(key): str(item) for key, item in value.items()}
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    ):
+        raise KubernetesImportError("container resource quantities must map strings to strings")
+    return value
 
 
 def _container_interval(status: dict[str, object]) -> tuple[int | None, int | None]:
@@ -268,7 +287,7 @@ def import_kubernetes_snapshot(
     node_uid_by_name: dict[str, str] = {}
 
     for item in items:
-        kind = str(item.get("kind", ""))
+        kind = _kind(item)
         if kind in _WORKLOAD_KINDS:
             uid = _uid(item)
             if uid in entity_by_uid:
@@ -278,7 +297,7 @@ def import_kubernetes_snapshot(
                 node_uid_by_name[_name(item)] = uid
 
     for item in items:
-        kind = str(item.get("kind", ""))
+        kind = _kind(item)
         if kind not in _WORKLOAD_KINDS:
             continue
         uid = _uid(item)
@@ -292,11 +311,15 @@ def import_kubernetes_snapshot(
                 _integer(container_status.get("restartCount", 0), "container restart count")
                 for container_status in _container_statuses(status).values()
             )
-            node_name = str(_object(item.get("spec", {}), "Pod spec").get("nodeName", ""))
+            node_name = _optional_string(
+                _object(item.get("spec", {}), "Pod spec").get("nodeName"),
+                "Pod spec.nodeName",
+            )
+            phase = _optional_string(status.get("phase"), "Pod status.phase")
             attributes.update(
                 {
                     "k8s.node.name": node_name,
-                    "k8s.pod.phase": str(status.get("phase", "")),
+                    "k8s.pod.phase": phase,
                     "k8s.pod.restart_count": restart_count,
                 }
             )
@@ -329,7 +352,7 @@ def import_kubernetes_snapshot(
                 "kubernetes.apiserver",
                 None,
                 None,
-                {"phase": str(status.get("phase", ""))},
+                {"phase": _optional_string(status.get("phase"), f"{kind} status.phase")},
             )
         )
         node_uid = node_uid_by_name.get(node_name)
@@ -345,7 +368,7 @@ def import_kubernetes_snapshot(
             )
 
     for item in items:
-        kind = str(item.get("kind", ""))
+        kind = _kind(item)
         if kind not in _WORKLOAD_KINDS:
             continue
         uid = _uid(item)
@@ -362,18 +385,18 @@ def import_kubernetes_snapshot(
             )
 
     for item in items:
-        if str(item.get("kind", "")) != "Pod":
+        if _kind(item) != "Pod":
             continue
         pod_uid = _uid(item)
         pod_entity = entity_by_uid.get(pod_uid)
         spec = _object(item.get("spec", {}), "Pod spec")
         pod_status = _object(item.get("status", {}), "Pod status")
         statuses = _container_statuses(pod_status)
-        containers = spec.get("containers", [])
-        if pod_entity and isinstance(containers, list):
+        containers = _list(spec.get("containers", []), "Pod containers")
+        if pod_entity:
             for raw_container in containers:
                 container = _object(raw_container, "container")
-                name = str(container.get("name", "container"))
+                name = _required_string(container.get("name"), "container name")
                 resources = _object(container.get("resources", {}), "container resources")
                 container_entity_id = f"{pod_entity}:container:{name}"
                 container_status = statuses.get(name, {})
@@ -384,7 +407,7 @@ def import_kubernetes_snapshot(
                         name,
                         pod_entity,
                         {
-                            "image": str(container.get("image", "")),
+                            "image": _optional_string(container.get("image"), "container image"),
                             "resources.requests": _resource_map(resources.get("requests", {})),
                             "resources.limits": _resource_map(resources.get("limits", {})),
                             "restart_count": _integer(
@@ -425,10 +448,10 @@ def import_kubernetes_snapshot(
                     )
                 )
     for item in items:
-        if str(item.get("kind", "")) != "Event":
+        if _kind(item) != "Event":
             continue
         involved = _object(item.get("involvedObject", {}), "Event involvedObject")
-        involved_uid = str(involved.get("uid", ""))
+        involved_uid = _optional_string(involved.get("uid"), "Event involvedObject.uid")
         involved_entity_id = entity_by_uid.get(involved_uid)
         if involved_entity_id is None:
             continue
@@ -440,14 +463,17 @@ def import_kubernetes_snapshot(
             Event(
                 event_id,
                 "kubernetes.event",
-                str(item.get("reason", _name(item))),
+                _optional_string(item.get("reason"), "Event reason") or _name(item),
                 involved_entity_id,
                 event_timestamp,
                 None,
                 "kubernetes.apiserver",
                 None,
                 None,
-                {"message": str(item.get("message", "")), "type": str(item.get("type", ""))},
+                {
+                    "message": _optional_string(item.get("message"), "Event message"),
+                    "type": _optional_string(item.get("type"), "Event type"),
+                },
             )
         )
         lifecycle = lifecycle_by_uid.get(involved_uid)
