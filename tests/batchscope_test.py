@@ -97,6 +97,30 @@ def test_batchscope_derives_overlap_aware_critical_path_and_throughput(tmp_path:
     assert {item.classification for item in analysis.bottlenecks} == {"serialized_stage"}
 
 
+def test_batchscope_lifecycle_does_not_double_count_nested_explicit_stages(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "nested-stages.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("nested", "nested", 0, 100_000_000, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
+        writer.add_events(
+            (
+                _event("outer", "stage", "outer", 0, 100_000_000),
+                _event("inner", "stage", "inner", 20_000_000, 80_000_000),
+            )
+        )
+        writer.add_causal_edge(CausalEdge("outer", "inner", "parent", 1.0, {}))
+
+    analysis = analyze_runpack(runpack)
+
+    assert [(phase.name, phase.duration_seconds) for phase in analysis.lifecycle] == [
+        ("outer", 0.1)
+    ]
+
+
 def test_kubernetes_lifecycle_uses_the_uniquely_correlated_job(tmp_path: Path) -> None:
     runpack = tmp_path / "multiple-jobs.runpack"
     with RunpackWriter(runpack) as writer:

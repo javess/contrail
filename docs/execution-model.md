@@ -86,7 +86,8 @@ endpoints, and measurement name/time. These support the initial questions:
 - a time window scans event interval bounds;
 - dependency traversal starts from indexed edge endpoints;
 - active entities derive from their events and lifecycle intervals;
-- stages use explicit ownership/attributes before heuristics;
+- lifecycle uses top-level explicit stages before heuristics, avoiding additive
+  double-counting of nested stages;
 - critical paths use a causally connected graph subset;
 - comparisons aggregate semantic keys rather than opaque IDs.
 

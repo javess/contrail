@@ -421,10 +421,20 @@ def _kubernetes_workload_events(
 def _lifecycle(
     events: tuple[Event, ...], edges: tuple[CausalEdge, ...], total: float | None
 ) -> tuple[LifecyclePhase, ...]:
+    complete_stage_ids = {
+        event.id for event in events if event.kind == "stage" and _duration_ns(event) > 0
+    }
+    nested_stage_ids = {
+        edge.target_event_id
+        for edge in edges
+        if edge.kind == "parent"
+        and edge.source_event_id in complete_stage_ids
+        and edge.target_event_id in complete_stage_ids
+    }
     explicit = tuple(
         LifecyclePhase(event.name, _duration_ns(event) / 1_000_000_000, "explicit")
         for event in events
-        if event.kind == "stage" and _duration_ns(event) > 0
+        if event.id in complete_stage_ids and event.id not in nested_stage_ids
     )
     if explicit:
         return explicit
