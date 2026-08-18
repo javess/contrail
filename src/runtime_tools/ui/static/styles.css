@@ -113,6 +113,10 @@ select, input { margin-left: 7px; accent-color: var(--accent); background: #1011
 .causal-links li:first-child { border-top: 0; }
 .causal-links span { color: var(--accent); grid-row: 1 / 3; }
 .causal-links small { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+.resource-measurements { list-style: none; margin: 0; padding: 0; }
+.resource-measurements li { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid #292a27; padding: 7px 0; }
+.resource-measurements li:first-child { border-top: 0; }
+.resource-measurements span { color: var(--muted); text-align: right; }
 
 @media (max-width: 900px) {
   .masthead, main { margin-right: 0; }

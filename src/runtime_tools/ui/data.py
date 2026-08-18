@@ -6,13 +6,14 @@ from pathlib import Path
 
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.inspect import inspect_runpack
-from runtime_tools.model import Event, JsonValue
+from runtime_tools.model import Event, JsonValue, Measurement
 from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.storage import RunpackReader
 
 MAX_TIMELINE_EVENTS = 50_000
 MAX_TIMELINE_ENTITIES = 50_000
 MAX_TIMELINE_EDGES = 200_000
+MAX_TIMELINE_MEASUREMENTS = 200_000
 
 
 class TimelineError(ValueError):
@@ -41,8 +42,26 @@ def _event_value(event: Event, execution_start_ns: int) -> dict[str, JsonValue]:
     }
 
 
+def _measurement_value(measurement: Measurement, execution_start_ns: int) -> dict[str, JsonValue]:
+    timestamp_ns = measurement.timestamp_ns
+    return {
+        "name": measurement.name,
+        "value": measurement.value,
+        "unit": measurement.unit,
+        "entity_id": measurement.entity_id,
+        "timestamp_offset_ns": (
+            timestamp_ns - execution_start_ns if timestamp_ns is not None else None
+        ),
+        "attributes": measurement.attributes,
+    }
+
+
 def _run_value(
-    path: Path, event_limit: int, entity_limit: int, edge_limit: int
+    path: Path,
+    event_limit: int,
+    entity_limit: int,
+    edge_limit: int,
+    measurement_limit: int,
 ) -> dict[str, JsonValue]:
     summary = inspect_runpack(path)
     with RunpackReader(path) as reader:
@@ -62,9 +81,16 @@ def _run_value(
             raise TimelineError(
                 f"timeline has {edge_count:,} edges; local UI limit is {edge_limit:,}"
             )
+        measurement_count = counts["measurements"]
+        if measurement_count > measurement_limit:
+            raise TimelineError(
+                f"timeline has {measurement_count:,} measurements; "
+                f"local UI limit is {measurement_limit:,}"
+            )
         entities = reader.entities()
         events = reader.events()
         edges = reader.causal_edges()
+        measurements = reader.measurements()
         clock_inconsistencies = reader.clock_inconsistency_count()
     analysis = analyze_runpack(path)
     return {
@@ -80,6 +106,9 @@ def _run_value(
             for entity in entities
         ],
         "events": [_event_value(event, summary.started_at_ns) for event in events],
+        "measurements": [
+            _measurement_value(measurement, summary.started_at_ns) for measurement in measurements
+        ],
         "edges": [
             {
                 "source_event_id": edge.source_event_id,
@@ -101,12 +130,15 @@ def build_timeline_payload(
     event_limit: int = MAX_TIMELINE_EVENTS,
     entity_limit: int = MAX_TIMELINE_ENTITIES,
     edge_limit: int = MAX_TIMELINE_EDGES,
+    measurement_limit: int = MAX_TIMELINE_MEASUREMENTS,
 ) -> dict[str, JsonValue]:
-    if event_limit <= 0 or entity_limit <= 0 or edge_limit <= 0:
+    if event_limit <= 0 or entity_limit <= 0 or edge_limit <= 0 or measurement_limit <= 0:
         raise TimelineError("timeline limits must be positive")
-    runs: list[JsonValue] = [_run_value(baseline, event_limit, entity_limit, edge_limit)]
+    runs: list[JsonValue] = [
+        _run_value(baseline, event_limit, entity_limit, edge_limit, measurement_limit)
+    ]
     comparison: JsonValue = None
     if candidate is not None:
-        runs.append(_run_value(candidate, event_limit, entity_limit, edge_limit))
+        runs.append(_run_value(candidate, event_limit, entity_limit, edge_limit, measurement_limit))
         comparison = compare_runpacks(baseline, candidate).as_json_value()
     return {"runs": runs, "comparison": comparison}

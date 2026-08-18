@@ -36,6 +36,16 @@ def test_timeline_payload_exposes_normalized_evidence_and_comparison(tmp_path: P
     assert first_event["kind"] == "process.run"
     assert first_event["clock_domain"] == "host.wall"
     assert first_event["uncertainty_ns"] is None
+    measurements = baseline_value["measurements"]
+    assert isinstance(measurements, list)
+    assert {item["name"] for item in measurements if isinstance(item, dict)} == {
+        "process.cpu.system",
+        "process.cpu.user",
+        "process.memory.peak",
+        "process.stderr.bytes",
+        "process.stdout.bytes",
+        "process.wall_time",
+    }
     analysis = baseline_value["analysis"]
     assert isinstance(analysis, dict)
     critical_path = analysis["critical_path"]
@@ -98,6 +108,7 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "event.start_offset_ns != null" in javascript
     assert "Causal links" in javascript
     assert "Clock domain" in javascript
+    assert "Resource measurements" in javascript
 
 
 def test_timeline_rejects_oversized_artifact_before_analysis(tmp_path: Path) -> None:
@@ -130,6 +141,14 @@ def test_timeline_rejects_oversized_edge_sets_before_analysis(tmp_path: Path) ->
 
     with pytest.raises(TimelineError, match="timeline has 2 edges; local UI limit is 1"):
         build_timeline_payload(runpack, edge_limit=1)
+
+
+def test_timeline_rejects_oversized_measurement_sets_before_analysis(tmp_path: Path) -> None:
+    runpack = tmp_path / "run.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="served")
+
+    with pytest.raises(TimelineError, match="timeline has 6 measurements; local UI limit is 1"):
+        build_timeline_payload(runpack, measurement_limit=1)
 
 
 def test_local_ui_reports_invalid_bind_without_low_level_error(tmp_path: Path) -> None:
