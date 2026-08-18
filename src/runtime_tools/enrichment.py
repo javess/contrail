@@ -38,7 +38,15 @@ def enrich_copy[T](
             raise EnrichmentError(f"could not create temporary runpack: {exc}") from exc
         temporary_created = True
         try:
-            with os.fdopen(descriptor, "wb") as destination, source.open("rb") as source_file:
+            try:
+                destination = os.fdopen(descriptor, "wb")
+            except BaseException:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+                raise
+            with destination, source.open("rb") as source_file:
                 shutil.copyfileobj(source_file, destination)
         except OSError as exc:
             raise EnrichmentError(f"could not copy runpack for enrichment: {exc}") from exc

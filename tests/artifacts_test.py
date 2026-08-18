@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 
@@ -140,3 +141,31 @@ def test_enrichment_does_not_follow_a_colliding_temporary_symlink(
     assert victim.read_text(encoding="utf-8") == "preserve me"
     assert temporary.is_symlink()
     assert not output.exists()
+
+
+def test_enrichment_closes_descriptor_when_stream_creation_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.runpack"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+    real_close = os.close
+    closed: list[int] = []
+
+    def fail_fdopen(descriptor: int, mode: str) -> None:
+        raise OSError("simulated stream failure")
+
+    def observe_close(descriptor: int) -> None:
+        closed.append(descriptor)
+        real_close(descriptor)
+
+    monkeypatch.setattr("runtime_tools.enrichment.os.fdopen", fail_fdopen)
+    monkeypatch.setattr("runtime_tools.enrichment.os.close", observe_close)
+
+    with pytest.raises(EnrichmentError, match="could not copy runpack for enrichment"):
+        enrich_copy(source, output, lambda writer: None)
+
+    assert len(closed) == 1
+    assert not output.exists()
+    assert not list(tmp_path.glob(".output.runpack.tmp-*"))
