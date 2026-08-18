@@ -383,6 +383,28 @@ def test_reader_rejects_oversized_normalized_json(tmp_path: Path) -> None:
         inspect_runpack(output)
 
 
+def test_reader_rejects_oversized_execution_command_json(tmp_path: Path) -> None:
+    output = tmp_path / "oversized-command.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="oversized-command")
+    oversized = json.dumps(["x" * MAX_RUNPACK_JSON_BYTES])
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE executions SET command_json = ?", (oversized,))
+
+    with pytest.raises(RunpackError, match="runpack JSON exceeds"):
+        inspect_runpack(output)
+
+
+def test_reader_normalizes_deeply_nested_execution_command_json(tmp_path: Path) -> None:
+    output = tmp_path / "nested-command.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="nested-command")
+    nested = "[" * 10_000 + '"command"' + "]" * 10_000
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE executions SET command_json = ?", (nested,))
+
+    with pytest.raises(RunpackError, match="execution command is invalid JSON"):
+        inspect_runpack(output)
+
+
 def test_reader_rejects_reversed_execution_intervals(tmp_path: Path) -> None:
     output = tmp_path / "reversed.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="reversed")

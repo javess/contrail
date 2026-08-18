@@ -729,9 +729,13 @@ class RunpackReader:
         if len(rows) != 1:
             raise RunpackError(f"expected exactly one execution, found {len(rows)}")
         row = rows[0]
+        raw_command = row["command_json"]
+        if not isinstance(raw_command, str):
+            raise RunpackError("execution command is invalid JSON")
+        _validate_json_size(raw_command)
         try:
-            command = json.loads(row["command_json"])
-        except (json.JSONDecodeError, TypeError) as exc:
+            command = json.loads(raw_command)
+        except (json.JSONDecodeError, TypeError, RecursionError) as exc:
             raise RunpackError("execution command is invalid JSON") from exc
         if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
             raise RunpackError("execution command is invalid")
