@@ -207,6 +207,43 @@ def test_reader_aggregates_peer_dependencies_from_client_rows(tmp_path: Path) ->
         }
 
 
+def test_compare_runpacks_keeps_edges_between_same_named_entity_instances(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, add_edge in ((baseline, False), (candidate, True)):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(path.stem, path.stem, 0, 10, (), str(tmp_path), 0, None, {})
+            )
+            writer.add_entities(
+                (
+                    Entity("api-a", "service", "api", None, {"service.instance.id": "a"}),
+                    Entity("api-b", "service", "api", None, {"service.instance.id": "b"}),
+                )
+            )
+            writer.add_events(
+                (
+                    Event(
+                        "request", "client.request", "call", "api-a", 1, 9, "test", None, None, {}
+                    ),
+                    Event(
+                        "handler", "server.request", "handle", "api-b", 2, 8, "test", None, None, {}
+                    ),
+                )
+            )
+            if add_edge:
+                writer.add_causal_edge(CausalEdge("request", "handler", "parent", 1.0, {}))
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert [
+        (change.source_name, change.target_name, change.baseline, change.candidate)
+        for change in diff.edge_count_changes
+    ] == [("api", "api", 0, 1)]
+
+
 def test_reader_keeps_observed_concurrency_within_clock_domains(tmp_path: Path) -> None:
     runpack = tmp_path / "concurrency.runpack"
     with RunpackWriter(runpack) as writer:

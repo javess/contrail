@@ -1133,6 +1133,7 @@ class RunpackReader:
             LEFT JOIN entities AS target_entity ON target_entity.id = target_event.entity_id
             WHERE source_event.kind != 'log.record'
               AND target_event.kind != 'log.record'
+              AND source_event.entity_id IS NOT target_event.entity_id
             GROUP BY source_kind, source_name, target_kind, target_name, edge_kind
             """
         ).fetchall()

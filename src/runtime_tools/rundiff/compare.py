@@ -413,7 +413,7 @@ def _duration_changes(
 
 
 def _all_edge_counts(reader: RunpackReader) -> dict[tuple[str, str, str, str, str], int]:
-    counts = {key: count for key, count in reader.edge_counts().items() if key[:2] != key[2:4]}
+    counts = reader.edge_counts()
     for key, count in reader.peer_service_edge_counts().items():
         counts[key] = counts.get(key, 0) + count
     return counts
