@@ -358,11 +358,17 @@ def _execution_interval(started_at_ns: object, finished_at_ns: object) -> tuple[
     return started, finished
 
 
-def _entity_values(entity: Entity) -> tuple[object, ...]:
+def _entity_identity(entity: Entity) -> tuple[str, str | None]:
     entity_id = _text_value(entity.id, "entity id")
     parent_id = _text_value(entity.parent_entity_id, "parent entity id", optional=True)
+    assert entity_id is not None
     if entity_id == parent_id:
         raise RunpackError("entity cannot be its own parent")
+    return entity_id, parent_id
+
+
+def _entity_values(entity: Entity) -> tuple[object, ...]:
+    entity_id, parent_id = _entity_identity(entity)
     return (
         entity_id,
         _text_value(entity.kind, "entity kind"),
@@ -373,12 +379,9 @@ def _entity_values(entity: Entity) -> tuple[object, ...]:
 
 
 def _validate_entity_hierarchy(entities: tuple[Entity, ...]) -> None:
-    if any(entity.id == entity.parent_entity_id for entity in entities):
-        raise RunpackError("entity cannot be its own parent")
+    identities = tuple(_entity_identity(entity) for entity in entities)
     parent_by_child = {
-        entity.id: entity.parent_entity_id
-        for entity in entities
-        if entity.parent_entity_id is not None
+        entity_id: parent_id for entity_id, parent_id in identities if parent_id is not None
     }
     complete: set[str] = set()
     for entity_id in parent_by_child:

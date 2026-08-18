@@ -1228,6 +1228,16 @@ def test_bulk_entity_write_rejects_parent_cycles_before_inserting(tmp_path: Path
         assert reader.entities() == ()
 
 
+def test_bulk_entity_write_normalizes_unhashable_ids(tmp_path: Path) -> None:
+    output = tmp_path / "invalid-entity-id.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="entity id must be a non-empty string"):
+            writer.add_entities((Entity(cast(str, []), "worker", "worker", None, {}),))
+
+    with RunpackReader(output) as reader:
+        assert reader.entities() == ()
+
+
 def test_reader_rejects_cyclic_entity_parent_relationships(tmp_path: Path) -> None:
     output = tmp_path / "entity-cycle.runpack"
     with RunpackWriter(output) as writer:
