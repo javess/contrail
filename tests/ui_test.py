@@ -9,10 +9,11 @@ from pathlib import Path
 
 import pytest
 
+import runtime_tools.ui.server as server_module
 from runtime_tools import record_process
 from runtime_tools.model import Entity, Event, Execution
 from runtime_tools.storage import RunpackWriter
-from runtime_tools.ui import TimelineError, build_timeline_payload, create_server
+from runtime_tools.ui import TimelineError, build_timeline_payload, create_server, serve_runpacks
 from runtime_tools.ui.server import _log_line
 
 
@@ -116,6 +117,25 @@ def test_local_ui_escapes_terminal_controls_in_request_logs() -> None:
 
     assert "\x1b" not in line
     assert r"GET /\x1b[31m" in line
+
+
+def test_local_ui_closes_server_when_browser_launch_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runpack = tmp_path / "run.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="served")
+    server = create_server(runpack, None, host="127.0.0.1", port=0)
+
+    def fail_browser_launch(url: str) -> None:
+        raise RuntimeError("simulated browser failure")
+
+    monkeypatch.setattr(server_module, "create_server", lambda *args, **kwargs: server)
+    monkeypatch.setattr("runtime_tools.ui.server.webbrowser.open", fail_browser_launch)
+
+    with pytest.raises(RuntimeError, match="simulated browser failure"):
+        serve_runpacks(runpack, None)
+
+    assert server.fileno() == -1
 
 
 def test_packaged_ui_renders_batchscope_analysis() -> None:

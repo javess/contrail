@@ -97,9 +97,9 @@ def serve_runpacks(
     actual_host = raw_host.decode() if isinstance(raw_host, bytes) else raw_host
     url = f"http://{actual_host}:{actual_port}"
     print(f"runtime UI: {url}", file=sys.stderr)
-    if open_browser:
-        webbrowser.open(url)
     try:
+        if open_browser:
+            webbrowser.open(url)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
