@@ -29,7 +29,18 @@ def _write(record: dict[str, JsonValue]) -> None:
     target = os.environ.get(_ANNOTATIONS_ENV)
     if target is None:
         return
-    payload = (json.dumps(record, allow_nan=False, separators=(",", ":")) + "\n").encode()
+    try:
+        payload = (
+            json.dumps(
+                record,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("annotation strings must be valid UTF-8") from exc
     descriptor = os.open(Path(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)

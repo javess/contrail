@@ -317,6 +317,23 @@ def test_annotation_writer_retries_interrupted_writes(
     assert record["attributes"] == {"detail": "complete"}
 
 
+def test_annotation_writer_rejects_invalid_unicode_without_poisoning_the_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    monkeypatch.setenv("CONTRAIL_ANNOTATIONS_FILE", str(annotations))
+    runtime.event("valid", detail="preserved")
+    valid_content = annotations.read_bytes()
+
+    with pytest.raises(ValueError, match="annotation strings must be valid UTF-8"):
+        runtime.event("invalid", detail="bad-\ud800")
+
+    assert annotations.read_bytes() == valid_content
+    events, edges = load_annotations(annotations, entity_id="process")
+    assert [event.name for event in events] == ["valid"]
+    assert edges == ()
+
+
 def test_annotation_writer_keeps_concurrent_short_writes_as_complete_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
