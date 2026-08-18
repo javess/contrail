@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
 
 from runtime_tools.artifacts import publish_without_overwrite
-from runtime_tools.enrichment import enrich_copy
+from runtime_tools.enrichment import EnrichmentError, enrich_copy
 from runtime_tools.model import Execution
 from runtime_tools.storage import RunpackError, RunpackWriter
 
@@ -56,4 +57,29 @@ def test_enrichment_rejects_a_runpack_without_an_execution(tmp_path: Path) -> No
     with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
         enrich_copy(source, output, lambda writer: None)
 
+    assert not output.exists()
+
+
+def test_enrichment_does_not_follow_a_colliding_temporary_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.runpack"
+    output = tmp_path / "output.runpack"
+    victim = tmp_path / "victim.txt"
+    victim.write_text("preserve me", encoding="utf-8")
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+
+    class FixedUuid:
+        hex = "fixed"
+
+    monkeypatch.setattr(uuid, "uuid4", FixedUuid)
+    temporary = tmp_path / ".output.runpack.tmp-fixed"
+    temporary.symlink_to(victim)
+
+    with pytest.raises(EnrichmentError, match="temporary runpack already exists"):
+        enrich_copy(source, output, lambda writer: None)
+
+    assert victim.read_text(encoding="utf-8") == "preserve me"
+    assert temporary.is_symlink()
     assert not output.exists()

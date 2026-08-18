@@ -249,6 +249,56 @@ def test_runtime_cli_reports_corrupt_runpack_without_traceback(tmp_path: Path) -
     assert "Traceback" not in inspected.stderr
 
 
+def test_runtime_cli_reports_enrichment_output_collisions_without_traceback(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.runpack"
+    snapshot = tmp_path / "snapshot.json"
+    output = tmp_path / "existing.runpack"
+    recorded = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "record",
+            "--output",
+            str(source),
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    snapshot.write_text('{"items": []}', encoding="utf-8")
+    output.write_text("preserve me", encoding="utf-8")
+
+    enriched = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "enrich-kubernetes",
+            str(source),
+            str(snapshot),
+            "--output",
+            str(output),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert recorded.returncode == 0
+    assert enriched.returncode == 2
+    assert enriched.stdout == ""
+    assert enriched.stderr == f"runtime: refusing to overwrite existing runpack: {output}\n"
+    assert "Traceback" not in enriched.stderr
+    assert output.read_text(encoding="utf-8") == "preserve me"
+
+
 def test_all_cli_entrypoints_report_the_package_version() -> None:
     modules = (
         "runtime_tools.cli",

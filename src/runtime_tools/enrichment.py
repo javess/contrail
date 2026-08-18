@@ -27,9 +27,21 @@ def enrich_copy[T](
     with RunpackReader(source) as reader:
         reader.execution()
     temporary = output.with_name(f".{output.name}.tmp-{uuid.uuid4().hex}")
+    temporary_created = False
     try:
-        shutil.copyfile(source, temporary)
-        shutil.copymode(source, temporary)
+        try:
+            destination = temporary.open("xb")
+        except FileExistsError as exc:
+            raise EnrichmentError(f"temporary runpack already exists: {temporary}") from exc
+        except OSError as exc:
+            raise EnrichmentError(f"could not create temporary runpack: {exc}") from exc
+        temporary_created = True
+        try:
+            with destination, source.open("rb") as source_file:
+                shutil.copyfileobj(source_file, destination)
+            shutil.copymode(source, temporary)
+        except OSError as exc:
+            raise EnrichmentError(f"could not copy runpack for enrichment: {exc}") from exc
         with RunpackWriter.open_existing(temporary) as writer:
             result = operation(writer)
         try:
@@ -40,5 +52,6 @@ def enrich_copy[T](
             raise EnrichmentError(f"could not publish runpack {output}: {exc}") from exc
         return result
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        if temporary_created:
+            temporary.unlink(missing_ok=True)
         raise
