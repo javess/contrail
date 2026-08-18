@@ -51,6 +51,28 @@ class OperationCountChange:
 
 
 @dataclass(frozen=True, slots=True)
+class OperationConcurrencyChange:
+    entity_kind: str
+    entity_name: str
+    operation_kind: str
+    operation_name: str
+    baseline: int
+    candidate: int
+    percent: float | None
+
+    def as_json_value(self) -> dict[str, JsonValue]:
+        return {
+            "entity_kind": self.entity_kind,
+            "entity_name": self.entity_name,
+            "operation_kind": self.operation_kind,
+            "operation_name": self.operation_name,
+            "baseline": self.baseline,
+            "candidate": self.candidate,
+            "percent": self.percent,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class OperationDurationChange:
     entity_kind: str
     entity_name: str
@@ -147,6 +169,7 @@ class ExecutionDiff:
     candidate_critical_path_certainty: str | None
     peak_memory: ValueChange
     operation_count_changes: tuple[OperationCountChange, ...]
+    operation_concurrency_changes: tuple[OperationConcurrencyChange, ...]
     operation_duration_changes: tuple[OperationDurationChange, ...]
     edge_count_changes: tuple[EdgeCountChange, ...]
     environment_changes: tuple[EnvironmentChange, ...]
@@ -171,6 +194,9 @@ class ExecutionDiff:
             "peak_memory": self.peak_memory.as_json_value(),
             "operation_count_changes": [
                 change.as_json_value() for change in self.operation_count_changes
+            ],
+            "operation_concurrency_changes": [
+                change.as_json_value() for change in self.operation_concurrency_changes
             ],
             "operation_duration_changes": [
                 change.as_json_value() for change in self.operation_duration_changes
@@ -236,6 +262,35 @@ def _operation_changes(
         if before == after:
             continue
         changes.append(OperationCountChange(*key, before, after, _percent(before, after)))
+    changes.sort(
+        key=lambda change: (
+            -abs(change.candidate - change.baseline),
+            change.entity_kind,
+            change.entity_name,
+            change.operation_kind,
+            change.operation_name,
+        )
+    )
+    return tuple(changes)
+
+
+def _concurrency_changes(
+    baseline: dict[tuple[str, str, str, str], int],
+    candidate: dict[tuple[str, str, str, str], int],
+    baseline_counts: dict[tuple[str, str, str, str], int],
+    candidate_counts: dict[tuple[str, str, str, str], int],
+) -> tuple[OperationConcurrencyChange, ...]:
+    changes = []
+    for key in baseline.keys() | candidate.keys():
+        if (key not in baseline and baseline_counts.get(key, 0) > 0) or (
+            key not in candidate and candidate_counts.get(key, 0) > 0
+        ):
+            continue
+        before = baseline.get(key, 0)
+        after = candidate.get(key, 0)
+        if before == after:
+            continue
+        changes.append(OperationConcurrencyChange(*key, before, after, _percent(before, after)))
     changes.sort(
         key=lambda change: (
             -abs(change.candidate - change.baseline),
@@ -335,11 +390,13 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
     with RunpackReader(baseline_path) as baseline_reader:
         baseline_environment = _selected_environment(baseline_reader.execution().metadata)
         baseline_operations = baseline_reader.operation_counts()
+        baseline_concurrency = baseline_reader.operation_max_concurrency()
         baseline_durations = baseline_reader.operation_duration_totals()
         baseline_edges = _all_edge_counts(baseline_reader)
     with RunpackReader(candidate_path) as candidate_reader:
         candidate_environment = _selected_environment(candidate_reader.execution().metadata)
         candidate_operations = candidate_reader.operation_counts()
+        candidate_concurrency = candidate_reader.operation_max_concurrency()
         candidate_durations = candidate_reader.operation_duration_totals()
         candidate_edges = _all_edge_counts(candidate_reader)
 
@@ -395,6 +452,12 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
             baseline_summary.peak_memory_bytes, candidate_summary.peak_memory_bytes
         ),
         operation_count_changes=_operation_changes(baseline_operations, candidate_operations),
+        operation_concurrency_changes=_concurrency_changes(
+            baseline_concurrency,
+            candidate_concurrency,
+            baseline_operations,
+            candidate_operations,
+        ),
         operation_duration_changes=_duration_changes(
             baseline_durations,
             candidate_durations,

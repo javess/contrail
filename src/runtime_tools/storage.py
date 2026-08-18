@@ -832,6 +832,74 @@ class RunpackReader:
             for row in rows
         }
 
+    def operation_max_concurrency(self) -> dict[tuple[str, str, str, str], int]:
+        rows = self._execute(
+            """
+            WITH normalized AS (
+                SELECT
+                    COALESCE(entity.kind, 'unowned') AS entity_kind,
+                    COALESCE(entity.name, 'unowned') AS entity_name,
+                    event.kind AS event_kind,
+                    event.name AS event_name,
+                    CASE
+                        WHEN event.clock_domain IS NULL
+                            THEN 'entity:' || COALESCE(event.entity_id, 'unowned')
+                        ELSE 'clock:' || event.clock_domain
+                    END AS concurrency_domain,
+                    event.started_at_ns,
+                    event.finished_at_ns
+                FROM events AS event
+                LEFT JOIN entities AS entity ON entity.id = event.entity_id
+                WHERE event.kind != 'log.record'
+            ),
+            eligible AS (
+                SELECT entity_kind, entity_name, event_kind, event_name
+                FROM normalized
+                GROUP BY entity_kind, entity_name, event_kind, event_name
+                HAVING count(*) = count(started_at_ns)
+                   AND count(*) = count(finished_at_ns)
+            ),
+            boundaries AS (
+                SELECT normalized.entity_kind, normalized.entity_name,
+                       normalized.event_kind, normalized.event_name,
+                       normalized.concurrency_domain,
+                       normalized.started_at_ns AS timestamp_ns, 1 AS delta
+                FROM normalized
+                JOIN eligible USING (entity_kind, entity_name, event_kind, event_name)
+                WHERE normalized.finished_at_ns > normalized.started_at_ns
+                UNION ALL
+                SELECT normalized.entity_kind, normalized.entity_name,
+                       normalized.event_kind, normalized.event_name,
+                       normalized.concurrency_domain,
+                       normalized.finished_at_ns AS timestamp_ns, -1 AS delta
+                FROM normalized
+                JOIN eligible USING (entity_kind, entity_name, event_kind, event_name)
+                WHERE normalized.finished_at_ns > normalized.started_at_ns
+            ),
+            active AS (
+                SELECT entity_kind, entity_name, event_kind, event_name,
+                       concurrency_domain,
+                       sum(delta) OVER (
+                           PARTITION BY entity_kind, entity_name, event_kind, event_name,
+                                        concurrency_domain
+                           ORDER BY timestamp_ns, delta
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) AS active_count
+                FROM boundaries
+            )
+            SELECT entity_kind, entity_name, event_kind, event_name,
+                   max(active_count) AS max_concurrency
+            FROM active
+            GROUP BY entity_kind, entity_name, event_kind, event_name
+            """
+        ).fetchall()
+        return {
+            (row["entity_kind"], row["entity_name"], row["event_kind"], row["event_name"]): int(
+                row["max_concurrency"]
+            )
+            for row in rows
+        }
+
     def edge_counts(self) -> dict[tuple[str, str, str, str, str], int]:
         rows = self._execute(
             """

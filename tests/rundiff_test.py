@@ -150,6 +150,13 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
         ("metadata", "metadata.lookup", 0.0, 0.001),
     ]
     assert [
+        (change.entity_name, change.operation_name, change.baseline, change.candidate)
+        for change in diff.operation_concurrency_changes
+    ] == [
+        ("database", "SELECT items", 1, 3),
+        ("metadata", "metadata.lookup", 0, 1),
+    ]
+    assert [
         (change.source_name, change.target_name, change.change_kind)
         for change in diff.edge_count_changes
     ] == [
@@ -186,6 +193,26 @@ def test_reader_aggregates_peer_dependencies_from_client_rows(tmp_path: Path) ->
         }
 
 
+def test_reader_keeps_observed_concurrency_within_clock_domains(tmp_path: Path) -> None:
+    runpack = tmp_path / "concurrency.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("concurrency", "concurrency", 0, 10, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "service", "worker", None, {}))
+        writer.add_events(
+            (
+                Event("a", "stage", "work", "worker", 1, 9, "clock-a", None, None, {}),
+                Event("b", "stage", "work", "worker", 2, 8, "clock-b", None, None, {}),
+            )
+        )
+
+    with RunpackReader(runpack) as reader:
+        concurrency = reader.operation_max_concurrency()
+
+    assert concurrency == {("service", "worker", "stage", "work"): 1}
+
+
 def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"
@@ -213,6 +240,8 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert "Critical path (observed → observed)\n  10.0ms → 20.0ms (+100.0%)" in text_report
     assert "database :: SELECT items [client.request]" in text_report
     assert "Aggregate operation duration changes" in text_report
+    assert "Observed max concurrency changes" in text_report
+    assert "database :: SELECT items [client.request]\n     1 → 3 (+200.0%)" in text_report
     assert "gateway :: GET /items [server.request]" in text_report
     assert "gateway → metadata [parent]: 0 → 1" in text_report
     assert command.returncode == 0
@@ -223,6 +252,7 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert payload["critical_path"]["percent"] == 100.0
     assert payload["operation_count_changes"][0]["candidate"] == 3
     assert payload["operation_duration_changes"][0]["candidate_seconds"] == 0.02
+    assert payload["operation_concurrency_changes"][0]["candidate"] == 3
 
 
 def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path: Path) -> None:
@@ -265,7 +295,7 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
     assert (tmp_path / "custom-baseline.runpack").is_file()
     assert compared.returncode == 0
     assert "Outcome\n  equivalent" in compared.stdout
-    assert "No structural, duration, or operation-count changes." in compared.stdout
+    assert "No structural, concurrency, duration, or operation-count changes." in compared.stdout
 
 
 def test_compare_runpacks_treats_changed_stderr_as_different_behavior(tmp_path: Path) -> None:
@@ -445,6 +475,7 @@ def test_compare_runpacks_does_not_treat_untimed_operations_as_zero_duration(
     diff = compare_runpacks(baseline, candidate)
 
     assert diff.operation_count_changes == ()
+    assert diff.operation_concurrency_changes == ()
     assert diff.operation_duration_changes == ()
 
 
