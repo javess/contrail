@@ -147,7 +147,7 @@ def test_batchscope_scopes_compute_boundaries_to_the_progress_parent(tmp_path: P
 
     assert analysis.throughput is not None
     assert analysis.throughput.compute_finished_at_ns == 50_000_000
-    assert analysis.throughput.post_compute_seconds == 0.05
+    assert analysis.throughput.post_compute_seconds == 0.01
 
 
 def test_batchscope_lifecycle_does_not_double_count_nested_explicit_stages(

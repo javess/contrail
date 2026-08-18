@@ -330,12 +330,16 @@ def _throughput(
     rate = _sample_rate(samples)
     remaining = max(0.0, latest[2] - latest[1])
     series_event_ids: set[str] | None = None
+    series_finished_at_ns = execution_finished_at_ns
     if series[0] == "parent":
         children_by_parent: dict[str, list[str]] = {}
         for edge in edges:
             if edge.kind == "parent":
                 children_by_parent.setdefault(edge.source_event_id, []).append(edge.target_event_id)
         series_event_ids = {series[1]}
+        series_parent = next((event for event in events if event.id == series[1]), None)
+        if series_parent is not None and series_parent.finished_at_ns is not None:
+            series_finished_at_ns = series_parent.finished_at_ns
         pending = [series[1]]
         while pending:
             parent_id = pending.pop()
@@ -366,9 +370,9 @@ def _throughput(
         if before_compute:
             sample = before_compute[-1]
             remaining_at_compute = max(0.0, sample[2] - sample[1])
-        if execution_finished_at_ns is not None:
+        if series_finished_at_ns is not None:
             post_compute_seconds = max(
-                0.0, (execution_finished_at_ns - compute_finished_at_ns) / 1_000_000_000
+                0.0, (series_finished_at_ns - compute_finished_at_ns) / 1_000_000_000
             )
         after_compute = [sample for sample in samples if sample[0] >= compute_finished_at_ns]
         post_compute_rate = _sample_rate(after_compute)
