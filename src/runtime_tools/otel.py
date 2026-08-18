@@ -95,7 +95,10 @@ def _attributes(raw: object) -> dict[str, JsonValue]:
     for item in raw:
         if not isinstance(item, dict) or not isinstance(item.get("key"), str):
             raise OtelImportError("OTLP attribute must contain a string key")
-        result[item["key"]] = _typed_value(item.get("value"))
+        key = item["key"]
+        if key in result:
+            raise OtelImportError(f"duplicate OTLP attribute key: {key}")
+        result[key] = _typed_value(item.get("value"))
     return result
 
 
