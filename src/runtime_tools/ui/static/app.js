@@ -1,9 +1,10 @@
 const state = { data: null, runIndex: 0, zoom: 1, entity: "", kind: "" };
 
-const fmtDuration = seconds => seconds == null ? "unknown" : seconds < 1 ? `${(seconds * 1000).toFixed(1)} ms` : `${seconds.toFixed(3)} s`;
-const fmtBytes = bytes => bytes == null ? "unknown" : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1048576).toFixed(1)} MiB`;
-const fmtNumber = value => value == null ? "unknown" : new Intl.NumberFormat().format(value);
-const fmtRate = value => value == null ? "unknown" : `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)}/s`;
+const finiteNumber = value => typeof value === "number" && Number.isFinite(value);
+const fmtDuration = seconds => !finiteNumber(seconds) ? "unknown" : seconds < 1 ? `${(seconds * 1000).toFixed(1)} ms` : `${seconds.toFixed(3)} s`;
+const fmtBytes = bytes => !finiteNumber(bytes) ? "unknown" : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1048576).toFixed(1)} MiB`;
+const fmtNumber = value => !finiteNumber(value) ? "unknown" : new Intl.NumberFormat().format(value);
+const fmtRate = value => !finiteNumber(value) ? "unknown" : `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)}/s`;
 const fmtEquivalence = value => value == null ? "unknown" : value ? "equivalent" : "different";
 const nsToSeconds = value => value == null ? null : value / 1e9;
 const escapeDisplayControls = value => Array.from(String(value), char => {
@@ -28,9 +29,10 @@ function renderSwitcher() {
 function renderSummary() {
   const run = currentRun();
   const critical = run.analysis.critical_path;
-  const cpuTime = run.summary.cpu_user_seconds == null || run.summary.cpu_system_seconds == null
+  const rawCpuTime = run.summary.cpu_user_seconds == null || run.summary.cpu_system_seconds == null
     ? null
     : run.summary.cpu_user_seconds + run.summary.cpu_system_seconds;
+  const cpuTime = finiteNumber(rawCpuTime) ? rawCpuTime : null;
   const values = [
     ["Outcome", run.summary.exit_code == null ? "No exit evidence" : `Exit ${run.summary.exit_code}`],
     ["Wall time", fmtDuration(run.summary.wall_time_seconds)],
