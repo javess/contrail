@@ -18,6 +18,7 @@ from runtime_tools.proofline import (
 from runtime_tools.proofline.experiments import default_output_directory
 from runtime_tools.proofline.report import render_verification
 from runtime_tools.storage import RunpackError
+from runtime_tools.terminal import terminal_text
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
             experiment = None
             report = verify_contracts(args.contract, args.baseline, args.candidate)
     except (ContractError, ExperimentError, RunpackError) as exc:
-        print(f"proofline: {exc}", file=sys.stderr)
+        print(f"proofline: {terminal_text(exc)}", file=sys.stderr)
         return 2
     if experiment is not None and args.format == "json":
         print(json.dumps(experiment.as_json_value(), indent=2, sort_keys=True))

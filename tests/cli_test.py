@@ -249,6 +249,28 @@ def test_runtime_cli_reports_corrupt_runpack_without_traceback(tmp_path: Path) -
     assert "Traceback" not in inspected.stderr
 
 
+def test_runtime_cli_escapes_terminal_controls_in_errors(tmp_path: Path) -> None:
+    runpack = tmp_path / "bad-\x1b[31m.runpack"
+    runpack.write_bytes(b"not sqlite")
+
+    inspected = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "inspect",
+            str(runpack),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert inspected.returncode == 2
+    assert "\x1b" not in inspected.stderr
+    assert r"bad-\x1b[31m.runpack" in inspected.stderr
+
+
 def test_runtime_cli_reports_enrichment_output_collisions_without_traceback(
     tmp_path: Path,
 ) -> None:

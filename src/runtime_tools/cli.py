@@ -17,6 +17,7 @@ from runtime_tools.otel import OtelImportError, import_otlp_json, import_otlp_lo
 from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
 from runtime_tools.query import QueryError, query_runpack, render_query
 from runtime_tools.storage import RunpackError
+from runtime_tools.terminal import terminal_text
 from runtime_tools.ui import TimelineError, serve_runpacks
 
 
@@ -202,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         RunpackError,
         TimelineError,
     ) as exc:
-        print(f"runtime: {exc}", file=sys.stderr)
+        print(f"runtime: {terminal_text(exc)}", file=sys.stderr)
         return 2
 
 

@@ -13,6 +13,7 @@ from runtime_tools.capture import CaptureError, record_process
 from runtime_tools.rundiff.compare import compare_runpacks
 from runtime_tools.rundiff.report import render_diff
 from runtime_tools.storage import RunpackError
+from runtime_tools.terminal import terminal_text
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -76,7 +77,7 @@ def _record(argv: list[str]) -> int:
             capture_output_limit=(args.output_limit_bytes if args.include_output else None),
         )
     except (CaptureError, RunpackError) as exc:
-        print(f"rundiff: {exc}", file=sys.stderr)
+        print(f"rundiff: {terminal_text(exc)}", file=sys.stderr)
         return 2
     print(f"recorded {output}", file=sys.stderr)
     return exit_code
@@ -90,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         diff = compare_runpacks(_resolve_runpack(args.baseline), _resolve_runpack(args.candidate))
     except (CaptureError, RunpackError) as exc:
-        print(f"rundiff: {exc}", file=sys.stderr)
+        print(f"rundiff: {terminal_text(exc)}", file=sys.stderr)
         return 2
     print(render_diff(diff, args.format))
     return 0

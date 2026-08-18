@@ -10,6 +10,7 @@ from runtime_tools import __version__
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.batchscope.report import render_analysis
 from runtime_tools.storage import RunpackError
+from runtime_tools.terminal import terminal_text
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         analysis = analyze_runpack(args.runpack)
     except RunpackError as exc:
-        print(f"batchscope: {exc}", file=sys.stderr)
+        print(f"batchscope: {terminal_text(exc)}", file=sys.stderr)
         return 2
     print(render_analysis(analysis, args.format))
     return 0
