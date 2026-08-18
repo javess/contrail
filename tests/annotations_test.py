@@ -10,6 +10,7 @@ import pytest
 
 from runtime_tools import record_process, runtime
 from runtime_tools.annotations import AnnotationError, load_annotations
+from runtime_tools.inspect import inspect_runpack, render_summary
 from runtime_tools.storage import RunpackReader
 
 
@@ -79,6 +80,33 @@ with runtime.stage("before-crash"):
     assert event.started_at_ns is not None
     assert event.finished_at_ns is None
     assert not tuple(tmp_path.glob("*.annotations-*"))
+
+
+def test_record_process_preserves_core_capture_when_annotations_are_malformed(
+    tmp_path: Path,
+) -> None:
+    workload = tmp_path / "malformed.py"
+    workload.write_text(
+        """
+import os
+from pathlib import Path
+
+Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_text("{")
+print("result")
+""".strip(),
+        encoding="utf-8",
+    )
+    output = tmp_path / "malformed.runpack"
+
+    exit_code = record_process((sys.executable, str(workload)), output, name="malformed")
+
+    summary = inspect_runpack(output)
+    assert exit_code == 0
+    assert summary.exit_code == 0
+    assert summary.annotation_error == "invalid annotation JSON on line 1"
+    assert "annotations: ignored (invalid annotation JSON on line 1)" in render_summary(
+        summary, "text"
+    )
 
 
 def test_annotation_writer_completes_short_writes(

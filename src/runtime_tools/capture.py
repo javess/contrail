@@ -250,7 +250,13 @@ def record_process(
                     annotation_path, entity_id=entity_id
                 )
             except AnnotationError as exc:
-                raise CaptureError(str(exc)) from exc
+                annotation_events, annotation_edges = (), ()
+                capture_metadata = metadata.get("capture")
+                assert isinstance(capture_metadata, dict)
+                metadata = {
+                    **metadata,
+                    "capture": {**capture_metadata, "annotation_error": str(exc)},
+                }
             writer.add_events(annotation_events)
             writer.add_causal_edges(annotation_edges)
             measurements = (

@@ -33,6 +33,7 @@ class ExecutionSummary:
     stdout_sha256: str | None
     stderr_bytes: int | None
     stderr_sha256: str | None
+    annotation_error: str | None
     record_counts: dict[str, int]
 
     def as_json_value(self) -> dict[str, JsonValue]:
@@ -82,6 +83,7 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
             stdout_sha256=_as_str(_nested_output(execution.metadata, "stdout", "sha256")),
             stderr_bytes=_as_int(_nested_output(execution.metadata, "stderr", "bytes")),
             stderr_sha256=_as_str(_nested_output(execution.metadata, "stderr", "sha256")),
+            annotation_error=_annotation_error(execution.metadata),
             record_counts=reader.counts(),
         )
 
@@ -178,6 +180,14 @@ def _nonnegative(value: float | None) -> float | None:
     return value if value is not None and value >= 0 else None
 
 
+def _annotation_error(metadata: dict[str, JsonValue]) -> str | None:
+    capture = metadata.get("capture")
+    if not isinstance(capture, dict):
+        return None
+    value = capture.get("annotation_error")
+    return value if isinstance(value, str) and value else None
+
+
 def render_summary(summary: ExecutionSummary, output_format: str) -> str:
     if output_format == "json":
         return json.dumps(summary.as_json_value(), indent=2, sort_keys=True)
@@ -201,6 +211,7 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
         f"memory:   {peak} peak",
         f"stdout:   {_format_output(summary.stdout_bytes, summary.stdout_sha256)}",
         f"stderr:   {_format_output(summary.stderr_bytes, summary.stderr_sha256)}",
+        f"annotations: ignored ({summary.annotation_error})" if summary.annotation_error else None,
         (
             "records:  "
             f"{summary.record_counts['entities']} entities, "
@@ -210,7 +221,7 @@ def render_summary(summary: ExecutionSummary, output_format: str) -> str:
             f"{summary.record_counts['attachments']} attachments"
         ),
     ]
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line is not None)
 
 
 def _format_outcome(summary: ExecutionSummary) -> str:
