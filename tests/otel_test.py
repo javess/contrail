@@ -365,6 +365,39 @@ def test_otlp_json_import_rejects_non_string_string_attributes(tmp_path: Path) -
     assert not output.exists()
 
 
+def test_otlp_json_import_rejects_non_string_span_identifiers(tmp_path: Path) -> None:
+    source = tmp_path / "malformed-id.json"
+    output = tmp_path / "malformed-id.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": 123,
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OtelImportError, match="span traceId must be a non-empty string"):
+        import_otlp_json(source, output, name="malformed")
+
+    assert not output.exists()
+
+
 def test_otlp_json_import_rejects_non_standard_json_constants(tmp_path: Path) -> None:
     source = tmp_path / "non-standard.json"
     output = tmp_path / "non-standard.runpack"

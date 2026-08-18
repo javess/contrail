@@ -111,6 +111,14 @@ def _as_list(value: object, label: str) -> list[object]:
     return value
 
 
+def _identifier(value: object, label: str, *, optional: bool = False) -> str:
+    if value in (None, "") and optional:
+        return ""
+    if not isinstance(value, str) or not value:
+        raise OtelImportError(f"{label} must be a non-empty string")
+    return value
+
+
 def _timestamp(value: object, label: str) -> int | None:
     if value in (None, ""):
         return None
@@ -210,16 +218,16 @@ def import_otlp_json(
             spans = _as_list(scope_group.get("spans", []), "spans")
             for raw_span in spans:
                 span = _as_object(raw_span, "span")
-                trace_id = str(span.get("traceId", ""))
-                span_id = str(span.get("spanId", ""))
-                if not trace_id or not span_id:
-                    raise OtelImportError("every span requires traceId and spanId")
+                trace_id = _identifier(span.get("traceId"), "span traceId")
+                span_id = _identifier(span.get("spanId"), "span spanId")
                 event_id = _event_id(trace_id, span_id)
                 if event_id in known_events:
                     raise OtelImportError(f"duplicate span identity: {trace_id}/{span_id}")
                 known_events.add(event_id)
                 trace_ids.add(trace_id)
-                parent_span_id = str(span.get("parentSpanId", ""))
+                parent_span_id = _identifier(
+                    span.get("parentSpanId"), "span parentSpanId", optional=True
+                )
                 attributes = _attributes(span.get("attributes", []))
                 attributes.update(
                     {
@@ -234,10 +242,8 @@ def import_otlp_json(
                 raw_links = _as_list(span.get("links", []), "span links")
                 for raw_link in raw_links:
                     link = _as_object(raw_link, "span link")
-                    linked_trace_id = str(link.get("traceId", ""))
-                    linked_span_id = str(link.get("spanId", ""))
-                    if not linked_trace_id or not linked_span_id:
-                        raise OtelImportError("every span link requires traceId and spanId")
+                    linked_trace_id = _identifier(link.get("traceId"), "span link traceId")
+                    linked_span_id = _identifier(link.get("spanId"), "span link spanId")
                     link_references.append(
                         (
                             linked_trace_id,
