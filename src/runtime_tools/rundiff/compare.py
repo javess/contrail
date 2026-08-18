@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -254,7 +255,8 @@ class ExecutionDiff:
 def _percent(baseline: float | int | None, candidate: float | int | None) -> float | None:
     if baseline is None or candidate is None or baseline == 0:
         return None
-    return (candidate - baseline) / baseline * 100
+    percent = (candidate - baseline) / baseline * 100
+    return percent if math.isfinite(percent) else None
 
 
 def _value_change(baseline: float | int | None, candidate: float | int | None) -> ValueChange:
@@ -274,7 +276,8 @@ def _known_equivalence(baseline: object | None, candidate: object | None) -> boo
 def _cpu_time(summary: ExecutionSummary) -> float | None:
     if summary.cpu_user_seconds is None or summary.cpu_system_seconds is None:
         return None
-    return summary.cpu_user_seconds + summary.cpu_system_seconds
+    total = summary.cpu_user_seconds + summary.cpu_system_seconds
+    return total if math.isfinite(total) else None
 
 
 def _output_equivalence(

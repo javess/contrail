@@ -132,6 +132,19 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
         )
 
 
+def _write_cpu_runpack(path: Path, user: float, system: float) -> None:
+    with RunpackWriter(path) as writer:
+        writer.add_execution(
+            Execution(path.stem, path.stem, 0, 1, (), str(path.parent), 0, None, {})
+        )
+        writer.add_measurements(
+            (
+                Measurement("process.cpu.user", user, "s", 1, None, {}),
+                Measurement("process.cpu.system", system, "s", 1, None, {}),
+            )
+        )
+
+
 def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
     tmp_path: Path,
 ) -> None:
@@ -201,6 +214,33 @@ def test_compare_runpacks_finds_timing_cardinality_and_dependency_changes(
         ("gateway", "metadata", "new"),
         ("gateway", "database", "changed"),
     ]
+
+
+def test_compare_runpacks_omits_unrepresentable_cpu_percentages(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    _write_cpu_runpack(baseline, 5e-324, 0.0)
+    _write_cpu_runpack(candidate, 1.0, 0.0)
+
+    diff = compare_runpacks(baseline, candidate)
+    rendered = render_diff(diff, "json")
+
+    assert diff.cpu_time.percent is None
+    assert "Infinity" not in rendered
+    assert json.loads(rendered)["cpu_time"]["percent"] is None
+
+
+def test_compare_runpacks_omits_overflowed_cpu_totals(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    _write_cpu_runpack(baseline, 1.0, 0.0)
+    _write_cpu_runpack(candidate, sys.float_info.max, sys.float_info.max)
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.cpu_time.baseline == 1.0
+    assert diff.cpu_time.candidate is None
+    assert diff.cpu_time.percent is None
 
 
 def test_reader_aggregates_peer_dependencies_from_client_rows(tmp_path: Path) -> None:
