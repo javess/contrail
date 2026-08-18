@@ -444,6 +444,30 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
     )
 
 
+def test_rundiff_alias_resolution_ignores_same_named_directories(tmp_path: Path) -> None:
+    runpack = tmp_path / "baseline.runpack"
+    _write_runpack(runpack, candidate=False)
+    (tmp_path / "baseline").mkdir()
+
+    compared = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "compare",
+            "baseline",
+            "baseline",
+        ),
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert compared.returncode == 0
+    assert "Outcome\n  equivalent" in compared.stdout
+
+
 def test_reader_aggregates_only_explicit_operation_error_evidence(tmp_path: Path) -> None:
     runpack = tmp_path / "errors.runpack"
     with RunpackWriter(runpack) as writer:

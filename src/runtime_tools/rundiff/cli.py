@@ -45,7 +45,7 @@ def _safe_name(value: str) -> str:
 
 
 def _resolve_runpack(path: Path) -> Path:
-    if path.exists() or path.suffix == ".runpack":
+    if path.is_file() or path.suffix == ".runpack":
         return path
     return path.with_name(f"{path.name}.runpack")
 
