@@ -66,6 +66,8 @@ def test_kubernetes_snapshot_enriches_and_correlates_otel_runpack(tmp_path: Path
                             namespace="demo",
                             creationTimestamp="1970-01-01T00:00:02Z",
                             ownerReferences=[{"uid": "job-uid", "kind": "Job"}],
+                            labels={"component": "worker"},
+                            annotations={"example.dev/owner": "runtime-team"},
                         ),
                         "spec": {
                             "nodeName": "node-a",
@@ -156,6 +158,10 @@ def test_kubernetes_snapshot_enriches_and_correlates_otel_runpack(tmp_path: Path
     }
     assert container.attributes["restart_count"] == 2
     assert entities["worker-0"].attributes["k8s.node.name"] == "node-a"
+    assert entities["worker-0"].attributes["k8s.labels"] == {"component": "worker"}
+    assert entities["worker-0"].attributes["k8s.annotations"] == {
+        "example.dev/owner": "runtime-team"
+    }
     assert any(event.name == "Scheduled" and event.kind == "kubernetes.event" for event in events)
     assert any(
         event.name == "worker"
@@ -754,6 +760,10 @@ def test_kubernetes_snapshot_rejects_non_standard_json_constants(tmp_path: Path)
         ({"name": "pod", "uid": {"unexpected": "object"}}, "metadata.uid must be a string"),
         ({"name": "pod", "namespace": 7}, "metadata.namespace must be a string"),
         ({"name": "pod", "labels": {"team": 7}}, "metadata.labels must map strings"),
+        (
+            {"name": "pod", "annotations": {"example.dev/owner": 7}},
+            "metadata.annotations must map strings",
+        ),
     ),
 )
 def test_kubernetes_snapshot_rejects_malformed_identity_metadata(

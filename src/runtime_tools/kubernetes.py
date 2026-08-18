@@ -125,21 +125,25 @@ def _integer(value: object, label: str) -> int:
     return value
 
 
+def _metadata_string_map(value: object, label: str) -> dict[str, JsonValue]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    ):
+        raise KubernetesImportError(f"{label} must map strings to strings")
+    return value
+
+
 def _attributes(item: dict[str, object]) -> dict[str, JsonValue]:
     metadata = _metadata(item)
-    labels = metadata.get("labels")
-    if labels is None:
-        normalized_labels: dict[str, JsonValue] = {}
-    elif not isinstance(labels, dict) or not all(
-        isinstance(key, str) and isinstance(value, str) for key, value in labels.items()
-    ):
-        raise KubernetesImportError("metadata.labels must map strings to strings")
-    else:
-        normalized_labels = labels
     return {
         "k8s.uid": _uid(item),
         "k8s.namespace": _namespace(metadata),
-        "k8s.labels": normalized_labels,
+        "k8s.labels": _metadata_string_map(metadata.get("labels"), "metadata.labels"),
+        "k8s.annotations": _metadata_string_map(
+            metadata.get("annotations"), "metadata.annotations"
+        ),
     }
 
 
