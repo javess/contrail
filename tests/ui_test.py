@@ -227,9 +227,19 @@ def test_timeline_rejects_large_serialized_payload(tmp_path: Path) -> None:
         build_timeline_payload(runpack, payload_byte_limit=1)
 
 
-def test_local_ui_reports_invalid_bind_without_low_level_error(tmp_path: Path) -> None:
-    runpack = tmp_path / "run.runpack"
-    record_process((sys.executable, "-c", "pass"), runpack, name="served")
-
-    with pytest.raises(TimelineError, match="could not bind local UI to 127.0.0.1:70000"):
-        create_server(runpack, None, host="127.0.0.1", port=70_000)
+@pytest.mark.parametrize(
+    ("host", "port", "message"),
+    (
+        ("", 0, "host must be a non-empty string"),
+        ("127.0.0.1", True, "port must be an integer"),
+        ("127.0.0.1", 70_000, "port must be between 0 and 65535"),
+    ),
+)
+def test_local_ui_validates_bind_arguments_before_loading_artifacts(
+    tmp_path: Path,
+    host: str,
+    port: int,
+    message: str,
+) -> None:
+    with pytest.raises(TimelineError, match=message):
+        create_server(tmp_path / "missing.runpack", None, host=host, port=port)

@@ -29,6 +29,12 @@ def create_server(
     host: str,
     port: int,
 ) -> ThreadingHTTPServer:
+    if not isinstance(host, str) or not host:
+        raise TimelineError("local UI host must be a non-empty string")
+    if not isinstance(port, int) or isinstance(port, bool):
+        raise TimelineError("local UI port must be an integer")
+    if not 0 <= port <= 65_535:
+        raise TimelineError("local UI port must be between 0 and 65535")
     payload = json.dumps(
         build_timeline_payload(baseline, candidate),
         allow_nan=False,
