@@ -1232,6 +1232,42 @@ class RunpackReader:
         ).fetchone()
         return int(row[0])
 
+    def normalized_text_bytes(self) -> int:
+        row = self._execute(
+            """
+            SELECT CAST(total(byte_count) AS INTEGER)
+            FROM (
+                SELECT length(CAST(key AS BLOB)) + length(CAST(value AS BLOB)) AS byte_count
+                FROM manifest
+                UNION ALL
+                SELECT length(CAST(id AS BLOB)) + length(CAST(name AS BLOB))
+                     + length(CAST(working_directory AS BLOB))
+                     + COALESCE(length(CAST(revision AS BLOB)), 0)
+                FROM executions
+                UNION ALL
+                SELECT length(CAST(id AS BLOB)) + length(CAST(kind AS BLOB))
+                     + length(CAST(name AS BLOB))
+                     + COALESCE(length(CAST(parent_entity_id AS BLOB)), 0)
+                FROM entities
+                UNION ALL
+                SELECT length(CAST(id AS BLOB)) + length(CAST(kind AS BLOB))
+                     + length(CAST(name AS BLOB))
+                     + COALESCE(length(CAST(entity_id AS BLOB)), 0)
+                     + COALESCE(length(CAST(clock_domain AS BLOB)), 0)
+                FROM events
+                UNION ALL
+                SELECT length(CAST(source_event_id AS BLOB))
+                     + length(CAST(target_event_id AS BLOB)) + length(CAST(kind AS BLOB))
+                FROM causal_edges
+                UNION ALL
+                SELECT length(CAST(name AS BLOB)) + length(CAST(unit AS BLOB))
+                     + COALESCE(length(CAST(entity_id AS BLOB)), 0)
+                FROM measurements
+            )
+            """
+        ).fetchone()
+        return int(row[0])
+
     def close(self) -> None:
         self._connection.close()
 

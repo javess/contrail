@@ -15,6 +15,7 @@ MAX_TIMELINE_ENTITIES = 50_000
 MAX_TIMELINE_EDGES = 200_000
 MAX_TIMELINE_MEASUREMENTS = 200_000
 MAX_TIMELINE_JSON_BYTES = 64 * 1024 * 1024
+MAX_TIMELINE_TEXT_BYTES = 64 * 1024 * 1024
 
 
 class TimelineError(ValueError):
@@ -79,8 +80,8 @@ def _run_value(
     edge_limit: int,
     measurement_limit: int,
     json_byte_limit: int,
+    text_byte_limit: int,
 ) -> dict[str, JsonValue]:
-    summary = inspect_runpack(path)
     with RunpackReader(path) as reader:
         counts = reader.counts()
         event_count = counts["events"]
@@ -110,6 +111,14 @@ def _run_value(
                 f"timeline has {normalized_json_bytes:,} normalized JSON bytes; "
                 f"local UI limit is {json_byte_limit:,}"
             )
+        normalized_text_bytes = reader.normalized_text_bytes()
+        if normalized_text_bytes > text_byte_limit:
+            raise TimelineError(
+                f"timeline has {normalized_text_bytes:,} normalized text bytes; "
+                f"local UI limit is {text_byte_limit:,}"
+            )
+    summary = inspect_runpack(path)
+    with RunpackReader(path) as reader:
         entities = reader.entities()
         events = reader.events()
         edges = reader.causal_edges()
@@ -158,6 +167,7 @@ def build_timeline_payload(
     edge_limit: int = MAX_TIMELINE_EDGES,
     measurement_limit: int = MAX_TIMELINE_MEASUREMENTS,
     json_byte_limit: int = MAX_TIMELINE_JSON_BYTES,
+    text_byte_limit: int = MAX_TIMELINE_TEXT_BYTES,
 ) -> dict[str, JsonValue]:
     if (
         event_limit <= 0
@@ -165,6 +175,7 @@ def build_timeline_payload(
         or edge_limit <= 0
         or measurement_limit <= 0
         or json_byte_limit <= 0
+        or text_byte_limit <= 0
     ):
         raise TimelineError("timeline limits must be positive")
     runs: list[JsonValue] = [
@@ -175,6 +186,7 @@ def build_timeline_payload(
             edge_limit,
             measurement_limit,
             json_byte_limit,
+            text_byte_limit,
         )
     ]
     comparison: JsonValue = None
@@ -187,6 +199,7 @@ def build_timeline_payload(
                 edge_limit,
                 measurement_limit,
                 json_byte_limit,
+                text_byte_limit,
             )
         )
         comparison = compare_runpacks(baseline, candidate).as_json_value()
