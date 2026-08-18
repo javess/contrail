@@ -420,6 +420,56 @@ def test_annotation_loader_rejects_incomplete_or_cyclic_causality(
         load_annotations(annotations, entity_id="process")
 
 
+@pytest.mark.parametrize(
+    ("records", "message"),
+    (
+        (
+            (
+                {
+                    "record": "event_instant",
+                    "id": "event",
+                    "kind": "event",
+                    "name": "event",
+                    "timestamp_ns": 1,
+                    "atributes": {},
+                },
+            ),
+            "contains unsupported fields: atributes",
+        ),
+        (
+            (
+                {
+                    "record": "event_start",
+                    "id": "event",
+                    "kind": "event",
+                    "name": "event",
+                    "timestamp_ns": 1,
+                },
+                {
+                    "record": "event_end",
+                    "id": "event",
+                    "timestamp_ns": 2,
+                    "error": "yes",
+                },
+            ),
+            "event_end error must be a boolean",
+        ),
+    ),
+)
+def test_annotation_loader_rejects_ignored_record_fields(
+    tmp_path: Path,
+    records: tuple[dict[str, object], ...],
+    message: str,
+) -> None:
+    annotations = tmp_path / "annotations.jsonl"
+    annotations.write_text(
+        "".join(f"{json.dumps(record)}\n" for record in records), encoding="utf-8"
+    )
+
+    with pytest.raises(AnnotationError, match=message):
+        load_annotations(annotations, entity_id="process")
+
+
 def test_annotation_loader_rejects_oversized_streams_before_decoding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

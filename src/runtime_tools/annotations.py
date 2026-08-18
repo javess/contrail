@@ -16,6 +16,20 @@ class AnnotationError(ValueError):
 
 _MAX_TIMESTAMP_NS = (1 << 63) - 1
 MAX_ANNOTATION_STREAM_BYTES = 64 * 1024 * 1024
+_RECORD_FIELDS = {
+    "event_start": {"record", "id", "kind", "name", "timestamp_ns", "parent_id", "attributes"},
+    "event_end": {"record", "id", "timestamp_ns", "error"},
+    "event_instant": {
+        "record",
+        "id",
+        "kind",
+        "name",
+        "timestamp_ns",
+        "parent_id",
+        "attributes",
+    },
+    "link": {"record", "source_id", "target_id", "relation"},
+}
 
 
 def _json_value(value: object, label: str) -> JsonValue:
@@ -91,6 +105,14 @@ def load_annotations(
         except (AnnotationError, RecursionError, ValueError) as exc:
             raise AnnotationError(f"invalid annotation JSON on line {line_number}: {exc}") from exc
         record_kind = record.get("record")
+        if not isinstance(record_kind, str) or record_kind not in _RECORD_FIELDS:
+            raise AnnotationError(f"unknown annotation record on line {line_number}")
+        unknown_fields = sorted(record.keys() - _RECORD_FIELDS[record_kind])
+        if unknown_fields:
+            raise AnnotationError(
+                f"annotation {record_kind} on line {line_number} contains unsupported fields: "
+                f"{', '.join(unknown_fields)}"
+            )
         if record_kind == "event_start":
             event_id = _string(record, "id")
             if event_id in event_ids:
@@ -99,6 +121,11 @@ def load_annotations(
             starts[event_id] = record
         elif record_kind == "event_end":
             event_id = _string(record, "id")
+            error = record.get("error")
+            if error is not None and not isinstance(error, bool):
+                raise AnnotationError(
+                    f"annotation event_end error must be a boolean on line {line_number}"
+                )
             if event_id in ends:
                 raise AnnotationError(f"duplicate annotation event end on line {line_number}")
             ends[event_id] = record
@@ -111,8 +138,6 @@ def load_annotations(
             instants.append(record)
         elif record_kind == "link":
             links.append(record)
-        else:
-            raise AnnotationError(f"unknown annotation record on line {line_number}")
 
     orphaned_ends = ends.keys() - starts.keys()
     if orphaned_ends:
