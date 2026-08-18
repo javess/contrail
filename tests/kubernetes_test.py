@@ -315,6 +315,45 @@ def test_kubernetes_snapshot_rejects_self_ownership_before_enrichment(
     assert not output.exists()
 
 
+def test_kubernetes_snapshot_rejects_owner_cycles_before_enrichment(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "owner-cycle.json"
+    output = tmp_path / "output.runpack"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Job",
+                        "metadata": _metadata(
+                            "first",
+                            "first",
+                            ownerReferences=[{"uid": "second", "controller": True}],
+                        ),
+                        "status": {},
+                    },
+                    {
+                        "kind": "Job",
+                        "metadata": _metadata(
+                            "second",
+                            "second",
+                            ownerReferences=[{"uid": "first", "controller": True}],
+                        ),
+                        "status": {},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KubernetesImportError, match="owner relationships contain a cycle"):
+        import_kubernetes_snapshot(tmp_path / "missing.runpack", snapshot, output)
+
+    assert not output.exists()
+
+
 def test_kubernetes_correlates_cross_service_trace_roots_to_each_pod(tmp_path: Path) -> None:
     base = tmp_path / "base.runpack"
     snapshot = tmp_path / "pods.json"

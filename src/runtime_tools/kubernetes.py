@@ -340,15 +340,32 @@ def import_kubernetes_snapshot(
                     raise KubernetesImportError(f"duplicate Kubernetes Node name: {node_name}")
                 node_uid_by_name[node_name] = uid
 
+    owner_by_uid = {
+        _uid(item): _owner_uid(item) for item in items if _kind(item) in _WORKLOAD_KINDS
+    }
+    complete_owner_chains: set[str] = set()
+    for uid in owner_by_uid:
+        trail: set[str] = set()
+        current = uid
+        while current in owner_by_uid and current not in complete_owner_chains:
+            if current in trail:
+                if len(trail) == 1:
+                    raise KubernetesImportError(f"Kubernetes object cannot own itself: {uid}")
+                raise KubernetesImportError("Kubernetes owner relationships contain a cycle")
+            trail.add(current)
+            owner_uid = owner_by_uid[current]
+            if owner_uid is None:
+                break
+            current = owner_uid
+        complete_owner_chains.update(trail)
+
     for item in items:
         kind = _kind(item)
         if kind not in _WORKLOAD_KINDS:
             continue
         uid = _uid(item)
         entity_id = f"k8s:{kind.lower()}:{uid}"
-        parent_uid = _owner_uid(item)
-        if parent_uid == uid:
-            raise KubernetesImportError(f"Kubernetes object cannot own itself: {uid}")
+        parent_uid = owner_by_uid[uid]
         attributes = _attributes(item)
         status = _object(item.get("status", {}), f"{kind} status")
         node_name = ""
@@ -418,7 +435,7 @@ def import_kubernetes_snapshot(
         if kind not in _WORKLOAD_KINDS:
             continue
         uid = _uid(item)
-        owner_uid = _owner_uid(item)
+        owner_uid = owner_by_uid[uid]
         if owner_uid in lifecycle_by_uid:
             edges.append(
                 CausalEdge(
