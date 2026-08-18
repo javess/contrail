@@ -231,6 +231,39 @@ def test_compare_runpacks_marks_repeated_semantic_shapes_as_structural(
     assert diff.match_level == "structural"
 
 
+def test_compare_runpacks_does_not_call_changed_internal_causality_structural(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    for path, target in ((baseline, "fetch"), (candidate, "write")):
+        with RunpackWriter(path) as writer:
+            writer.add_execution(
+                Execution(path.stem, path.stem, 0, 3, (), str(tmp_path), 0, None, {})
+            )
+            writer.add_entity(Entity("worker", "service", "worker", None, {}))
+            for index, name in enumerate(("parse", "fetch", "write")):
+                writer.add_event(
+                    Event(
+                        name,
+                        "operation",
+                        name,
+                        "worker",
+                        index,
+                        index + 1,
+                        "test",
+                        None,
+                        index,
+                        {},
+                    )
+                )
+            writer.add_causal_edge(CausalEdge("parse", target, "parent", 1.0, {}))
+
+    diff = compare_runpacks(baseline, candidate)
+
+    assert diff.match_level == "aggregate"
+
+
 def test_compare_runpacks_omits_unrepresentable_cpu_percentages(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"

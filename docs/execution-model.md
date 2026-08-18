@@ -80,7 +80,8 @@ are opaque. Repeatable logical identity belongs in semantic keys such as entity
 kind/name, operation name, stage path, attributes, and source-local sequence.
 RunDiff marks artifacts with the same execution ID as exact matches. Distinct
 executions with the same entity, operation, and dependency key sets are
-structural matches. Changed shapes fall back to aggregate semantic comparison;
+structural matches only when internal causal edges also connect the same
+semantic operations. Changed shapes fall back to aggregate semantic comparison;
 neither level assumes event or entity IDs survive repetition.
 
 ## Query implications

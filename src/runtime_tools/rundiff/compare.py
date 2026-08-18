@@ -443,6 +443,37 @@ def _all_edge_counts(reader: RunpackReader) -> dict[tuple[str, str, str, str, st
     return counts
 
 
+def _structural_edge_keys(
+    reader: RunpackReader,
+) -> set[tuple[str, str, str, str, str, str, str, str, str]]:
+    entities = {entity.id: (entity.kind, entity.name) for entity in reader.entities()}
+    events = {event.id: event for event in reader.events()}
+    keys: set[tuple[str, str, str, str, str, str, str, str, str]] = set()
+    for edge in reader.causal_edges():
+        source = events[edge.source_event_id]
+        target = events[edge.target_event_id]
+        if source.kind == "log.record" or target.kind == "log.record":
+            continue
+        source_entity = (
+            entities[source.entity_id] if source.entity_id is not None else ("unowned", "unowned")
+        )
+        target_entity = (
+            entities[target.entity_id] if target.entity_id is not None else ("unowned", "unowned")
+        )
+        keys.add(
+            (
+                *source_entity,
+                source.kind,
+                source.name,
+                *target_entity,
+                target.kind,
+                target.name,
+                edge.kind,
+            )
+        )
+    return keys
+
+
 def _selected_environment(metadata: dict[str, JsonValue]) -> dict[str, str]:
     environment = metadata.get("environment")
     if environment is None:
@@ -491,6 +522,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         baseline_concurrency = baseline_reader.operation_max_concurrency()
         baseline_durations = baseline_reader.operation_duration_totals()
         baseline_edges = _all_edge_counts(baseline_reader)
+        baseline_structural_edges = _structural_edge_keys(baseline_reader)
     with RunpackReader(candidate_path) as candidate_reader:
         candidate_environment = _selected_environment(candidate_reader.execution().metadata)
         candidate_entities = candidate_reader.entity_counts()
@@ -499,6 +531,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         candidate_concurrency = candidate_reader.operation_max_concurrency()
         candidate_durations = candidate_reader.operation_duration_totals()
         candidate_edges = _all_edge_counts(candidate_reader)
+        candidate_structural_edges = _structural_edge_keys(candidate_reader)
 
     exit_equivalent = _known_equivalence(baseline_summary.exit_code, candidate_summary.exit_code)
     output_equivalent = _output_equivalence(
@@ -533,6 +566,7 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         baseline_entities.keys() == candidate_entities.keys()
         and baseline_operations.keys() == candidate_operations.keys()
         and baseline_edges.keys() == candidate_edges.keys()
+        and baseline_structural_edges == candidate_structural_edges
     ):
         match_level = "structural"
     else:
