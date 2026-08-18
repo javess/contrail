@@ -34,8 +34,18 @@ _RECORD_FIELDS = {
 }
 
 
+def _utf8_string(value: str, label: str) -> str:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise AnnotationError(f"{label} contains a string that is not valid UTF-8") from exc
+    return value
+
+
 def _json_value(value: object, label: str) -> JsonValue:
-    if value is None or isinstance(value, (str, bool, int)):
+    if isinstance(value, str):
+        return _utf8_string(value, label)
+    if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -44,7 +54,7 @@ def _json_value(value: object, label: str) -> JsonValue:
     if isinstance(value, list):
         return [_json_value(item, label) for item in value]
     if isinstance(value, dict) and all(isinstance(key, str) for key in value):
-        return {key: _json_value(item, label) for key, item in value.items()}
+        return {_utf8_string(key, label): _json_value(item, label) for key, item in value.items()}
     raise AnnotationError(f"{label} contains an invalid JSON value")
 
 
@@ -221,7 +231,12 @@ def load_annotations(
         if identity in edge_identities:
             raise AnnotationError("duplicate annotation causal edge")
         edge_identities.add(identity)
-    events.sort(key=lambda item: (item.started_at_ns or -1, item.id))
+    events.sort(
+        key=lambda item: (
+            -1 if item.started_at_ns is None else item.started_at_ns,
+            item.id,
+        )
+    )
     return tuple(events), tuple(edges)
 
 

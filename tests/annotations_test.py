@@ -173,6 +173,26 @@ print("result")
     assert summary.record_counts["events"] == 1
 
 
+def test_annotation_loader_rejects_escaped_invalid_unicode(tmp_path: Path) -> None:
+    annotations = tmp_path / "surrogate.jsonl"
+    annotations.write_text(
+        json.dumps(
+            {
+                "record": "event_instant",
+                "id": "event",
+                "kind": "event",
+                "name": "bad-\ud800",
+                "timestamp_ns": 1,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AnnotationError, match="string that is not valid UTF-8"):
+        load_annotations(annotations, entity_id="process")
+
+
 def test_record_process_preserves_core_capture_for_oversized_annotation_fields(
     tmp_path: Path,
 ) -> None:
