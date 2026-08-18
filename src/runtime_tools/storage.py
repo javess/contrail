@@ -349,6 +349,9 @@ class RunpackWriter:
             execution.started_at_ns, execution.finished_at_ns
         )
         with self._writing():
+            existing = self._connection.execute("SELECT count(*) FROM executions").fetchone()[0]
+            if existing:
+                raise RunpackError("runpack already contains an execution")
             self._connection.execute(
                 """
                 INSERT INTO executions(

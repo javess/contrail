@@ -340,6 +340,19 @@ def test_writer_rejects_reversed_execution_intervals(tmp_path: Path) -> None:
             reader.execution()
 
 
+def test_writer_rejects_a_second_execution(tmp_path: Path) -> None:
+    output = tmp_path / "multiple-executions.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("first", "first", 0, 1, (), str(tmp_path), 0, None, {}))
+        with pytest.raises(RunpackError, match="runpack already contains an execution"):
+            writer.add_execution(
+                Execution("second", "second", 0, 1, (), str(tmp_path), 0, None, {})
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.execution().id == "first"
+
+
 def test_writer_rejects_reversed_interval_when_finishing_execution(tmp_path: Path) -> None:
     output = tmp_path / "reversed-finish.runpack"
     with RunpackWriter(output) as writer:
