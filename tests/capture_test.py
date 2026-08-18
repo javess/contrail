@@ -807,6 +807,16 @@ def test_writer_rejects_empty_execution_identity_before_writing(tmp_path: Path) 
             reader.execution()
 
 
+def test_writer_rejects_surrogate_text_before_writing(tmp_path: Path) -> None:
+    output = tmp_path / "surrogate-text.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="entity name must be valid UTF-8"):
+            writer.add_entity(Entity("entity", "service", "bad-\udcff", None, {}))
+
+    with RunpackReader(output) as reader:
+        assert reader.entities() == ()
+
+
 def test_bulk_entity_write_rolls_back_empty_semantic_fields(tmp_path: Path) -> None:
     output = tmp_path / "empty-entity-kind.runpack"
     with RunpackWriter(output) as writer:

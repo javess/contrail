@@ -266,7 +266,11 @@ def _text_value(value: object, label: str, *, optional: bool = False) -> str | N
     if not isinstance(value, str) or not value:
         suffix = " or null" if optional else ""
         raise RunpackError(f"{label} must be a non-empty string{suffix}")
-    if len(value.encode("utf-8", errors="surrogatepass")) > MAX_RUNPACK_TEXT_BYTES:
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise RunpackError(f"{label} must be valid UTF-8") from exc
+    if len(encoded) > MAX_RUNPACK_TEXT_BYTES:
         raise RunpackError(
             f"{label} exceeds the {MAX_RUNPACK_TEXT_BYTES}-byte runpack text field limit"
         )
