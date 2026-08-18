@@ -218,8 +218,12 @@ def _object(value: object) -> dict[str, JsonValue]:
         raise RunpackError("invalid JSON object in runpack")
     _validate_json_size(value)
     try:
-        decoded = _checked_json(json.loads(value))
-    except (json.JSONDecodeError, TypeError, RecursionError) as exc:
+        decoded = json.loads(value)
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise RunpackError("invalid JSON object in runpack") from exc
+    try:
+        decoded = _checked_json(decoded)
+    except RecursionError as exc:
         raise RunpackError("invalid JSON object in runpack") from exc
     if not isinstance(decoded, dict):
         raise RunpackError("expected a JSON object in runpack")
@@ -852,7 +856,7 @@ class RunpackReader:
         _validate_json_size(raw_command)
         try:
             command = json.loads(raw_command)
-        except (json.JSONDecodeError, TypeError, RecursionError) as exc:
+        except (TypeError, ValueError, RecursionError) as exc:
             raise RunpackError("execution command is invalid JSON") from exc
         if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
             raise RunpackError("execution command is invalid")

@@ -438,6 +438,28 @@ def test_reader_normalizes_excessively_nested_embedded_json(tmp_path: Path) -> N
         inspect_runpack(output)
 
 
+@pytest.mark.parametrize(
+    ("column", "payload", "message"),
+    (
+        ("metadata_json", '{"value":' + "1" * 5_000 + "}", "invalid JSON object in runpack"),
+        ("command_json", "[" + "1" * 5_000 + "]", "execution command is invalid JSON"),
+    ),
+)
+def test_reader_normalizes_oversized_json_integers(
+    tmp_path: Path,
+    column: str,
+    payload: str,
+    message: str,
+) -> None:
+    output = tmp_path / "oversized-integer.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="oversized-integer")
+    with sqlite3.connect(output) as connection:
+        connection.execute(f"UPDATE executions SET {column} = ?", (payload,))
+
+    with pytest.raises(RunpackError, match=message):
+        inspect_runpack(output)
+
+
 def test_writer_rejects_oversized_normalized_json(tmp_path: Path) -> None:
     output = tmp_path / "oversized-json-write.runpack"
     with RunpackWriter(output) as writer:
