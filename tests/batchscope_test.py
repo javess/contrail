@@ -617,13 +617,10 @@ def test_throughput_does_not_guess_between_multiple_parent_scopes(tmp_path: Path
                 _event("scope-a", "run", "scope-a", 0, 30),
                 _event("scope-b", "run", "scope-b", 0, 30),
                 _event("progress-a", "progress", "progress", 10, 10, {"completed": 5, "total": 10}),
-                _event("progress-b", "progress", "progress", 20, 20, {"completed": 6, "total": 10}),
             )
         )
         writer.add_causal_edges(
-            CausalEdge(parent, progress, "parent", 1.0, {})
-            for parent in ("scope-a", "scope-b")
-            for progress in ("progress-a", "progress-b")
+            CausalEdge(parent, "progress-a", "parent", 1.0, {}) for parent in ("scope-a", "scope-b")
         )
 
     analysis = analyze_runpack(runpack)

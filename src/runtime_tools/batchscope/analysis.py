@@ -308,7 +308,7 @@ def _throughput(
             elif parents is not None and len(parents) == 1:
                 series = ("parent", next(iter(parents)))
             elif parents:
-                series = ("ambiguous-parent", event.id)
+                return None
             else:
                 series = ("entity", event.entity_id or "unowned")
             samples_by_series.setdefault(series, []).append((event.started_at_ns, *values))
