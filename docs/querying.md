@@ -15,8 +15,10 @@ steps. This bounds expensive aggregation and recursive queries even when they
 produce few rows. Individual SQLite values are limited to 4 MiB and the encoded
 result is limited to 16 MiB, so a small row count cannot create unbounded output.
 
-Machine-readable formats preserve column order and JSON-safe values. BLOBs and
-non-finite SQLite floats use tagged objects rather than non-standard JSON:
+Machine-readable formats preserve column order and JSON-safe values. Repeated
+SQL column labels receive deterministic `_2`, `_3`, and later suffixes so JSONL
+objects do not discard cells. BLOBs and non-finite SQLite floats use tagged
+objects rather than non-standard JSON:
 
 ```bash
 runtime query run.runpack \

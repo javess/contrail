@@ -35,6 +35,20 @@ def test_runpack_query_returns_bounded_structured_rows(tmp_path: Path) -> None:
     assert "kind" in render_query(result, "table")
 
 
+def test_runpack_query_preserves_duplicate_columns_in_jsonl(tmp_path: Path) -> None:
+    runpack = tmp_path / "query.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="query")
+
+    result = query_runpack(runpack, "SELECT name, name, kind AS name FROM events")
+
+    assert result.columns == ("name", "name_2", "name_3")
+    assert json.loads(render_query(result, "jsonl")) == {
+        "name": Path(sys.executable).name,
+        "name_2": Path(sys.executable).name,
+        "name_3": "process.run",
+    }
+
+
 def test_runpack_query_truncates_without_loading_the_full_result(tmp_path: Path) -> None:
     runpack = tmp_path / "query.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="query")

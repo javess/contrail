@@ -77,6 +77,21 @@ def _encoded_size(value: JsonValue) -> int:
     )
 
 
+def _column_names(description: tuple[tuple[object, ...], ...]) -> tuple[str, ...]:
+    columns: list[str] = []
+    used: set[str] = set()
+    for item in description:
+        base = str(item[0])
+        column = base
+        suffix = 2
+        while column in used:
+            column = f"{base}_{suffix}"
+            suffix += 1
+        columns.append(column)
+        used.add(column)
+    return tuple(columns)
+
+
 def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
     if not sql.strip():
         raise QueryError("SQL query cannot be empty")
@@ -106,7 +121,7 @@ def query_runpack(path: Path, sql: str, *, limit: int = 1000) -> QueryResult:
             cursor = connection.execute(sql)
             if cursor.description is None:
                 raise QueryError("query must return rows")
-            columns = tuple(str(item[0]) for item in cursor.description)
+            columns = _column_names(cursor.description)
             rows: list[tuple[JsonValue, ...]] = []
             result_bytes = 0
             truncated = False
