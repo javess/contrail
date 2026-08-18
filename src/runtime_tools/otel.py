@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Never
+from urllib.parse import quote
 
 from runtime_tools.artifacts import publish_without_overwrite
 from runtime_tools.enrichment import enrich_copy
@@ -315,7 +316,7 @@ def _severity_number(value: object) -> int:
 
 
 def _event_id(trace_id: str, span_id: str) -> str:
-    return f"otel:{trace_id}:{span_id}"
+    return f"otel:{quote(trace_id, safe='')}:{quote(span_id, safe='')}"
 
 
 def _validate_parent_hierarchy(parent_edges: list[tuple[str, str]]) -> None:

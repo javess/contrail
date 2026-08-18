@@ -799,6 +799,50 @@ def test_otlp_json_import_rejects_cyclic_parent_relationships(tmp_path: Path) ->
     assert not output.exists()
 
 
+def test_otlp_json_import_keeps_delimited_span_identities_distinct(tmp_path: Path) -> None:
+    source = tmp_path / "delimited-identities.json"
+    output = tmp_path / "delimited-identities.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace:one",
+                                        "spanId": "parent",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "4",
+                                    },
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "child",
+                                        "parentSpanId": "one:parent",
+                                        "startTimeUnixNano": "2",
+                                        "endTimeUnixNano": "3",
+                                    },
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_json(source, output, name="delimited-identities")
+
+    with RunpackReader(output) as reader:
+        event_ids = {event.id for event in reader.events()}
+        edges = reader.causal_edges()
+    assert event_ids == {"otel:trace%3Aone:parent", "otel:trace:child"}
+    assert edges == ()
+    assert result.missing_parent_count == 1
+
+
 def test_otlp_json_import_can_preserve_raw_source_explicitly(tmp_path: Path) -> None:
     source = tmp_path / "raw.json"
     output = tmp_path / "raw.runpack"
