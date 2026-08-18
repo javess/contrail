@@ -17,7 +17,15 @@ import pytest
 
 from runtime_tools import CaptureError, capture, inspect_runpack, record_process, storage
 from runtime_tools.inspect import render_summary
-from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, Measurement
+from runtime_tools.model import (
+    Attachment,
+    CausalEdge,
+    Entity,
+    Event,
+    Execution,
+    JsonValue,
+    Measurement,
+)
 from runtime_tools.storage import (
     MAX_RUNPACK_JSON_BYTES,
     MAX_RUNPACK_TEXT_BYTES,
@@ -449,6 +457,27 @@ def test_reader_rejects_non_finite_embedded_json_numbers(tmp_path: Path) -> None
         inspect_runpack(output)
 
 
+@pytest.mark.parametrize(
+    ("column", "payload"),
+    (
+        ("metadata_json", r'{"value":"\udcff"}'),
+        ("command_json", r'["\udcff"]'),
+    ),
+)
+def test_reader_rejects_non_utf8_embedded_json_strings(
+    tmp_path: Path,
+    column: str,
+    payload: str,
+) -> None:
+    output = tmp_path / "non-utf8-json.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="non-utf8-json")
+    with sqlite3.connect(output) as connection:
+        connection.execute(f"UPDATE executions SET {column} = ?", (payload,))
+
+    with pytest.raises(RunpackError, match="runpack JSON strings must be valid UTF-8"):
+        inspect_runpack(output)
+
+
 def test_reader_normalizes_excessively_nested_embedded_json(tmp_path: Path) -> None:
     output = tmp_path / "nested-json.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="nested-json")
@@ -842,6 +871,29 @@ def test_writer_rejects_json_objects_with_non_string_keys(tmp_path: Path) -> Non
 
     with RunpackReader(output) as reader:
         assert reader.entities() == ()
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    (
+        {"bad": "value-\udcff"},
+        {"bad-\udcff": "value"},
+    ),
+)
+def test_writer_rejects_non_utf8_json_strings(
+    tmp_path: Path,
+    metadata: dict[str, JsonValue],
+) -> None:
+    output = tmp_path / "invalid-json-text.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="invalid JSON value for runpack"):
+            writer.add_execution(
+                Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, metadata)
+            )
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
+            reader.execution()
 
 
 def test_writer_rejects_invalid_execution_commands_before_writing(tmp_path: Path) -> None:

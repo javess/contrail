@@ -231,7 +231,13 @@ def _object(value: object) -> dict[str, JsonValue]:
 
 
 def _checked_json(value: object) -> JsonValue:
-    if value is None or isinstance(value, (str, bool, int)):
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise RunpackError("runpack JSON strings must be valid UTF-8") from exc
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -240,8 +246,16 @@ def _checked_json(value: object) -> JsonValue:
     if isinstance(value, list):
         return [_checked_json(item) for item in value]
     if isinstance(value, dict) and all(isinstance(key, str) for key in value):
-        return {key: _checked_json(item) for key, item in value.items()}
+        return {_checked_json_key(key): _checked_json(item) for key, item in value.items()}
     raise RunpackError("invalid value in runpack JSON")
+
+
+def _checked_json_key(value: str) -> str:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise RunpackError("runpack JSON strings must be valid UTF-8") from exc
+    return value
 
 
 def _blob(value: object) -> bytes:
@@ -860,6 +874,7 @@ class RunpackReader:
             raise RunpackError("execution command is invalid JSON") from exc
         if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
             raise RunpackError("execution command is invalid")
+        _checked_json(command)
         started_at_ns, finished_at_ns = _execution_interval(
             row["started_at_ns"], row["finished_at_ns"]
         )
