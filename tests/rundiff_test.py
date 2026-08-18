@@ -728,7 +728,10 @@ def test_compare_runpacks_keeps_incomplete_output_identity_unknown(tmp_path: Pat
     assert "baseline: incomplete stdout identity" in render_diff(diff, "text")
 
 
-def test_compare_runpacks_keeps_invalid_output_completeness_unknown(tmp_path: Path) -> None:
+@pytest.mark.parametrize("invalid_completeness", ("false", 0))
+def test_compare_runpacks_keeps_invalid_output_completeness_unknown(
+    tmp_path: Path, invalid_completeness: object
+) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"
     record_process((sys.executable, "-c", "print('same')"), baseline, name="baseline")
@@ -740,7 +743,7 @@ def test_compare_runpacks_keeps_invalid_output_completeness_unknown(tmp_path: Pa
     assert isinstance(output, dict)
     stdout = output["stdout"]
     assert isinstance(stdout, dict)
-    stdout["pipe_open_after_exit"] = "false"
+    stdout["pipe_open_after_exit"] = cast(Any, invalid_completeness)
     with RunpackWriter.open_existing(baseline) as writer:
         writer.set_execution_metadata(execution.id, metadata)
 

@@ -295,7 +295,7 @@ def _stream_complete(metadata: dict[str, JsonValue], stream: str) -> bool | None
     inherited = stream_data.get("pipe_open_after_exit")
     if inherited is True:
         return False
-    if inherited in (None, False):
+    if inherited is None or inherited is False:
         return True
     return None
 
