@@ -98,7 +98,9 @@ select, input { margin-left: 7px; accent-color: var(--accent); background: #1011
 .event { position: absolute; top: 9px; height: 30px; min-width: 3px; border: 1px solid #d7913d; background: linear-gradient(90deg, var(--accent-soft), #9b642b); color: var(--ink); overflow: hidden; text-align: left; white-space: nowrap; font: 10px/28px inherit; padding: 0 7px; cursor: pointer; }
 .event[data-kind^="server"] { border-color: var(--cyan); background: #285b58; }
 .event.critical { box-shadow: inset 0 -3px 0 var(--danger); border-color: #ff9b84; }
-.event:focus, .event:hover { outline: 2px solid var(--ink); z-index: 3; }
+.untimed-track { min-height: 50px; padding: 9px; display: flex; gap: 7px; overflow-x: auto; background: #11120f; }
+.untimed-event { flex: 0 0 auto; border: 1px dashed var(--muted); background: #242620; color: var(--ink); font: 10px/28px inherit; padding: 0 9px; cursor: pointer; }
+.event:focus, .event:hover, .untimed-event:focus, .untimed-event:hover { outline: 2px solid var(--ink); z-index: 3; }
 
 .detail { position: fixed; right: 0; top: 0; bottom: 0; width: 340px; border-left: 1px solid var(--line); background: #121310; padding: 28px 24px; overflow: auto; }
 .detail > p:last-child { color: var(--muted); margin-top: 14px; line-height: 1.6; font-size: 12px; }

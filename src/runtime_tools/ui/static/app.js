@@ -28,6 +28,7 @@ function renderSummary() {
     ["Critical path", critical ? fmtDuration(critical.duration_seconds) : "unavailable"],
     ["Path active", critical ? fmtDuration(critical.active_seconds) : "unavailable"],
     ["Path waiting", critical ? fmtDuration(critical.waiting_seconds) : "unavailable"],
+    ["Untimed events", fmtNumber(run.events.filter(event => event.start_offset_ns == null).length)],
     ["Attachments", fmtNumber(run.summary.record_counts.attachments)],
   ];
   const warningMessages = [];
@@ -94,9 +95,11 @@ function renderTimeline() {
   const totalNs = Math.max(1, Math.round((run.summary.wall_time_seconds || 0) * 1e9));
   const entities = new Map(run.entities.map(entity => [entity.id, entity]));
   const visible = run.events.filter(event => (!state.entity || event.entity_id === state.entity) && (!state.kind || event.kind === state.kind));
+  const timed = visible.filter(event => event.start_offset_ns != null);
+  const untimed = visible.filter(event => event.start_offset_ns == null);
   const criticalIds = new Set(run.analysis.critical_path ? run.analysis.critical_path.event_ids : []);
   const grouped = new Map();
-  visible.forEach(event => {
+  timed.forEach(event => {
     const key = event.entity_id || "unowned";
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(event);
@@ -112,10 +115,11 @@ function renderTimeline() {
     }).join("");
     return `<div class="lane"><div class="lane-label">${escapeHtml(entity.name)}<small>${escapeHtml(entity.kind)} · ${events.length} events</small></div><div class="track">${bars}</div></div>`;
   }).join("");
-  document.querySelector("#timeline").innerHTML = `<div class="timeline-inner" style="width:${width}%">${lanes || '<div class="lane-label">No matching events</div>'}</div>`;
+  const untimedLane = untimed.length ? `<div class="lane untimed-lane"><div class="lane-label">Untimed evidence<small>${untimed.length} events · no fabricated position</small></div><div class="untimed-track">${untimed.map(event => `<button class="untimed-event" data-id="${escapeHtml(event.id)}" data-kind="${escapeHtml(event.kind)}">${escapeHtml(event.name)}</button>`).join("")}</div></div>` : "";
+  document.querySelector("#timeline").innerHTML = `<div class="timeline-inner" style="width:${width}%">${lanes || (!untimedLane ? '<div class="lane-label">No matching events</div>' : '')}${untimedLane}</div>`;
   const midpoint = run.summary.wall_time_seconds == null ? null : run.summary.wall_time_seconds / 2;
   document.querySelector("#axis").innerHTML = `<span>0</span><span>${fmtDuration(midpoint)}</span><span>${fmtDuration(run.summary.wall_time_seconds)}</span>`;
-  document.querySelectorAll(".event").forEach(button => button.addEventListener("click", () => showDetail(visible.find(event => event.id === button.dataset.id), entities)));
+  document.querySelectorAll(".event, .untimed-event").forEach(button => button.addEventListener("click", () => showDetail(visible.find(event => event.id === button.dataset.id), entities)));
 }
 
 function showDetail(event, entities) {

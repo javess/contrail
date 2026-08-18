@@ -91,6 +91,8 @@ def test_packaged_ui_renders_batchscope_analysis() -> None:
     assert "diff.candidate_missing_causal_references" in javascript
     assert "Remaining after compute" in javascript
     assert "No constraint classified from available evidence" in javascript
+    assert "Untimed evidence" in javascript
+    assert "event.start_offset_ns != null" in javascript
 
 
 def test_timeline_rejects_oversized_artifact_before_analysis(tmp_path: Path) -> None:
