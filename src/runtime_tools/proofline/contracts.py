@@ -22,6 +22,7 @@ _ASSERTION_FIELDS = {
 }
 SUPPORTED_ASSERTIONS = set(_ASSERTION_FIELDS)
 MAX_CONTRACT_BYTES = 1024 * 1024
+MAX_CONTRACT_ASSERTIONS = 1_000
 
 
 class ContractError(ValueError):
@@ -147,11 +148,20 @@ def load_contracts(path: Path) -> tuple[Contract, ...]:
     except RecursionError as exc:
         raise ContractError("contract document nesting is too deep") from exc
     raw_contracts = root.get("contracts")
+    contracts: tuple[Contract, ...]
     if raw_contracts is None:
-        return (_parse_contract(root, path.stem),)
-    _reject_unknown_fields(root, {"contracts"}, "contract document")
-    if not isinstance(raw_contracts, list) or not raw_contracts:
-        raise ContractError("contracts must be a non-empty list")
-    return tuple(
-        _parse_contract(item, f"{path.stem}-{index}") for index, item in enumerate(raw_contracts, 1)
-    )
+        contracts = (_parse_contract(root, path.stem),)
+    else:
+        _reject_unknown_fields(root, {"contracts"}, "contract document")
+        if not isinstance(raw_contracts, list) or not raw_contracts:
+            raise ContractError("contracts must be a non-empty list")
+        contracts = tuple(
+            _parse_contract(item, f"{path.stem}-{index}")
+            for index, item in enumerate(raw_contracts, 1)
+        )
+    assertion_count = sum(len(contract.assertions) for contract in contracts)
+    if assertion_count > MAX_CONTRACT_ASSERTIONS:
+        raise ContractError(
+            f"contract document exceeds the {MAX_CONTRACT_ASSERTIONS}-assertion input limit"
+        )
+    return contracts

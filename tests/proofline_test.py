@@ -301,6 +301,21 @@ def test_proofline_rejects_oversized_contracts_before_yaml_parsing(
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 
+def test_proofline_rejects_too_many_assertions_before_loading_runpacks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = tmp_path / "too-many-assertions.yaml"
+    contract.write_text(
+        "name: bounded\nassertions:\n  - type: output_equivalent\n  - type: result_equivalence\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(contracts_module, "MAX_CONTRACT_ASSERTIONS", 1)
+
+    with pytest.raises(ContractError, match="exceeds the 1-assertion input limit"):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
 def test_proofline_rejects_non_utf8_contracts(tmp_path: Path) -> None:
     contract = tmp_path / "non-utf8.yaml"
     contract.write_bytes(b"\xff")
