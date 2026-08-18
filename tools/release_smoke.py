@@ -434,7 +434,7 @@ def smoke(
 
         demo = root / "contrail-demo"
         demo_result = _run(
-            (str(contrail), "demo", "--output-dir", str(demo)),
+            (str(contrail), "demo"),
             cwd=root,
         )
         if not demo_result.stdout.startswith("CONTRAIL DEMO READY\n"):

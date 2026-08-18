@@ -275,7 +275,7 @@ def run_demo(output_dir: Path) -> DemoResult:
         process_name = Path(sys.executable).name
         _write_workload(workload)
         _write_contract(contract, process_name)
-        command_prefix = (sys.executable, str(workload))
+        command_prefix = (sys.executable, str(workload.absolute()))
         baseline_exit_code = record_process(
             (*command_prefix, "baseline"),
             baseline_runpack,

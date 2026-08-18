@@ -262,6 +262,8 @@ def test_runpack_query_denies_extension_loading_even_if_sqlite_enables_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if not hasattr(sqlite3.Connection, "enable_load_extension"):
+        pytest.skip("SQLite extension loading is unavailable in this interpreter")
     runpack = tmp_path / "query.runpack"
     record_process((sys.executable, "-c", "pass"), runpack, name="query")
     connect = sqlite3.connect

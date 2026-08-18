@@ -97,6 +97,27 @@ def test_contrail_demo_is_a_self_contained_successful_walkthrough(tmp_path: Path
     assert collision.stderr.startswith("contrail: refusing to reuse demo output directory:")
 
 
+def test_contrail_demo_supports_its_default_relative_output_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = _contrail("demo")
+
+    output = tmp_path / "contrail-demo"
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout.startswith("CONTRAIL DEMO READY\n")
+    assert {path.name for path in output.iterdir()} == {
+        "baseline.runpack",
+        "candidate.runpack",
+        "contract.yaml",
+        "proofline-report.json",
+        "workload.py",
+    }
+
+
 def test_contrail_demo_commands_preserve_control_characters_in_paths(tmp_path: Path) -> None:
     output = tmp_path / "installed\ndemo\x1b"
 
