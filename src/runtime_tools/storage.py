@@ -191,6 +191,21 @@ def _integer_value(value: object, label: str, *, optional: bool = False) -> int 
     return value
 
 
+def _text_value(value: object, label: str, *, optional: bool = False) -> str | None:
+    if value is None and optional:
+        return None
+    if not isinstance(value, str) or not value:
+        suffix = " or null" if optional else ""
+        raise RunpackError(f"{label} must be a non-empty string{suffix}")
+    return value
+
+
+def _required_text(value: object, label: str) -> str:
+    result = _text_value(value, label)
+    assert result is not None
+    return result
+
+
 def _execution_interval(started_at_ns: object, finished_at_ns: object) -> tuple[int, int | None]:
     started = _integer_value(started_at_ns, "execution start timestamp")
     finished = _integer_value(finished_at_ns, "execution finish timestamp", optional=True)
@@ -210,13 +225,13 @@ def _event_values(event: Event) -> tuple[object, ...]:
         raise RunpackError("event uncertainty cannot be negative")
     sequence = _integer_value(event.sequence, "event sequence", optional=True)
     return (
-        event.id,
-        event.kind,
-        event.name,
-        event.entity_id,
+        _text_value(event.id, "event id"),
+        _text_value(event.kind, "event kind"),
+        _text_value(event.name, "event name"),
+        _text_value(event.entity_id, "event entity id", optional=True),
         started,
         finished,
-        event.clock_domain,
+        _text_value(event.clock_domain, "event clock domain", optional=True),
         uncertainty,
         sequence,
         _json(event.attributes),
@@ -225,9 +240,9 @@ def _event_values(event: Event) -> tuple[object, ...]:
 
 def _edge_values(edge: CausalEdge) -> tuple[object, ...]:
     return (
-        edge.source_event_id,
-        edge.target_event_id,
-        edge.kind,
+        _text_value(edge.source_event_id, "causal edge source event id"),
+        _text_value(edge.target_event_id, "causal edge target event id"),
+        _text_value(edge.kind, "causal edge kind"),
         _confidence_value(edge.confidence),
         _json(edge.attributes),
     )
@@ -247,21 +262,21 @@ def _confidence_value(value: object) -> float:
 
 def _measurement_values(measurement: Measurement) -> tuple[object, ...]:
     return (
-        measurement.name,
+        _text_value(measurement.name, "measurement name"),
         _measurement_value(measurement.value),
-        measurement.unit,
+        _text_value(measurement.unit, "measurement unit"),
         _integer_value(measurement.timestamp_ns, "measurement timestamp", optional=True),
-        measurement.entity_id,
+        _text_value(measurement.entity_id, "measurement entity id", optional=True),
         _json(measurement.attributes),
     )
 
 
 def _attachment_values(attachment: Attachment) -> tuple[object, ...]:
     return (
-        attachment.id,
-        attachment.kind,
-        attachment.name,
-        attachment.media_type,
+        _text_value(attachment.id, "attachment id"),
+        _text_value(attachment.kind, "attachment kind"),
+        _text_value(attachment.name, "attachment name"),
+        _text_value(attachment.media_type, "attachment media type"),
         _blob(attachment.content),
         _json(attachment.attributes),
     )
@@ -366,6 +381,10 @@ class RunpackWriter:
             execution.started_at_ns, execution.finished_at_ns
         )
         exit_code = _integer_value(execution.exit_code, "execution exit code", optional=True)
+        execution_id = _text_value(execution.id, "execution id")
+        execution_name = _text_value(execution.name, "execution name")
+        working_directory = _text_value(execution.working_directory, "execution working directory")
+        revision = _text_value(execution.revision, "execution revision", optional=True)
         with self._writing():
             existing = self._connection.execute("SELECT count(*) FROM executions").fetchone()[0]
             if existing:
@@ -378,14 +397,14 @@ class RunpackWriter:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    execution.id,
-                    execution.name,
+                    execution_id,
+                    execution_name,
                     started_at_ns,
                     finished_at_ns,
                     _command_json(execution.command),
-                    execution.working_directory,
+                    working_directory,
                     exit_code,
-                    execution.revision,
+                    revision,
                     _json(execution.metadata),
                 ),
             )
@@ -399,10 +418,10 @@ class RunpackWriter:
             VALUES (?, ?, ?, ?, ?)
             """,
                 (
-                    entity.id,
-                    entity.kind,
-                    entity.name,
-                    entity.parent_entity_id,
+                    _text_value(entity.id, "entity id"),
+                    _text_value(entity.kind, "entity kind"),
+                    _text_value(entity.name, "entity name"),
+                    _text_value(entity.parent_entity_id, "parent entity id", optional=True),
                     _json(entity.attributes),
                 ),
             )
@@ -417,10 +436,10 @@ class RunpackWriter:
                 """,
                 (
                     (
-                        entity.id,
-                        entity.kind,
-                        entity.name,
-                        entity.parent_entity_id,
+                        _text_value(entity.id, "entity id"),
+                        _text_value(entity.kind, "entity kind"),
+                        _text_value(entity.name, "entity name"),
+                        _text_value(entity.parent_entity_id, "parent entity id", optional=True),
                         _json(entity.attributes),
                     )
                     for entity in entities
@@ -540,11 +559,12 @@ class RunpackWriter:
         event: Event,
         measurements: tuple[Measurement, ...],
     ) -> None:
+        normalized_execution_id = _text_value(execution_id, "execution id")
         row = self._connection.execute(
-            "SELECT started_at_ns FROM executions WHERE id = ?", (execution_id,)
+            "SELECT started_at_ns FROM executions WHERE id = ?", (normalized_execution_id,)
         ).fetchone()
         if row is None:
-            raise RunpackError(f"execution does not exist: {execution_id}")
+            raise RunpackError(f"execution does not exist: {normalized_execution_id}")
         _, normalized_finish = _execution_interval(row[0], finished_at_ns)
         normalized_exit_code = _integer_value(exit_code, "execution exit code")
         with self._writing(), self._connection:
@@ -554,7 +574,7 @@ class RunpackWriter:
                 SET finished_at_ns = ?, exit_code = ?, metadata_json = ?
                 WHERE id = ?
                 """,
-                (normalized_finish, normalized_exit_code, _json(metadata), execution_id),
+                (normalized_finish, normalized_exit_code, _json(metadata), normalized_execution_id),
             )
             self._connection.execute(
                 """
@@ -633,14 +653,16 @@ class RunpackReader:
         )
         exit_code = _integer_value(row["exit_code"], "execution exit code", optional=True)
         return Execution(
-            id=row["id"],
-            name=row["name"],
+            id=_required_text(row["id"], "execution id"),
+            name=_required_text(row["name"], "execution name"),
             started_at_ns=started_at_ns,
             finished_at_ns=finished_at_ns,
             command=tuple(command),
-            working_directory=row["working_directory"],
+            working_directory=_required_text(
+                row["working_directory"], "execution working directory"
+            ),
             exit_code=exit_code,
-            revision=row["revision"],
+            revision=_text_value(row["revision"], "execution revision", optional=True),
             metadata=_object(row["metadata_json"]),
         )
 
@@ -655,13 +677,13 @@ class RunpackReader:
         ).fetchall()
         return tuple(
             Measurement(
-                name=row["name"],
+                name=_required_text(row["name"], "measurement name"),
                 value=_measurement_value(row["value"]),
-                unit=row["unit"],
+                unit=_required_text(row["unit"], "measurement unit"),
                 timestamp_ns=_integer_value(
                     row["timestamp_ns"], "measurement timestamp", optional=True
                 ),
-                entity_id=row["entity_id"],
+                entity_id=_text_value(row["entity_id"], "measurement entity id", optional=True),
                 attributes=_object(row["attributes_json"]),
             )
             for row in rows
@@ -671,10 +693,12 @@ class RunpackReader:
         rows = self._execute("SELECT * FROM entities ORDER BY id").fetchall()
         return tuple(
             Entity(
-                id=row["id"],
-                kind=row["kind"],
-                name=row["name"],
-                parent_entity_id=row["parent_entity_id"],
+                id=_required_text(row["id"], "entity id"),
+                kind=_required_text(row["kind"], "entity kind"),
+                name=_required_text(row["name"], "entity name"),
+                parent_entity_id=_text_value(
+                    row["parent_entity_id"], "parent entity id", optional=True
+                ),
                 attributes=_object(row["attributes_json"]),
             )
             for row in rows
@@ -703,13 +727,15 @@ class RunpackReader:
                 raise RunpackError("event uncertainty cannot be negative")
             events.append(
                 Event(
-                    id=row["id"],
-                    kind=row["kind"],
-                    name=row["name"],
-                    entity_id=row["entity_id"],
+                    id=_required_text(row["id"], "event id"),
+                    kind=_required_text(row["kind"], "event kind"),
+                    name=_required_text(row["name"], "event name"),
+                    entity_id=_text_value(row["entity_id"], "event entity id", optional=True),
                     started_at_ns=started_at_ns,
                     finished_at_ns=finished_at_ns,
-                    clock_domain=row["clock_domain"],
+                    clock_domain=_text_value(
+                        row["clock_domain"], "event clock domain", optional=True
+                    ),
                     uncertainty_ns=uncertainty_ns,
                     sequence=_integer_value(row["sequence"], "event sequence", optional=True),
                     attributes=_object(row["attributes_json"]),
@@ -727,9 +753,13 @@ class RunpackReader:
         ).fetchall()
         return tuple(
             CausalEdge(
-                source_event_id=row["source_event_id"],
-                target_event_id=row["target_event_id"],
-                kind=row["kind"],
+                source_event_id=_required_text(
+                    row["source_event_id"], "causal edge source event id"
+                ),
+                target_event_id=_required_text(
+                    row["target_event_id"], "causal edge target event id"
+                ),
+                kind=_required_text(row["kind"], "causal edge kind"),
                 confidence=_confidence_value(row["confidence"]),
                 attributes=_object(row["attributes_json"]),
             )
@@ -872,10 +902,10 @@ class RunpackReader:
         ).fetchall()
         return tuple(
             Attachment(
-                id=row["id"],
-                kind=row["kind"],
-                name=row["name"],
-                media_type=row["media_type"],
+                id=_required_text(row["id"], "attachment id"),
+                kind=_required_text(row["kind"], "attachment kind"),
+                name=_required_text(row["name"], "attachment name"),
+                media_type=_required_text(row["media_type"], "attachment media type"),
                 content=_blob(row["content"]),
                 attributes=_object(row["attributes_json"]),
             )

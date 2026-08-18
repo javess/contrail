@@ -341,6 +341,17 @@ def test_reader_rejects_invalid_event_integer_fields(
             reader.events()
 
 
+def test_reader_rejects_empty_event_identity_fields(tmp_path: Path) -> None:
+    output = tmp_path / "empty-event-name.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="empty-event-name")
+    with sqlite3.connect(output) as connection:
+        connection.execute("UPDATE events SET name = ''")
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="event name must be a non-empty string"):
+            reader.events()
+
+
 def test_reader_rejects_invalid_causal_confidence(tmp_path: Path) -> None:
     output = tmp_path / "invalid-confidence.runpack"
     with RunpackWriter(output) as writer:
@@ -450,6 +461,32 @@ def test_writer_rejects_invalid_execution_commands_before_writing(tmp_path: Path
     with RunpackReader(output) as reader:
         with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
             reader.execution()
+
+
+def test_writer_rejects_empty_execution_identity_before_writing(tmp_path: Path) -> None:
+    output = tmp_path / "empty-execution-id.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="execution id must be a non-empty string"):
+            writer.add_execution(Execution("", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+
+    with RunpackReader(output) as reader:
+        with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
+            reader.execution()
+
+
+def test_bulk_entity_write_rolls_back_empty_semantic_fields(tmp_path: Path) -> None:
+    output = tmp_path / "empty-entity-kind.runpack"
+    with RunpackWriter(output) as writer:
+        with pytest.raises(RunpackError, match="entity kind must be a non-empty string"):
+            writer.add_entities(
+                (
+                    Entity("valid", "service", "valid", None, {}),
+                    Entity("invalid", "", "invalid", None, {}),
+                )
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.entities() == ()
 
 
 def test_bulk_measurement_write_rolls_back_non_finite_values(tmp_path: Path) -> None:
