@@ -103,6 +103,10 @@ def _typed_value(value: object, *, depth: int = 0) -> JsonValue:
             raise OtelImportError("OTLP bytesValue is invalid")
         try:
             raw = encoded.encode("ascii")
+            if b"=" in raw:
+                padding = len(raw) - len(raw.rstrip(b"="))
+                if len(raw) % 4 or padding not in (1, 2) or b"=" in raw[:-padding]:
+                    raise ValueError("invalid base64 padding")
             decoded = base64.b64decode(
                 raw + b"=" * (-len(raw) % 4),
                 altchars=b"-_",

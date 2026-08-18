@@ -954,7 +954,8 @@ def test_otlp_json_import_canonicalizes_url_safe_unpadded_bytes_attributes(
         assert reader.events()[0].attributes["payload"] == "/w=="
 
 
-def test_otlp_json_import_rejects_invalid_bytes_attributes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("encoded", ["not base64!", "AA=", "AA===", "A"])
+def test_otlp_json_import_rejects_invalid_bytes_attributes(tmp_path: Path, encoded: str) -> None:
     source = tmp_path / "invalid-bytes.json"
     output = tmp_path / "invalid-bytes.runpack"
     source.write_text(
@@ -973,7 +974,7 @@ def test_otlp_json_import_rejects_invalid_bytes_attributes(tmp_path: Path) -> No
                                         "attributes": [
                                             {
                                                 "key": "payload",
-                                                "value": {"bytesValue": "not base64!"},
+                                                "value": {"bytesValue": encoded},
                                             }
                                         ],
                                     }
