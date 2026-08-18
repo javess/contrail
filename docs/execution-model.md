@@ -89,6 +89,8 @@ endpoints, and measurement name/time. These support the initial questions:
 - lifecycle uses top-level explicit stages before heuristics, avoiding additive
   double-counting of nested stages;
 - critical paths use a causally connected graph subset;
+- throughput is inferred from one explicit series, logical parent, or entity at
+  a time; unrelated counters are never merged into one rate;
 - comparisons aggregate semantic keys rather than opaque IDs.
 
 Confidence is part of derived analysis, not a replacement for evidence. Reports

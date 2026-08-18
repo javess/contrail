@@ -482,6 +482,52 @@ def test_throughput_rejects_invalid_progress_and_does_not_infer_across_resets(
     assert analysis.throughput.estimated_drain_seconds is None
 
 
+def test_throughput_does_not_merge_progress_from_multiple_entities(tmp_path: Path) -> None:
+    runpack = tmp_path / "multiple-progress-series.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("progress", "progress", 0, 30, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entities(
+            (
+                Entity("worker-a", "worker", "worker-a", None, {}),
+                Entity("worker-b", "worker", "worker-b", None, {}),
+            )
+        )
+        writer.add_events(
+            (
+                Event(
+                    "progress-a",
+                    "progress",
+                    "progress",
+                    "worker-a",
+                    10,
+                    10,
+                    "test",
+                    None,
+                    None,
+                    {"completed": 5, "total": 10},
+                ),
+                Event(
+                    "progress-b",
+                    "progress",
+                    "progress",
+                    "worker-b",
+                    20,
+                    20,
+                    "test",
+                    None,
+                    None,
+                    {"completed": 6, "total": 10},
+                ),
+            )
+        )
+
+    analysis = analyze_runpack(runpack)
+
+    assert analysis.throughput is None
+
+
 def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> None:
     runpack = tmp_path / "clock-skew.runpack"
     with RunpackWriter(runpack) as writer:

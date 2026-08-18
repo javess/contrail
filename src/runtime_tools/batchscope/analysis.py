@@ -289,9 +289,12 @@ def _critical_path(
 
 
 def _throughput(
-    events: tuple[Event, ...], execution_finished_at_ns: int | None
+    events: tuple[Event, ...], edges: tuple[CausalEdge, ...], execution_finished_at_ns: int | None
 ) -> Throughput | None:
-    samples: list[tuple[int, float, float]] = []
+    parent_by_target = {
+        edge.target_event_id: edge.source_event_id for edge in edges if edge.kind == "parent"
+    }
+    samples_by_series: dict[tuple[str, str], list[tuple[int, float, float]]] = {}
     for event in events:
         if event.kind != "progress" or event.started_at_ns is None:
             continue
@@ -299,9 +302,17 @@ def _throughput(
         total = event.attributes.get("total")
         values = _progress_values(completed, total)
         if values is not None:
-            samples.append((event.started_at_ns, *values))
-    if not samples:
+            explicit_series = event.attributes.get("series")
+            if isinstance(explicit_series, str) and explicit_series:
+                series = ("series", explicit_series)
+            elif event.id in parent_by_target:
+                series = ("parent", parent_by_target[event.id])
+            else:
+                series = ("entity", event.entity_id or "unowned")
+            samples_by_series.setdefault(series, []).append((event.started_at_ns, *values))
+    if len(samples_by_series) != 1:
         return None
+    samples = next(iter(samples_by_series.values()))
     samples.sort()
     latest = samples[-1]
     rate = _sample_rate(samples)
@@ -623,6 +634,6 @@ def analyze_runpack(path: Path) -> BatchAnalysis:
         summary.wall_time_seconds,
         _lifecycle(events, edges, summary.wall_time_seconds),
         critical,
-        _throughput(events, summary.finished_at_ns),
+        _throughput(events, edges, summary.finished_at_ns),
         _bottlenecks(events, critical, summary.wall_time_seconds),
     )
