@@ -209,6 +209,65 @@ def test_otlp_json_import_accepts_integral_exponent_notation(tmp_path: Path) -> 
     assert event.attributes["attempt"] == 100
 
 
+def test_otlp_json_import_omits_empty_resource_groups_from_evidence(tmp_path: Path) -> None:
+    source = tmp_path / "empty-resource.json"
+    output = tmp_path / "empty-resource.runpack"
+    source.write_text(
+        json.dumps(
+            {
+                "resourceSpans": [
+                    {
+                        "resource": {
+                            "droppedAttributesCount": 9,
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {"stringValue": "empty"},
+                                }
+                            ],
+                        },
+                        "scopeSpans": [],
+                    },
+                    {
+                        "resource": {
+                            "droppedAttributesCount": 2,
+                            "attributes": [
+                                {
+                                    "key": "service.name",
+                                    "value": {"stringValue": "populated"},
+                                }
+                            ],
+                        },
+                        "scopeSpans": [
+                            {
+                                "spans": [
+                                    {
+                                        "traceId": "trace",
+                                        "spanId": "span",
+                                        "startTimeUnixNano": "1",
+                                        "endTimeUnixNano": "2",
+                                    }
+                                ]
+                            }
+                        ],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_json(source, output, name="empty-resource")
+
+    assert result.entity_count == 1
+    with RunpackReader(output) as reader:
+        assert [entity.name for entity in reader.entities()] == ["populated"]
+        metadata = reader.execution().metadata
+    otel_metadata = metadata["otel"]
+    assert isinstance(otel_metadata, dict)
+    assert otel_metadata["dropped_attribute_count"] == 2
+
+
 @pytest.mark.parametrize(("field", "value"), (("kind", True), ("status", "invalid")))
 def test_otlp_json_import_rejects_malformed_span_semantics(
     tmp_path: Path, field: str, value: object

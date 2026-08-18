@@ -394,10 +394,9 @@ def import_otlp_json(
     for resource_index, raw_resource_spans in enumerate(resource_spans):
         resource_group = _as_object(raw_resource_spans, "resourceSpans entry")
         resource = _as_object(resource_group.get("resource", {}), "resource")
-        dropped_attribute_count = _bounded_count_total(
-            dropped_attribute_count,
+        resource_dropped_attributes = _nonnegative_count(
             resource.get("droppedAttributesCount"),
-            "dropped OTLP attributes",
+            "resource droppedAttributesCount",
         )
         resource_attributes = _attributes(resource.get("attributes", []))
         service_name = _semantic_name(
@@ -409,7 +408,7 @@ def import_otlp_json(
             uuid.NAMESPACE_URL,
             f"{execution_id}:otel-resource:{resource_index}:{service_name}",
         ).hex
-        entities.append(Entity(entity_id, "service", service_name, None, resource_attributes))
+        resource_has_spans = False
 
         scope_spans = _as_list(resource_group.get("scopeSpans", []), "scopeSpans")
         for raw_scope_spans in scope_spans:
@@ -431,6 +430,7 @@ def import_otlp_json(
                         f"OTLP JSON exceeds the {MAX_OTLP_SPANS}-span input limit"
                     )
                 span = _as_object(raw_span, "span")
+                resource_has_spans = True
                 dropped_attribute_count = _bounded_count_total(
                     dropped_attribute_count,
                     span.get("droppedAttributesCount"),
@@ -513,6 +513,13 @@ def import_otlp_json(
                         attributes=attributes,
                     )
                 )
+        if resource_has_spans:
+            entities.append(Entity(entity_id, "service", service_name, None, resource_attributes))
+            dropped_attribute_count = _bounded_count_total(
+                dropped_attribute_count,
+                resource_dropped_attributes,
+                "dropped OTLP attributes",
+            )
 
     starts = [event.started_at_ns for event in events if event.started_at_ns is not None]
     finishes = [event.finished_at_ns for event in events if event.finished_at_ns is not None]
