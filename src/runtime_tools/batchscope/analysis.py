@@ -677,7 +677,9 @@ def analyze_runpack(path: Path) -> BatchAnalysis:
         edge_values,
         summary.wall_time_seconds,
         clock_inconsistent=clock_inconsistent,
-        causality_complete=summary.missing_causal_references == 0,
+        causality_complete=(
+            summary.missing_causal_references == 0 and summary.annotation_error is None
+        ),
     )
     return BatchAnalysis(
         summary.id,
