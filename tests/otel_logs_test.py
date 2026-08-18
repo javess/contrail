@@ -193,6 +193,51 @@ def test_otlp_logs_preserve_ambiguous_service_resources_without_guessing(tmp_pat
     assert owner.attributes["service.instance.id"] == "c"
 
 
+def test_otlp_logs_use_instance_identity_to_disambiguate_services(tmp_path: Path) -> None:
+    source = tmp_path / "base.runpack"
+    logs = tmp_path / "logs.json"
+    output = tmp_path / "enriched.runpack"
+    with RunpackWriter(source) as writer:
+        writer.add_execution(Execution("run", "run", 1, 10, (), str(tmp_path), 0, None, {}))
+        writer.add_entities(
+            (
+                Entity("api-a", "service", "api", None, {"service.instance.id": "a"}),
+                Entity("api-b", "service", "api", None, {"service.instance.id": "b"}),
+            )
+        )
+    logs.write_text(
+        json.dumps(
+            {
+                "resourceLogs": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {"key": "service.name", "value": {"stringValue": "api"}},
+                                {
+                                    "key": "service.instance.id",
+                                    "value": {"stringValue": "b"},
+                                },
+                            ]
+                        },
+                        "scopeLogs": [
+                            {"logRecords": [{"timeUnixNano": "5", "body": {"stringValue": "ok"}}]}
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_otlp_logs(source, logs, output)
+
+    assert result.new_entity_count == 0
+    assert result.ambiguous_service_count == 0
+    with RunpackReader(output) as reader:
+        log = next(event for event in reader.events() if event.kind == "log.record")
+    assert log.entity_id == "api-b"
+
+
 def test_otlp_logs_reject_partial_trace_correlation_without_publishing(tmp_path: Path) -> None:
     source = tmp_path / "base.runpack"
     logs = tmp_path / "logs.json"

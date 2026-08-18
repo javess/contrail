@@ -445,6 +445,25 @@ def _log_name(body: JsonValue) -> str:
     return f"{body[:117]}..."
 
 
+def _matching_service(
+    service_name: str,
+    resource_attributes: dict[str, JsonValue],
+    entities: tuple[Entity, ...],
+) -> tuple[str | None, bool]:
+    candidates = tuple(
+        entity for entity in entities if entity.kind == "service" and entity.name == service_name
+    )
+    instance_id = resource_attributes.get("service.instance.id")
+    if isinstance(instance_id, str) and instance_id:
+        exact = tuple(
+            entity.id
+            for entity in candidates
+            if entity.attributes.get("service.instance.id") == instance_id
+        )
+        return (exact[0], False) if len(exact) == 1 else (None, len(candidates) > 1)
+    return (candidates[0].id if len(candidates) == 1 else None), len(candidates) > 1
+
+
 def import_otlp_logs(
     runpack: Path,
     source: Path,
@@ -460,10 +479,6 @@ def import_otlp_logs(
         existing_entities = reader.entities()
         existing_events = reader.events()
 
-    services: dict[str, list[str]] = {}
-    for entity in existing_entities:
-        if entity.kind == "service":
-            services.setdefault(entity.name, []).append(entity.id)
     spans: dict[tuple[str, str], list[Event]] = {}
     for event in existing_events:
         trace_id = event.attributes.get("otel.trace_id")
@@ -487,10 +502,12 @@ def import_otlp_logs(
             "service.name",
             default="unknown-service",
         )
-        service_matches = services.get(service_name, [])
+        matched_service, ambiguous_service = _matching_service(
+            service_name, resource_attributes, existing_entities
+        )
         new_entity: Entity | None = None
-        if len(service_matches) == 1:
-            entity_id = service_matches[0]
+        if matched_service is not None:
+            entity_id = matched_service
         else:
             entity_id = uuid.uuid5(
                 uuid.NAMESPACE_URL,
@@ -592,7 +609,7 @@ def import_otlp_logs(
 
         if resource_event_count and new_entity is not None:
             entities.append(new_entity)
-        if resource_event_count and len(service_matches) > 1:
+        if resource_event_count and ambiguous_service:
             ambiguous_services += 1
 
     def append(writer: RunpackWriter) -> OtelLogImportResult:
