@@ -184,6 +184,8 @@ class ExecutionDiff:
     candidate_annotation_error: str | None
     baseline_missing_causal_references: int | None
     candidate_missing_causal_references: int | None
+    baseline_dropped_attribute_count: int | None
+    candidate_dropped_attribute_count: int | None
     baseline_incomplete_streams: tuple[str, ...]
     candidate_incomplete_streams: tuple[str, ...]
     outcome: Outcome
@@ -213,6 +215,8 @@ class ExecutionDiff:
             "candidate_annotation_error": self.candidate_annotation_error,
             "baseline_missing_causal_references": self.baseline_missing_causal_references,
             "candidate_missing_causal_references": self.candidate_missing_causal_references,
+            "baseline_dropped_attribute_count": self.baseline_dropped_attribute_count,
+            "candidate_dropped_attribute_count": self.candidate_dropped_attribute_count,
             "baseline_incomplete_streams": list(self.baseline_incomplete_streams),
             "candidate_incomplete_streams": list(self.candidate_incomplete_streams),
             "outcome": self.outcome,
@@ -491,7 +495,12 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
     )
     error_equivalent = (
         None
-        if baseline_summary.annotation_error or candidate_summary.annotation_error
+        if baseline_summary.annotation_error
+        or candidate_summary.annotation_error
+        or baseline_summary.dropped_attribute_count is None
+        or candidate_summary.dropped_attribute_count is None
+        or baseline_summary.dropped_attribute_count > 0
+        or candidate_summary.dropped_attribute_count > 0
         else baseline_errors == candidate_errors
     )
     return ExecutionDiff(
@@ -504,6 +513,8 @@ def compare_runpacks(baseline_path: Path, candidate_path: Path) -> ExecutionDiff
         candidate_annotation_error=candidate_summary.annotation_error,
         baseline_missing_causal_references=baseline_summary.missing_causal_references,
         candidate_missing_causal_references=candidate_summary.missing_causal_references,
+        baseline_dropped_attribute_count=baseline_summary.dropped_attribute_count,
+        candidate_dropped_attribute_count=candidate_summary.dropped_attribute_count,
         baseline_incomplete_streams=_incomplete_streams(baseline_summary),
         candidate_incomplete_streams=_incomplete_streams(candidate_summary),
         outcome=_outcome(

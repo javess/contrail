@@ -49,6 +49,19 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         for side, count in causal_references
         if count is None or count > 0
     )
+    dropped_attributes = (
+        ("baseline", diff.baseline_dropped_attribute_count),
+        ("candidate", diff.candidate_dropped_attribute_count),
+    )
+    warnings.extend(
+        (
+            f"  {side}: dropped-attribute metadata invalid"
+            if count is None
+            else f"  {side}: {count} exporter-dropped OTLP attributes"
+        )
+        for side, count in dropped_attributes
+        if count is None or count > 0
+    )
     if warnings:
         lines.extend(("", "Evidence warnings", *warnings))
     lines.extend(

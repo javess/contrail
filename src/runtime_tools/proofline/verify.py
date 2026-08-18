@@ -145,6 +145,21 @@ def _incomplete_causal_observation(diff: ExecutionDiff) -> str | None:
     return f"causal evidence incomplete ({'; '.join(incomplete)})"
 
 
+def _incomplete_semantic_observation(diff: ExecutionDiff) -> str | None:
+    incomplete = []
+    for side, count in (
+        ("baseline", diff.baseline_dropped_attribute_count),
+        ("candidate", diff.candidate_dropped_attribute_count),
+    ):
+        if count is None:
+            incomplete.append(f"{side}: completeness unknown")
+        elif count:
+            incomplete.append(f"{side}: {count} dropped attributes")
+    if not incomplete:
+        return None
+    return f"semantic evidence incomplete ({'; '.join(incomplete)})"
+
+
 def _evaluate(
     contract: Contract,
     assertion: Assertion,
@@ -182,6 +197,15 @@ def _evaluate(
                 "unverifiable",
                 f"no new dependency {source} -> {target}",
                 "annotation evidence incomplete",
+            )
+        semantic_observation = _incomplete_semantic_observation(diff)
+        if semantic_observation is not None:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"no new dependency {source} -> {target}",
+                semantic_observation,
             )
         causal_observation = _incomplete_causal_observation(diff)
         if causal_observation is not None:
@@ -228,6 +252,16 @@ def _evaluate(
                 f"candidate {count_label} count <= baseline x {factor:g}",
                 "annotation evidence incomplete",
             )
+        if errors_only:
+            semantic_observation = _incomplete_semantic_observation(diff)
+            if semantic_observation is not None:
+                return _result(
+                    contract,
+                    assertion,
+                    "unverifiable",
+                    f"candidate {count_label} count <= baseline x {factor:g}",
+                    semantic_observation,
+                )
         baseline_operations = _operation_totals(baseline, operation)
         candidate_operations = _operation_totals(candidate, operation)
         if baseline_operations == 0 and candidate_operations == 0:

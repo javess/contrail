@@ -466,3 +466,40 @@ assertions:
     assert report.results[0].observed == (
         "causal evidence incomplete (candidate: 3 unresolved references)"
     )
+
+
+def test_proofline_keeps_attribute_dependent_claims_unverifiable_after_otlp_loss(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "attributes.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=False)
+    with sqlite3.connect(candidate) as connection:
+        row = connection.execute("SELECT metadata_json FROM executions").fetchone()
+        metadata = json.loads(row[0])
+        metadata["otel"] = {"dropped_attribute_count": 2}
+        connection.execute("UPDATE executions SET metadata_json = ?", (json.dumps(metadata),))
+    contract.write_text(
+        """
+name: attributes
+assertions:
+  - type: forbid_new_dependency
+    from: app
+    to: database
+  - type: max_operation_error_count
+    operation: db.write
+    relative_to: baseline
+    factor: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = verify_contracts(contract, baseline, candidate)
+
+    assert [result.status for result in report.results] == ["unverifiable", "unverifiable"]
+    assert all(
+        result.observed == "semantic evidence incomplete (candidate: 2 dropped attributes)"
+        for result in report.results
+    )
