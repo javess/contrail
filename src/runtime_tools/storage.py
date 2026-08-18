@@ -1029,11 +1029,7 @@ class RunpackReader:
                     COALESCE(entity.name, 'unowned') AS entity_name,
                     event.kind AS event_kind,
                     event.name AS event_name,
-                    CASE
-                        WHEN event.clock_domain IS NULL
-                            THEN 'entity:' || COALESCE(event.entity_id, 'unowned')
-                        ELSE 'clock:' || event.clock_domain
-                    END AS concurrency_domain,
+                    event.clock_domain AS concurrency_domain,
                     event.started_at_ns,
                     event.finished_at_ns
                 FROM events AS event
@@ -1046,6 +1042,7 @@ class RunpackReader:
                 GROUP BY entity_kind, entity_name, event_kind, event_name
                 HAVING count(*) = count(started_at_ns)
                    AND count(*) = count(finished_at_ns)
+                   AND count(*) = count(concurrency_domain)
             ),
             boundaries AS (
                 SELECT normalized.entity_kind, normalized.entity_name,

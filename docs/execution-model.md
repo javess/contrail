@@ -64,10 +64,10 @@ uses the same known clock domain. Cross-domain paths retain a best-effort
 duration but are explicitly labelled inferred.
 
 Observed maximum concurrency is calculated only among complete intervals in
-the same clock domain. RunDiff takes the maximum observed within any one domain;
-it never sums overlap across clocks that may be skewed. If any event in a
-semantic operation group lacks an interval, concurrency for that group remains
-unavailable rather than being reported as zero.
+the same known clock domain. RunDiff takes the maximum observed within any one
+domain; it never sums overlap across clocks that may be skewed. If any event in
+a semantic operation group lacks an interval or clock domain, concurrency for
+that group remains unavailable rather than being reported as zero.
 
 ## Identity and repetition
 

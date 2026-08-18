@@ -221,6 +221,26 @@ def test_reader_keeps_observed_concurrency_within_clock_domains(tmp_path: Path) 
     assert concurrency == {("service", "worker", "stage", "work"): 1}
 
 
+def test_reader_keeps_concurrency_unknown_without_a_clock_domain(tmp_path: Path) -> None:
+    runpack = tmp_path / "unknown-concurrency.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(
+            Execution("concurrency", "concurrency", 0, 10, (), str(tmp_path), 0, None, {})
+        )
+        writer.add_entity(Entity("worker", "service", "worker", None, {}))
+        writer.add_events(
+            (
+                Event("a", "stage", "work", "worker", 1, 9, None, None, None, {}),
+                Event("b", "stage", "work", "worker", 2, 8, None, None, None, {}),
+            )
+        )
+
+    with RunpackReader(runpack) as reader:
+        concurrency = reader.operation_max_concurrency()
+
+    assert concurrency == {}
+
+
 def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"
