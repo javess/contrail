@@ -378,6 +378,33 @@ def test_output_drain_retries_interrupted_select(monkeypatch: pytest.MonkeyPatch
     assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
 
 
+@pytest.mark.parametrize("operation", ("terminate", "kill"))
+def test_process_cleanup_reaps_a_child_that_exits_during_signaling(operation: str) -> None:
+    waits: list[float | None] = []
+
+    class VanishedProcess:
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            if operation == "terminate":
+                raise ProcessLookupError
+
+        def kill(self) -> None:
+            if operation == "kill":
+                raise ProcessLookupError
+
+        def wait(self, timeout: float | None = None) -> int:
+            waits.append(timeout)
+            if operation == "kill" and timeout is not None:
+                raise subprocess.TimeoutExpired("child", timeout)
+            return 0
+
+    capture._terminate_and_reap(cast(subprocess.Popen[bytes], VanishedProcess()))
+
+    assert waits[-1] is None
+
+
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:
     output = tmp_path / "existing.runpack"
     output.write_bytes(b"keep me")

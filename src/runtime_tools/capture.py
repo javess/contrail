@@ -208,10 +208,15 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
         return
     except subprocess.TimeoutExpired:
         pass
+    except ProcessLookupError:
+        process.wait()
+        return
     except OSError:
         return
     try:
         process.kill()
+        process.wait()
+    except ProcessLookupError:
         process.wait()
     except OSError:
         return
