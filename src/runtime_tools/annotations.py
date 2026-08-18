@@ -14,6 +14,9 @@ class AnnotationError(ValueError):
     """Raised when a captured annotation stream is malformed."""
 
 
+_MAX_TIMESTAMP_NS = (1 << 63) - 1
+
+
 def _json_value(value: object, label: str) -> JsonValue:
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -50,6 +53,8 @@ def _timestamp(record: dict[str, JsonValue]) -> int:
     value = record.get("timestamp_ns")
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise AnnotationError("annotation timestamp_ns must be a non-negative integer")
+    if value > _MAX_TIMESTAMP_NS:
+        raise AnnotationError("annotation timestamp_ns exceeds the runpack integer range")
     return value
 
 
@@ -114,14 +119,18 @@ def load_annotations(
         attributes = _object(start.get("attributes", {}), "annotation attributes")
         if end is not None and end.get("error") is True:
             attributes = {**attributes, "error": True}
+        started_at_ns = _timestamp(start)
+        finished_at_ns = _timestamp(end) if end is not None else None
+        if finished_at_ns is not None and finished_at_ns < started_at_ns:
+            raise AnnotationError(f"annotation event {event_id} ends before it starts")
         events.append(
             Event(
                 event_id,
                 _string(start, "kind"),
                 _string(start, "name"),
                 entity_id,
-                _timestamp(start),
-                _timestamp(end) if end is not None else None,
+                started_at_ns,
+                finished_at_ns,
                 "host.wall",
                 None,
                 None,

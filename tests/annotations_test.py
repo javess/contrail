@@ -136,6 +136,36 @@ print("result")
     assert summary.record_counts["events"] == 1
 
 
+def test_record_process_preserves_core_capture_for_reversed_annotation_intervals(
+    tmp_path: Path,
+) -> None:
+    workload = tmp_path / "reversed.py"
+    workload.write_text(
+        """
+import json
+import os
+from pathlib import Path
+
+records = [
+    {"record": "event_start", "id": "bad", "kind": "stage", "name": "bad", "timestamp_ns": 10},
+    {"record": "event_end", "id": "bad", "timestamp_ns": 9},
+]
+Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_text(
+    "".join(json.dumps(record) + "\\n" for record in records)
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    output = tmp_path / "reversed.runpack"
+
+    exit_code = record_process((sys.executable, str(workload)), output, name="reversed")
+
+    summary = inspect_runpack(output)
+    assert exit_code == 0
+    assert summary.annotation_error == "annotation event bad ends before it starts"
+    assert summary.record_counts["events"] == 1
+
+
 def test_annotation_writer_completes_short_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
