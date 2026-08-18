@@ -51,6 +51,11 @@ def _timestamp_ns(value: object) -> int:
         raise PrometheusImportError(f"invalid Prometheus sample timestamp: {value}")
     if not _MIN_RUNPACK_TIMESTAMP_SECONDS <= seconds <= _MAX_RUNPACK_TIMESTAMP_SECONDS:
         raise PrometheusImportError("Prometheus sample timestamp exceeds the runpack range")
+    decimal_tuple = seconds.as_tuple()
+    if isinstance(decimal_tuple.exponent, int) and decimal_tuple.exponent < -9:
+        subnanosecond_digits = -(decimal_tuple.exponent + 9)
+        if any(decimal_tuple.digits[-subnanosecond_digits:]):
+            raise PrometheusImportError("Prometheus sample timestamp has sub-nanosecond precision")
     return int(seconds * _NANOSECONDS_PER_SECOND)
 
 
