@@ -437,6 +437,19 @@ def test_proofline_normalizes_numeric_threshold_overflow(tmp_path: Path) -> None
         verify_contracts(contract, baseline, candidate)
 
 
+def test_proofline_normalizes_yaml_integer_parser_limits(tmp_path: Path) -> None:
+    contract = tmp_path / "oversized-integer.yaml"
+    contract.write_text(
+        "name: overflow\nassertions:\n  - type: max_runtime_regression\n    percent: "
+        + "1" * 5_000
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractError, match="contract file contains an invalid scalar"):
+        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
+
+
 @pytest.mark.parametrize(
     ("assertion", "evidence"),
     (

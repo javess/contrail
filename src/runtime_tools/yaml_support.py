@@ -99,6 +99,10 @@ def load_yaml_file(path: Path, *, label: str, max_bytes: int) -> Any:
     try:
         document = load_yaml(value)
         _validate_utf8_strings(document, label)
+    except YamlInputError:
+        raise
     except RecursionError as exc:
         raise YamlInputError(f"{label} nesting is too deep") from exc
+    except (OverflowError, ValueError) as exc:
+        raise YamlInputError(f"{label} contains an invalid scalar") from exc
     return document
