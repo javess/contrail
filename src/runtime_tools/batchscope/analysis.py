@@ -542,30 +542,32 @@ def _bottlenecks(
                 0.85,
             )
         )
+    run_intervals = tuple(
+        _event_interval(event)
+        for event in events
+        if event.kind == "run" and _has_complete_interval(event)
+    )
     for event in events:
-        duration = _duration_ns(event) / 1_000_000_000
-        enclosing_run_durations = tuple(
-            _duration_ns(scope) / 1_000_000_000
-            for scope in events
-            if scope.kind == "run"
-            and scope.started_at_ns is not None
-            and scope.finished_at_ns is not None
-            and event.started_at_ns is not None
-            and event.finished_at_ns is not None
-            and scope.started_at_ns <= event.started_at_ns
-            and scope.finished_at_ns >= event.finished_at_ns
-        )
-        comparison_window = min(enclosing_run_durations, default=total)
         concurrency = event.attributes.get("concurrency")
         if (
-            event.kind == "stage"
-            and isinstance(concurrency, (int, float))
-            and not isinstance(concurrency, bool)
-            and math.isfinite(concurrency)
-            and concurrency == 1
-            and comparison_window > 0
-            and duration / comparison_window >= 0.25
+            event.kind != "stage"
+            or not isinstance(concurrency, (int, float))
+            or isinstance(concurrency, bool)
+            or not math.isfinite(concurrency)
+            or concurrency != 1
         ):
+            continue
+        duration = _duration_ns(event) / 1_000_000_000
+        enclosing_run_durations = tuple(
+            (finish - start) / 1_000_000_000
+            for start, finish in run_intervals
+            if event.started_at_ns is not None
+            and event.finished_at_ns is not None
+            and start <= event.started_at_ns
+            and finish >= event.finished_at_ns
+        )
+        comparison_window = min(enclosing_run_durations, default=total)
+        if comparison_window > 0 and duration / comparison_window >= 0.25:
             findings.append(
                 Bottleneck(
                     "serialized_stage",
