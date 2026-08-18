@@ -161,6 +161,13 @@ def _resolve_path(path: Path, label: str) -> Path:
         raise ExperimentError(f"could not resolve {label}: {path}") from exc
 
 
+def _temporary_worktree_root() -> Path:
+    try:
+        return Path(tempfile.mkdtemp(prefix="proofline-worktrees-"))
+    except OSError as exc:
+        raise ExperimentError(f"could not create temporary worktree directory: {exc}") from exc
+
+
 def run_experiment(
     contract: Path,
     *,
@@ -186,7 +193,7 @@ def run_experiment(
 
     baseline_runpack = output_dir / "baseline.runpack"
     candidate_runpack = output_dir / "candidate.runpack"
-    temporary_root = Path(tempfile.mkdtemp(prefix="proofline-worktrees-"))
+    temporary_root = _temporary_worktree_root()
     baseline_tree = temporary_root / "baseline"
     candidate_tree = temporary_root / "candidate"
     added: list[Path] = []

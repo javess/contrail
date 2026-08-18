@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,18 @@ def test_proofline_preserves_trailing_whitespace_in_repository_paths(tmp_path: P
     _git(repo, "init", "-b", "main")
 
     assert experiments._repo_root(repo) == repo
+
+
+def test_proofline_normalizes_temporary_worktree_allocation_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise PermissionError("temporary storage denied")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", fail)
+
+    with pytest.raises(ExperimentError, match="could not create temporary worktree directory"):
+        experiments._temporary_worktree_root()
 
 
 def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Path) -> None:
