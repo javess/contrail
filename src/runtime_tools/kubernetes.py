@@ -605,7 +605,7 @@ def import_kubernetes_snapshot(
                 _optional_string(item.get("reason"), "Event reason") or _name(item),
                 involved_entity_id,
                 event_timestamp,
-                None,
+                event_timestamp,
                 "kubernetes.apiserver",
                 None,
                 None,

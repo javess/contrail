@@ -1024,6 +1024,7 @@ def test_kubernetes_event_preserves_epoch_timestamp_over_later_fallback(
     with RunpackReader(output) as reader:
         event = next(item for item in reader.events() if item.kind == "kubernetes.event")
     assert event.started_at_ns == 0
+    assert event.finished_at_ns == 0
 
 
 def test_kubernetes_snapshot_rejects_non_standard_json_constants(tmp_path: Path) -> None:
