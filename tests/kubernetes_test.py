@@ -301,6 +301,45 @@ def test_kubernetes_correlates_cross_service_trace_roots_to_each_pod(tmp_path: P
     assert correlations == {"request", "handler"}
 
 
+def test_kubernetes_correlates_every_independent_root_in_a_pod(tmp_path: Path) -> None:
+    base = tmp_path / "base.runpack"
+    snapshot = tmp_path / "pod.json"
+    output = tmp_path / "output.runpack"
+    with RunpackWriter(base) as writer:
+        writer.add_execution(Execution("run", "run", 0, 10, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "service", "worker", None, {"k8s.pod.uid": "pod-uid"}))
+        writer.add_events(
+            (
+                Event("root-a", "server.request", "a", "worker", 1, 4, None, None, None, {}),
+                Event("root-b", "server.request", "b", "worker", 6, 9, None, None, None, {}),
+            )
+        )
+    snapshot.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "kind": "Pod",
+                        "metadata": _metadata("worker", "pod-uid"),
+                        "spec": {"containers": []},
+                        "status": {},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_kubernetes_snapshot(base, snapshot, output)
+
+    assert result.correlation_count == 2
+    with RunpackReader(output) as reader:
+        correlations = {
+            edge.target_event_id for edge in reader.causal_edges() if edge.kind == "correlates"
+        }
+    assert correlations == {"root-a", "root-b"}
+
+
 def test_kubernetes_snapshot_rejects_timezone_ambiguous_timestamps(tmp_path: Path) -> None:
     trace = tmp_path / "trace.json"
     base = tmp_path / "base.runpack"

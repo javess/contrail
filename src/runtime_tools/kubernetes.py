@@ -269,18 +269,24 @@ def _correlations(
         if edge.kind == "parent"
         and entity_by_event.get(edge.source_event_id) == entity_by_event.get(edge.target_event_id)
     }
-    roots_by_entity: dict[str, str] = {}
+    roots_by_entity: dict[str, list[str]] = {}
     for event in events:
         if event.entity_id is not None and event.id not in incoming_within_entity:
-            roots_by_entity.setdefault(event.entity_id, event.id)
-    result = []
+            roots_by_entity.setdefault(event.entity_id, []).append(event.id)
+    result: list[CausalEdge] = []
     for entity in entities:
         pod_uid = entity.attributes.get("k8s.pod.uid")
         pod_event = pod_events.get(pod_uid) if isinstance(pod_uid, str) else None
-        root_event = roots_by_entity.get(entity.id)
-        if pod_event and root_event:
-            result.append(
-                CausalEdge(pod_event, root_event, "correlates", 1.0, {"source": "kubernetes"})
+        if pod_event:
+            result.extend(
+                CausalEdge(
+                    pod_event,
+                    root_event,
+                    "correlates",
+                    1.0,
+                    {"source": "kubernetes"},
+                )
+                for root_event in roots_by_entity.get(entity.id, ())
             )
     return tuple(result)
 
