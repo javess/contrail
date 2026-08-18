@@ -93,7 +93,7 @@ def test_otlp_logs_enrich_known_spans_and_bound_timestamped_records(tmp_path: Pa
     assert log.name == "accepted"
     assert log.entity_id == "api"
     assert log.started_at_ns == 5
-    assert log.finished_at_ns is None
+    assert log.finished_at_ns == 5
     assert log.attributes == {
         "log.body": "accepted",
         "log.severity_text": "INFO",

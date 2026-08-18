@@ -832,7 +832,7 @@ def import_otlp_logs(
                         _log_name(body),
                         event_entity_id,
                         timestamp_ns,
-                        None,
+                        timestamp_ns,
                         f"otel-log-resource-{resource_index}-scope-{scope_index}",
                         None,
                         record_index,
