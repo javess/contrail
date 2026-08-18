@@ -137,8 +137,12 @@ def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
             raw_values = series.get("values")
             if result_type == "matrix" and raw_values is None:
                 raise PrometheusImportError("Prometheus matrix series requires values")
+            if result_type == "matrix" and "value" in series:
+                raise PrometheusImportError("Prometheus matrix series cannot contain value")
             if result_type == "vector" and "value" not in series:
                 raise PrometheusImportError("Prometheus vector series requires value")
+            if result_type == "vector" and raw_values is not None:
+                raise PrometheusImportError("Prometheus vector series cannot contain values")
             if raw_values is None and "value" in series:
                 raw_values = [series["value"]]
             if not isinstance(raw_values, list):

@@ -121,6 +121,24 @@ def test_prometheus_response_rejects_non_finite_timestamps(tmp_path: Path) -> No
             {"metric": {"__name__": "depth"}, "values": [[1, "3"]]},
             "vector series requires value",
         ),
+        (
+            "matrix",
+            {
+                "metric": {"__name__": "depth"},
+                "value": [1, "3"],
+                "values": [[1, "4"]],
+            },
+            "matrix series cannot contain value",
+        ),
+        (
+            "vector",
+            {
+                "metric": {"__name__": "depth"},
+                "value": [1, "3"],
+                "values": [[1, "4"]],
+            },
+            "vector series cannot contain values",
+        ),
     ),
 )
 def test_prometheus_response_rejects_inconsistent_result_types(
