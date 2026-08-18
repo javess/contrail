@@ -45,7 +45,7 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
                 "test",
                 None,
                 index,
-                {"peer.service": "results-db"},
+                {"peer.service": "results-db", "error": candidate and index == 0},
             )
         )
     if candidate:
@@ -333,6 +333,31 @@ assertions:
 
     assert report.results[0].status == "unverifiable"
     assert report.results[0].observed == "operation db.delete not observed in either run"
+
+
+def test_proofline_limits_explicit_operation_failures(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.runpack"
+    candidate = tmp_path / "candidate.runpack"
+    contract = tmp_path / "operation-errors.yaml"
+    _write_runpack(baseline, candidate=False)
+    _write_runpack(candidate, candidate=True)
+    contract.write_text(
+        """
+name: operation-errors
+assertions:
+  - type: max_operation_error_count
+    operation: db.write
+    relative_to: baseline
+    factor: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    report = verify_contracts(contract, baseline, candidate)
+
+    assert report.results[0].status == "fail"
+    assert report.results[0].expected == "candidate db.write error count <= baseline x 1"
+    assert report.results[0].observed == "baseline=0, candidate=1, limit=0"
 
 
 def test_proofline_reports_incomplete_output_identity_as_unverifiable(tmp_path: Path) -> None:

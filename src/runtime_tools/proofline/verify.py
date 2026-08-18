@@ -109,11 +109,12 @@ def _max_regression(
     )
 
 
-def _operation_totals(path: Path, operation: str) -> int:
+def _operation_totals(path: Path, operation: str, *, errors_only: bool = False) -> int:
     with RunpackReader(path) as reader:
+        counts = reader.operation_error_counts() if errors_only else reader.operation_counts()
         return sum(
             count
-            for (_, _, _, operation_name), count in reader.operation_counts().items()
+            for (_, _, _, operation_name), count in counts.items()
             if operation_name == operation
         )
 
@@ -209,38 +210,50 @@ def _evaluate(
             f"no new dependency {source} -> {target}",
             f"candidate count={violation.candidate}" if violation else "not observed",
         )
-    if assertion.type == "max_operation_count":
+    if assertion.type in {"max_operation_count", "max_operation_error_count"}:
         operation = _string(assertion.config, "operation", assertion)
+        errors_only = assertion.type == "max_operation_error_count"
+        count_label = f"{operation} error" if errors_only else operation
         relative_to = _string(assertion.config, "relative_to", assertion)
         if relative_to != "baseline":
-            raise ContractError("max_operation_count relative_to must be baseline")
+            raise ContractError(f"{assertion.type} relative_to must be baseline")
         factor = _number(assertion.config, "factor", assertion)
         if factor < 0:
-            raise ContractError("max_operation_count factor cannot be negative")
+            raise ContractError(f"{assertion.type} factor cannot be negative")
         if diff.baseline_annotation_error or diff.candidate_annotation_error:
             return _result(
                 contract,
                 assertion,
                 "unverifiable",
-                f"candidate {operation} count <= baseline x {factor:g}",
+                f"candidate {count_label} count <= baseline x {factor:g}",
                 "annotation evidence incomplete",
             )
-        before = _operation_totals(baseline, operation)
-        after = _operation_totals(candidate, operation)
-        if before == 0 and after == 0:
+        baseline_operations = _operation_totals(baseline, operation)
+        candidate_operations = _operation_totals(candidate, operation)
+        if baseline_operations == 0 and candidate_operations == 0:
             return _result(
                 contract,
                 assertion,
                 "unverifiable",
-                f"candidate {operation} count <= baseline x {factor:g}",
+                f"candidate {count_label} count <= baseline x {factor:g}",
                 f"operation {operation} not observed in either run",
             )
+        before = (
+            _operation_totals(baseline, operation, errors_only=True)
+            if errors_only
+            else baseline_operations
+        )
+        after = (
+            _operation_totals(candidate, operation, errors_only=True)
+            if errors_only
+            else candidate_operations
+        )
         limit = before * factor
         return _result(
             contract,
             assertion,
             "pass" if after <= limit else "fail",
-            f"candidate {operation} count <= baseline x {factor:g}",
+            f"candidate {count_label} count <= baseline x {factor:g}",
             f"baseline={before}, candidate={after}, limit={limit:g}",
         )
     raise ContractError(f"unsupported assertion type: {assertion.type}")

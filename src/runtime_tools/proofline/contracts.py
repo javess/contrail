@@ -18,6 +18,7 @@ SUPPORTED_ASSERTIONS = {
     "max_peak_memory_regression",
     "forbid_new_dependency",
     "max_operation_count",
+    "max_operation_error_count",
 }
 MAX_CONTRACT_BYTES = 1024 * 1024
 
