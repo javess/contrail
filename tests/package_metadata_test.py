@@ -91,6 +91,9 @@ def test_source_install_contains_typed_marker_and_ui_assets() -> None:
     package = files("runtime_tools")
     assert package.joinpath("py.typed").is_file()
     assert package.joinpath("schemas", "contrail-output-v1.schema.json").is_file()
+    assert package.joinpath("providers", "contracts.py").is_file()
+    assert package.joinpath("providers", "registry.py").is_file()
+    assert package.joinpath("providers", "builtins", "otel", "commands.py").is_file()
     static = package.joinpath("ui", "static")
     assert all(static.joinpath(name).is_file() for name in ("index.html", "app.js", "styles.css"))
 

@@ -1,4 +1,4 @@
-"""Import bounded OTLP/JSON trace exports into a runpack."""
+"""Normalize bounded OTLP/JSON trace and log evidence."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from typing import Never, cast
 from urllib.parse import quote
 
 from runtime_tools.artifacts import artifact_exists, publish_without_overwrite, remove_best_effort
-from runtime_tools.enrichment import enrich_copy, validate_enrichment_destination
 from runtime_tools.json_support import reject_duplicate_object
 from runtime_tools.model import Attachment, CausalEdge, Entity, Event, Execution, JsonValue
+from runtime_tools.providers.enrichment import enrich_copy, validate_enrichment_destination
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 

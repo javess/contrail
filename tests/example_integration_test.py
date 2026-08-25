@@ -6,8 +6,8 @@ from pathlib import Path
 from runtime_tools import record_process
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.batchscope.report import render_analysis
-from runtime_tools.otel import import_otlp_json
 from runtime_tools.proofline import verify_contracts
+from runtime_tools.providers.builtins.otel import import_otlp_json
 from runtime_tools.rundiff import compare_runpacks
 
 

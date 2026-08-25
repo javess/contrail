@@ -10,8 +10,10 @@ from pathlib import Path
 
 from runtime_tools._version import __version__
 from runtime_tools.batchscope.cli import main as batchscope_main
+from runtime_tools.cli import CORE_COMMANDS
 from runtime_tools.cli import main as runtime_main
 from runtime_tools.proofline.cli import main as proofline_main
+from runtime_tools.providers import ProviderError, ProviderRegistry, resolve_provider_registry
 from runtime_tools.rundiff.cli import main as rundiff_main
 from runtime_tools.storage import RunpackError
 from runtime_tools.terminal import broken_pipe_safe, terminal_text
@@ -24,15 +26,19 @@ _RUNTIME_COMMANDS = frozenset(
         "job",
         "serve",
         "query",
-        "import-otel",
-        "enrich-kubernetes",
-        "enrich-prometheus",
-        "enrich-otel-logs",
-        "enrich-temporal-history",
+        "providers",
     }
 )
 _PROOFLINE_COMMANDS = frozenset({"validate", "verify", "run", "search"})
-_HELP = """\
+
+
+def _help(provider_registry: ProviderRegistry) -> str:
+    provider_lines = "\n".join(
+        f"  {command.name:<27} {command.help}" for command in provider_registry.commands
+    )
+    if not provider_lines:
+        provider_lines = "  (no evidence providers enabled)"
+    return f"""\
 usage: contrail COMMAND [ARGS...]
 
 Capture runtime evidence, enforce behavioral contracts, and follow failures to
@@ -52,10 +58,11 @@ Core workflow (record → verify → serve):
   inspect                    inspect normalized execution evidence
   analyze                    explain lifecycle, critical path, and bottlenecks
 
-Automation and adapters:
-  validate, run, search, query, import-otel,
-  enrich-kubernetes, enrich-prometheus, enrich-otel-logs,
-  enrich-temporal-history
+Automation:
+  validate, run, search, query
+
+Enabled provider commands:
+{provider_lines}
 
 Run 'contrail COMMAND --help' for command-specific options.
 """
@@ -243,13 +250,15 @@ def _dispatch(
     command: str,
     arguments: list[str],
     *,
+    provider_registry: ProviderRegistry,
     launch_capture_worker: bool = False,
 ) -> int:
-    if command in _RUNTIME_COMMANDS:
+    if command in _RUNTIME_COMMANDS | provider_registry.command_names:
         return runtime_main(
             [command, *arguments],
             prog="contrail",
             error_label="contrail",
+            _provider_registry=provider_registry,
         )
     if command == "compare":
         return rundiff_main(
@@ -278,24 +287,46 @@ def _dispatch(
 @broken_pipe_safe
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments == ["--help"] or arguments == ["-h"]:
-        print(_HELP, end="")
-        return 0
     if arguments == ["--version"]:
         print(f"contrail {__version__}")
         return 0
-    command, *command_arguments = arguments
-    if command == "demo":
+    if arguments and arguments[0] == "demo":
+        _, *command_arguments = arguments
         return _demo_main(command_arguments)
-    if command == "report":
+    if arguments and arguments[0] == "report":
+        _, *command_arguments = arguments
         return _report_main(command_arguments)
-    if command not in _RUNTIME_COMMANDS | _PROOFLINE_COMMANDS | {"compare", "analyze"}:
+    try:
+        provider_registry = resolve_provider_registry(
+            reserved_commands=(
+                *CORE_COMMANDS,
+                *_PROOFLINE_COMMANDS,
+                "compare",
+                "analyze",
+                "demo",
+                "report",
+            )
+        )
+    except ProviderError as exc:
+        print(f"contrail: {terminal_text(exc)}", file=sys.stderr)
+        return 2
+    if not arguments or arguments == ["--help"] or arguments == ["-h"]:
+        print(_help(provider_registry), end="")
+        return 0
+    command, *command_arguments = arguments
+    if command not in (
+        _RUNTIME_COMMANDS
+        | provider_registry.command_names
+        | _PROOFLINE_COMMANDS
+        | {"compare", "analyze"}
+    ):
         print(f"contrail: unknown command: {terminal_text(command)}", file=sys.stderr)
         print("Try 'contrail --help'.", file=sys.stderr)
         return 2
     return _dispatch(
         command,
         command_arguments,
+        provider_registry=provider_registry,
         launch_capture_worker=argv is None,
     )
 

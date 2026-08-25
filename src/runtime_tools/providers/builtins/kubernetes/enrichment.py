@@ -10,13 +10,13 @@ from pathlib import Path
 from typing import Never, cast
 from urllib.parse import quote
 
-from runtime_tools.enrichment import (
+from runtime_tools.json_support import reject_duplicate_object
+from runtime_tools.model import CausalEdge, Entity, Event, JsonValue
+from runtime_tools.providers.enrichment import (
     EnrichmentError,
     enrich_copy,
     validate_enrichment_destination,
 )
-from runtime_tools.json_support import reject_duplicate_object
-from runtime_tools.model import CausalEdge, Entity, Event, JsonValue
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 

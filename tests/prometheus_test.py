@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools import prometheus
-from runtime_tools.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.model import Entity, Execution
-from runtime_tools.prometheus import (
+from runtime_tools.providers.builtins.prometheus import (
     PrometheusImportError,
     PrometheusImportResult,
     import_prometheus_response,
 )
+from runtime_tools.providers.builtins.prometheus import enrichment as prometheus
+from runtime_tools.providers.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 

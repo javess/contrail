@@ -10,11 +10,17 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import SearchStrategy
 
-from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
 from runtime_tools.model import Execution
-from runtime_tools.otel import OtelImportError, import_otlp_json
-from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
 from runtime_tools.proofline.contracts import ContractError, load_contracts
+from runtime_tools.providers.builtins.kubernetes import (
+    KubernetesImportError,
+    import_kubernetes_snapshot,
+)
+from runtime_tools.providers.builtins.otel import OtelImportError, import_otlp_json
+from runtime_tools.providers.builtins.prometheus import (
+    PrometheusImportError,
+    import_prometheus_response,
+)
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
 
 _PROPERTY_SETTINGS = settings(

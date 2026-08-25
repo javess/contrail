@@ -9,9 +9,10 @@
   `foundation -> adapters -> analyses -> presentation`.
 - Foundation modules are `_version`, `artifacts`, `json_support`, `model`,
   `runpack`, `semantics`, `storage`, `terminal`, and `yaml_support`.
-- Adapters are `annotations`, `capture`, `deep_profile`, `enrichment`,
-  `kubernetes`, `otel`, `process_observer`, `prometheus`, `runtime`, `temporal`,
-  and the private Python profiling and semantic-capture bootstraps.
+- Adapters are `annotations`, `capture`, `deep_profile`,
+  `process_observer`, `providers`, `runtime`, and the private Python profiling
+  and semantic-capture bootstraps. Provider contracts, discovery, and
+  implementations live under `providers`; analyses consume normalized evidence.
 - Analyses are `inspect`, `query`, `batchscope`, `rundiff`, and `proofline`.
 - Presentation is the package facade, command modules, `capture_jobs`,
   `capture_worker`, `demo`, and `ui`.

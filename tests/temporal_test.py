@@ -7,12 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools import temporal
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.model import Event, Execution
-from runtime_tools.otel import import_otlp_json
+from runtime_tools.providers.builtins.otel import import_otlp_json
+from runtime_tools.providers.builtins.temporal import (
+    TemporalHistoryImportError,
+    import_temporal_history,
+)
+from runtime_tools.providers.builtins.temporal import enrichment as temporal
 from runtime_tools.storage import RunpackReader, RunpackWriter
-from runtime_tools.temporal import TemporalHistoryImportError, import_temporal_history
 
 
 def _minimal_history(*, scheduled_event_id: str = "2") -> dict[str, object]:

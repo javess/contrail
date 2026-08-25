@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools import otel
 from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
-from runtime_tools.otel import OtelImportError, import_otlp_json
+from runtime_tools.providers.builtins.otel import OtelImportError, import_otlp_json
+from runtime_tools.providers.builtins.otel import importer as otel
 from runtime_tools.storage import RunpackError, RunpackReader
 
 

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools.enrichment import enrich_copy
 from runtime_tools.model import Attachment, Entity
+from runtime_tools.providers.enrichment import enrich_copy
 from runtime_tools.storage import (
     RunpackError,
     RunpackReader,

@@ -8,12 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from runtime_tools import otel
 from runtime_tools.batchscope import analyze_runpack
-from runtime_tools.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.inspect import inspect_runpack
 from runtime_tools.model import Entity, Event, Execution
-from runtime_tools.otel import OtelImportError, OtelLogImportResult, import_otlp_logs
+from runtime_tools.providers.builtins.otel import (
+    OtelImportError,
+    OtelLogImportResult,
+    import_otlp_logs,
+)
+from runtime_tools.providers.builtins.otel import importer as otel
+from runtime_tools.providers.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
 

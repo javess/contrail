@@ -9,17 +9,17 @@ from typing import cast
 
 import pytest
 
-from runtime_tools import kubernetes
 from runtime_tools.batchscope import analyze_runpack
-from runtime_tools.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.inspect import inspect_runpack
-from runtime_tools.kubernetes import (
+from runtime_tools.model import CausalEdge, Entity, Event, Execution
+from runtime_tools.providers.builtins.kubernetes import (
     KubernetesImportError,
     KubernetesImportResult,
     import_kubernetes_snapshot,
 )
-from runtime_tools.model import CausalEdge, Entity, Event, Execution
-from runtime_tools.otel import import_otlp_json
+from runtime_tools.providers.builtins.kubernetes import enrichment as kubernetes
+from runtime_tools.providers.builtins.otel import import_otlp_json
+from runtime_tools.providers.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 

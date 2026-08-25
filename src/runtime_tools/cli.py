@@ -35,21 +35,32 @@ from runtime_tools.capture_jobs import (
     wait_capture_job,
 )
 from runtime_tools.capture_worker import capture_worker_client_event, run_capture_worker
-from runtime_tools.enrichment import EnrichmentError
 from runtime_tools.inspect import inspect_reader, render_causal_tree_reader, render_summary
-from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
-from runtime_tools.otel import OtelImportError, import_otlp_json, import_otlp_logs
-from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
+from runtime_tools.providers import ProviderError, ProviderRegistry, resolve_provider_registry
 from runtime_tools.query import QueryError, query_runpack, render_query
 from runtime_tools.storage import RunpackError, RunpackReader, resolve_runpack_path
-from runtime_tools.temporal import import_temporal_history
 from runtime_tools.terminal import broken_pipe_safe, terminal_text
 from runtime_tools.ui import TimelineError, serve_runpacks
 
 CAPTURE_JOB_OUTPUT_POLL_SECONDS = 0.1
+CORE_COMMANDS = frozenset(
+    {
+        "record",
+        "recover",
+        "job",
+        "inspect",
+        "serve",
+        "query",
+        "providers",
+    }
+)
 
 
-def _parser(*, prog: str = "runtime") -> argparse.ArgumentParser:
+def _parser(
+    provider_registry: ProviderRegistry,
+    *,
+    prog: str = "runtime",
+) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -134,16 +145,6 @@ def _parser(*, prog: str = "runtime") -> argparse.ArgumentParser:
     inspect.add_argument("--format", choices=("text", "json"), default="text")
     inspect.add_argument("--tree", action="store_true", help="print parent-child causal structure")
 
-    import_otel = subparsers.add_parser("import-otel", help="import an OTLP/JSON trace export")
-    import_otel.add_argument("source", type=Path)
-    import_otel.add_argument("--name", help="logical execution name")
-    import_otel.add_argument("--output", type=Path, help="output .runpack path")
-    import_otel.add_argument(
-        "--include-raw",
-        action="store_true",
-        help="store the source OTLP JSON in the runpack",
-    )
-
     serve = subparsers.add_parser("serve", help="open a local execution timeline")
     serve.add_argument("runpack", type=Path)
     serve.add_argument("--compare", type=Path, help="candidate runpack for compare mode")
@@ -162,38 +163,6 @@ def _parser(*, prog: str = "runtime") -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--no-open", action="store_true", help="do not open a browser")
 
-    kubernetes = subparsers.add_parser(
-        "enrich-kubernetes", help="add a bounded Kubernetes API snapshot"
-    )
-    kubernetes.add_argument("runpack", type=Path)
-    kubernetes.add_argument("snapshot", type=Path)
-    kubernetes.add_argument("--output", type=Path, required=True)
-
-    prometheus = subparsers.add_parser(
-        "enrich-prometheus", help="add a bounded Prometheus HTTP API response"
-    )
-    prometheus.add_argument("runpack", type=Path)
-    prometheus.add_argument("response", type=Path)
-    prometheus.add_argument("--output", type=Path, required=True)
-
-    otel_logs = subparsers.add_parser("enrich-otel-logs", help="add bounded OTLP/JSON log records")
-    otel_logs.add_argument("runpack", type=Path)
-    otel_logs.add_argument("source", type=Path)
-    otel_logs.add_argument("--output", type=Path, required=True)
-    otel_logs.add_argument(
-        "--include-raw",
-        action="store_true",
-        help="store the source OTLP logs JSON in the runpack",
-    )
-
-    temporal = subparsers.add_parser(
-        "enrich-temporal-history",
-        help="add bounded Temporal workflow history",
-    )
-    temporal.add_argument("runpack", type=Path)
-    temporal.add_argument("history", type=Path)
-    temporal.add_argument("--output", type=Path, required=True)
-
     query = subparsers.add_parser("query", help="run bounded read-only SQL over a runpack")
     query.add_argument("runpack", type=Path)
     query.add_argument("sql")
@@ -201,6 +170,10 @@ def _parser(*, prog: str = "runtime") -> argparse.ArgumentParser:
         "--limit", type=int, default=1000, help="maximum rows to return (hard limit: 100000)"
     )
     query.add_argument("--format", choices=("table", "json", "jsonl"), default="table")
+    subparsers.add_parser("providers", help="list installed and enabled evidence providers")
+    for command in provider_registry.commands:
+        provider_parser = subparsers.add_parser(command.name, help=command.help)
+        command.configure(provider_parser)
     return parser
 
 
@@ -303,17 +276,41 @@ def _render_capture_job_result(job: CaptureJob, output_format: str) -> str:
     return render_capture_job(job)
 
 
+def _render_provider_inventory(registry: ProviderRegistry) -> str:
+    lines = ["PROVIDER\tSTATE\tSOURCE\tCOMMANDS"]
+    for provider in registry.inventory:
+        commands = ", ".join(provider.commands) if provider.commands else "-"
+        source = provider.source
+        if provider.distribution is not None:
+            source = f"{source} ({terminal_text(provider.distribution)})"
+        lines.append(
+            "\t".join(
+                (
+                    provider.key,
+                    "enabled" if provider.enabled else "disabled",
+                    source,
+                    commands,
+                )
+            )
+        )
+    return "\n".join(lines)
+
+
 @broken_pipe_safe
 def main(
     argv: list[str] | None = None,
     *,
     prog: str = "runtime",
     error_label: str = "runtime",
+    _provider_registry: ProviderRegistry | None = None,
 ) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    args = _parser(prog=prog).parse_args(arguments)
     capture_worker_client: threading.Event | None = None
     try:
+        provider_registry = _provider_registry or resolve_provider_registry(
+            reserved_commands=CORE_COMMANDS
+        )
+        args = _parser(provider_registry, prog=prog).parse_args(arguments)
         if args.subcommand == "record":
             capture_worker_client = capture_worker_client_event()
             if capture_worker_client is None:
@@ -426,18 +423,6 @@ def main(
             job = cancel_capture_job(args.job_id)
             print(_render_capture_job_result(job, args.format))
             return 0
-        if args.subcommand == "import-otel":
-            name = args.name or args.source.stem
-            output = args.output or args.source.with_suffix(".runpack")
-            otel_result = import_otlp_json(
-                args.source, output, name=name, include_raw=args.include_raw
-            )
-            print(
-                f"imported {otel_result.event_count} spans and "
-                f"{otel_result.edge_count} causal edges into {terminal_text(output)}",
-                file=sys.stderr,
-            )
-            return 0
         if args.subcommand == "serve":
             if args.compare is None and args.contract is not None:
                 raise TimelineError("--contract requires --compare")
@@ -453,55 +438,6 @@ def main(
                 open_browser=not args.no_open,
             )
             return 0
-        if args.subcommand == "enrich-kubernetes":
-            kubernetes_result = import_kubernetes_snapshot(args.runpack, args.snapshot, args.output)
-            print(
-                f"added {kubernetes_result.entity_count} Kubernetes entities, "
-                f"{kubernetes_result.event_count} events, and "
-                f"{kubernetes_result.correlation_count} telemetry correlations to "
-                f"{terminal_text(args.output)}",
-                file=sys.stderr,
-            )
-            return 0
-        if args.subcommand == "enrich-prometheus":
-            prometheus_result = import_prometheus_response(args.runpack, args.response, args.output)
-            print(
-                f"added {prometheus_result.sample_count} Prometheus samples "
-                f"({prometheus_result.dropped_outside_window} outside the run window) "
-                f"to {terminal_text(args.output)}",
-                file=sys.stderr,
-            )
-            return 0
-        if args.subcommand == "enrich-otel-logs":
-            logs_result = import_otlp_logs(
-                args.runpack,
-                args.source,
-                args.output,
-                include_raw=args.include_raw,
-            )
-            print(
-                f"added {logs_result.event_count} OTLP log records and "
-                f"{logs_result.edge_count} span correlations "
-                f"({logs_result.dropped_outside_window} outside the run window) "
-                f"with {logs_result.dropped_attribute_count} exporter-dropped attributes "
-                f"to {terminal_text(args.output)}",
-                file=sys.stderr,
-            )
-            return 0
-        if args.subcommand == "enrich-temporal-history":
-            temporal_result = import_temporal_history(
-                args.runpack,
-                args.history,
-                args.output,
-            )
-            print(
-                f"added {temporal_result.activity_count} Temporal activities, "
-                f"{temporal_result.queue_wait_count} queue waits, and "
-                f"{temporal_result.correlation_count} OTLP correlations to "
-                f"{terminal_text(args.output)}",
-                file=sys.stderr,
-            )
-            return 0
         if args.subcommand == "query":
             result = query_runpack(args.runpack, args.sql, limit=args.limit)
             rendered = render_query(result, args.format)
@@ -513,6 +449,15 @@ def main(
                     file=sys.stderr,
                 )
             return 0
+        if args.subcommand == "providers":
+            print(_render_provider_inventory(provider_registry))
+            return 0
+        provider_command = provider_registry.command(args.subcommand)
+        if provider_command is not None:
+            provider_result = provider_registry.execute(args.subcommand, args)
+            if provider_result.summary is not None:
+                print(terminal_text(provider_result.summary), file=sys.stderr)
+            return provider_result.exit_status
         if args.tree and args.format != "text":
             raise RunpackError("--tree is only available with text output")
         runpack = resolve_runpack_path(args.runpack)
@@ -531,10 +476,7 @@ def main(
     except (
         CaptureError,
         CaptureJobError,
-        EnrichmentError,
-        KubernetesImportError,
-        OtelImportError,
-        PrometheusImportError,
+        ProviderError,
         QueryError,
         RunpackError,
         TimelineError,

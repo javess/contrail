@@ -35,7 +35,7 @@ Internal modules follow four layers:
 | Layer | Responsibilities | May import |
 |---|---|---|
 | Foundation | model, storage, artifact safety, serialization, shared support | foundation |
-| Adapters | capture, annotations, OTel, Kubernetes, Prometheus, Temporal | foundation, adapters |
+| Providers/adapters | capture, annotations, profiling, provider contracts and integrations | foundation, providers/adapters |
 | Analyses | inspection, queries, RunDiff, BatchScope, Proofline | foundation, adapters, analyses |
 | Presentation | public facade, CLIs, reports, demo, local UI | every layer |
 
@@ -47,8 +47,10 @@ boundary and cycle check after changing imports:
 uv run python tools/check_architecture.py
 ```
 
-The exact classification is in `.agent/rules.md` and the design rationale is
-in [the architecture](architecture.md).
+Provider implementations live under `runtime_tools/providers`; add host-side
+integrations through the [provider contract](providers.md), not a new CLI
+branch. The exact layer classification is in `.agent/rules.md` and the design
+rationale is in [the architecture](architecture.md).
 
 ## Preserve strict types and runtime validation
 

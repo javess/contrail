@@ -1,4 +1,4 @@
-"""Atomic helpers shared by bounded evidence adapters."""
+"""Atomic helpers shared by bounded evidence providers."""
 
 from __future__ import annotations
 

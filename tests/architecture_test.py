@@ -41,17 +41,19 @@ def test_foundation_cannot_import_presentation(tmp_path: Path) -> None:
 
 def test_same_layer_import_cycle_is_rejected(tmp_path: Path) -> None:
     package = tmp_path / "runtime_tools"
+    providers = package / "providers"
     package.mkdir()
+    providers.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    (package / "capture.py").write_text("import runtime_tools.otel\n", encoding="utf-8")
-    (package / "otel.py").write_text("import runtime_tools.capture\n", encoding="utf-8")
+    (package / "capture.py").write_text("import runtime_tools.providers\n", encoding="utf-8")
+    (providers / "__init__.py").write_text("import runtime_tools.capture\n", encoding="utf-8")
 
     result = _check(package)
 
     assert result.returncode == 1
     assert "internal import cycle:" in result.stderr
     assert "runtime_tools.capture" in result.stderr
-    assert "runtime_tools.otel" in result.stderr
+    assert "runtime_tools.providers" in result.stderr
 
 
 def test_relative_import_from_package_is_classified(tmp_path: Path) -> None:

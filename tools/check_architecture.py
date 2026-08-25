@@ -32,13 +32,9 @@ _ADAPTERS = frozenset(
         "_semantic_capture_bootstrap",
         "capture",
         "deep_profile",
-        "enrichment",
-        "kubernetes",
-        "otel",
-        "prometheus",
         "process_observer",
+        "providers",
         "runtime",
-        "temporal",
     }
 )
 _ANALYSES = frozenset({"inspect", "query", "batchscope", "rundiff", "proofline"})

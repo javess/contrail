@@ -18,8 +18,8 @@ from runtime_tools.batchscope.analysis import (
     LifecyclePhase,
 )
 from runtime_tools.batchscope.report import render_analysis
-from runtime_tools.kubernetes import import_kubernetes_snapshot
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue
+from runtime_tools.providers.builtins.kubernetes import import_kubernetes_snapshot
 from runtime_tools.storage import RunpackWriter
 
 

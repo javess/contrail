@@ -1,4 +1,4 @@
-"""Import bounded Prometheus HTTP API samples as normalized measurements."""
+"""Normalize bounded Prometheus HTTP API samples into measurements."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Never, cast
 
-from runtime_tools.enrichment import (
+from runtime_tools.json_support import reject_duplicate_object
+from runtime_tools.model import Entity, JsonValue, Measurement
+from runtime_tools.providers.enrichment import (
     EnrichmentError,
     enrich_copy,
     validate_enrichment_destination,
 )
-from runtime_tools.json_support import reject_duplicate_object
-from runtime_tools.model import Entity, JsonValue, Measurement
 from runtime_tools.storage import RunpackReader, RunpackWriter
 
 

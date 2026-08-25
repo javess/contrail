@@ -10,15 +10,15 @@ from pathlib import Path
 
 import pytest
 
-import runtime_tools.enrichment as enrichment_module
+import runtime_tools.providers.enrichment as enrichment_module
 from runtime_tools.artifacts import (
     ArtifactError,
     prepare_atomic_artifact,
     publish_without_overwrite,
 )
-from runtime_tools.enrichment import EnrichmentError, enrich_copy
 from runtime_tools.model import Entity, Event, Execution, Measurement
 from runtime_tools.proofline.verify import verify_contracts_with_artifact_bindings
+from runtime_tools.providers.enrichment import EnrichmentError, enrich_copy
 from runtime_tools.storage import (
     RunpackError,
     RunpackReader,
@@ -699,7 +699,7 @@ def test_enrichment_chmods_only_the_owned_temporary_inode(
         real_fchmod(descriptor, mode)
 
     monkeypatch.setattr(uuid, "uuid4", FixedUuid)
-    monkeypatch.setattr("runtime_tools.enrichment.os.fchmod", replace_before_fchmod)
+    monkeypatch.setattr("runtime_tools.providers.enrichment.os.fchmod", replace_before_fchmod)
 
     with pytest.raises(EnrichmentError, match="temporary runpack was replaced"):
         enrich_copy(source, output, lambda writer: None)
@@ -747,7 +747,7 @@ def test_enrichment_verifies_the_published_inode_before_success(
         os.replace(replacement, output)
 
     monkeypatch.setattr(uuid, "uuid4", FixedUuid)
-    monkeypatch.setattr("runtime_tools.enrichment.os.link", replace_output_after_link)
+    monkeypatch.setattr("runtime_tools.providers.enrichment.os.link", replace_output_after_link)
 
     with pytest.raises(EnrichmentError, match="published runpack was replaced"):
         enrich_copy(source, output, lambda writer: None)
@@ -794,7 +794,9 @@ def test_enrichment_rolls_back_a_replaced_staged_entry_linked_as_output(
         )
 
     monkeypatch.setattr(uuid, "uuid4", FixedUuid)
-    monkeypatch.setattr("runtime_tools.enrichment.os.link", replace_staged_entry_inside_link)
+    monkeypatch.setattr(
+        "runtime_tools.providers.enrichment.os.link", replace_staged_entry_inside_link
+    )
 
     with pytest.raises(EnrichmentError, match="published runpack was replaced"):
         enrich_copy(source, output, lambda writer: None)
@@ -835,7 +837,9 @@ def test_enrichment_rejects_output_parent_replacement_during_publication(
             follow_symlinks=follow_symlinks,
         )
 
-    monkeypatch.setattr("runtime_tools.enrichment.os.link", replace_output_parent_inside_link)
+    monkeypatch.setattr(
+        "runtime_tools.providers.enrichment.os.link", replace_output_parent_inside_link
+    )
 
     with pytest.raises(EnrichmentError, match="output directory was replaced"):
         enrich_copy(source, output, lambda writer: None)
@@ -885,7 +889,7 @@ def test_enrichment_publication_uses_the_open_private_directory(
         )
 
     monkeypatch.setattr(uuid, "uuid4", FixedUuid)
-    monkeypatch.setattr("runtime_tools.enrichment.os.link", replace_staging_before_link)
+    monkeypatch.setattr("runtime_tools.providers.enrichment.os.link", replace_staging_before_link)
 
     enrich_copy(source, output, lambda writer: None)
 

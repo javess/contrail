@@ -19,8 +19,20 @@ from pathlib import Path
 from typing import cast
 
 
-def _run(command: tuple[str, ...], *, cwd: Path) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(command, cwd=cwd, check=False, capture_output=True, text=True)
+def _run(
+    command: tuple[str, ...],
+    *,
+    cwd: Path,
+    environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
     if completed.returncode != 0:
         rendered = " ".join(command)
         raise RuntimeError(
@@ -258,6 +270,43 @@ class RequestResponseCycle:
         (package / module_name).write_text(source, encoding="utf-8")
 
 
+def _write_provider_fake(site_packages: Path, marker: Path) -> None:
+    (site_packages / "contrail_wheel_provider.py").write_text(
+        "\n".join(
+            (
+                "from pathlib import Path",
+                "from runtime_tools.providers import ProviderCommand, ProviderResult, ProviderSpec",
+                f"MARKER = Path({str(marker)!r})",
+                "MARKER.with_suffix('.loaded').write_text('loaded', encoding='utf-8')",
+                "def configure(parser):",
+                "    parser.add_argument('--value', required=True)",
+                "def execute(arguments):",
+                "    MARKER.write_text(arguments.value, encoding='utf-8')",
+                "    return ProviderResult(summary='wheel provider executed')",
+                "PROVIDER = ProviderSpec(",
+                "    key='wheel-fixture',",
+                "    display_name='Wheel fixture',",
+                "    commands=(ProviderCommand(",
+                "        'wheel-provider', 'exercise an installed provider', configure, execute",
+                "    ),),",
+                ")",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    metadata = site_packages / "contrail_wheel_provider-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: contrail-wheel-provider\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+    (metadata / "entry_points.txt").write_text(
+        "[contrail.providers]\nwheel-fixture = contrail_wheel_provider:PROVIDER\n",
+        encoding="utf-8",
+    )
+
+
 def smoke(
     wheel: Path,
     *,
@@ -299,6 +348,20 @@ def smoke(
             cwd=root,
         )
 
+        tool_site_packages = Path(
+            _run(
+                (
+                    str(tool_python),
+                    "-I",
+                    "-c",
+                    "import sysconfig; print(sysconfig.get_path('purelib'))",
+                ),
+                cwd=root,
+            ).stdout.strip()
+        )
+        provider_marker = root / "wheel-provider-result"
+        _write_provider_fake(tool_site_packages, provider_marker)
+
         contrail = _venv_executable(tool_environment, "contrail")
         runtime = _venv_executable(tool_environment, "runtime")
         rundiff = _venv_executable(tool_environment, "rundiff")
@@ -308,6 +371,24 @@ def smoke(
             version = _run((str(command), "--version"), cwd=root).stdout.strip()
             if not version.startswith(f"{command.stem} "):
                 raise RuntimeError(f"unexpected version output from {command.name}: {version!r}")
+        providers = _run((str(contrail), "providers"), cwd=root)
+        if (
+            "wheel-fixture\tdisabled\tentry-point" not in providers.stdout
+            or provider_marker.with_suffix(".loaded").exists()
+        ):
+            raise RuntimeError("installed provider inventory loaded disabled third-party code")
+        provider_environment = os.environ.copy()
+        provider_environment["CONTRAIL_ENABLE_PROVIDERS"] = "wheel-fixture"
+        provider_result = _run(
+            (str(contrail), "wheel-provider", "--value", "installed-wheel"),
+            cwd=root,
+            environment=provider_environment,
+        )
+        if (
+            provider_result.stderr != "wheel provider executed\n"
+            or provider_marker.read_text(encoding="utf-8") != "installed-wheel"
+        ):
+            raise RuntimeError("installed third-party provider did not execute through Contrail")
         recovery_help = _run((str(contrail), "recover", "--help"), cwd=root).stdout
         if (
             "usage: contrail recover" not in recovery_help

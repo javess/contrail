@@ -35,12 +35,12 @@ from generate import (
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.capture import record_process
 from runtime_tools.deep_profile import DeepProfileSession, load_deep_profile
-from runtime_tools.kubernetes import import_kubernetes_snapshot
-from runtime_tools.otel import import_otlp_json
-from runtime_tools.prometheus import import_prometheus_response
 from runtime_tools.proofline.verify import verify_contracts_with_artifact_bindings
+from runtime_tools.providers.builtins.kubernetes import import_kubernetes_snapshot
+from runtime_tools.providers.builtins.otel import import_otlp_json
+from runtime_tools.providers.builtins.prometheus import import_prometheus_response
+from runtime_tools.providers.builtins.temporal import import_temporal_history
 from runtime_tools.storage import RunpackReader
-from runtime_tools.temporal import import_temporal_history
 from runtime_tools.ui import build_timeline_payload
 
 
