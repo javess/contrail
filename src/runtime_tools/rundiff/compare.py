@@ -7,7 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from runtime_tools.batchscope.analysis import analyze_reader
+from runtime_tools.batchscope.analysis import (
+    HttpCaptureSummary,
+    LogicalOperationCaptureSummary,
+    NetworkCaptureSummary,
+    NetworkSetupCaptureSummary,
+    SemanticCaptureSummary,
+    analyze_reader,
+)
 from runtime_tools.inspect import ExecutionSummary, inspect_reader
 from runtime_tools.json_support import output_document
 from runtime_tools.model import JsonValue
@@ -188,6 +195,10 @@ class ExecutionDiff:
     candidate_missing_causal_references: int | None
     baseline_dropped_attribute_count: int | None
     candidate_dropped_attribute_count: int | None
+    baseline_semantic_capture_status: str | None
+    candidate_semantic_capture_status: str | None
+    baseline_dropped_subprocess_count: int | None
+    candidate_dropped_subprocess_count: int | None
     baseline_stdout_relay_error: str | None
     baseline_stderr_relay_error: str | None
     candidate_stdout_relay_error: str | None
@@ -214,6 +225,25 @@ class ExecutionDiff:
     operation_duration_changes: tuple[OperationDurationChange, ...]
     edge_count_changes: tuple[EdgeCountChange, ...]
     environment_changes: tuple[EnvironmentChange, ...]
+    baseline_instrumentation_mode: str = "passive"
+    candidate_instrumentation_mode: str = "passive"
+    timing_comparable: bool = True
+    baseline_http_capture_status: str | None = None
+    candidate_http_capture_status: str | None = None
+    baseline_dropped_http_request_count: int | None = None
+    candidate_dropped_http_request_count: int | None = None
+    baseline_network_capture_status: str | None = None
+    candidate_network_capture_status: str | None = None
+    baseline_dropped_network_connection_count: int | None = None
+    candidate_dropped_network_connection_count: int | None = None
+    baseline_network_setup_capture_status: str | None = None
+    candidate_network_setup_capture_status: str | None = None
+    baseline_dropped_network_setup_phase_count: int | None = None
+    candidate_dropped_network_setup_phase_count: int | None = None
+    baseline_logical_operation_capture_status: str | None = None
+    candidate_logical_operation_capture_status: str | None = None
+    baseline_dropped_logical_operation_count: int | None = None
+    candidate_dropped_logical_operation_count: int | None = None
 
     def as_json_value(self) -> dict[str, JsonValue]:
         return output_document(
@@ -236,6 +266,46 @@ class ExecutionDiff:
                 "candidate_missing_causal_references": self.candidate_missing_causal_references,
                 "baseline_dropped_attribute_count": self.baseline_dropped_attribute_count,
                 "candidate_dropped_attribute_count": self.candidate_dropped_attribute_count,
+                "baseline_semantic_capture_status": self.baseline_semantic_capture_status,
+                "candidate_semantic_capture_status": self.candidate_semantic_capture_status,
+                "baseline_dropped_subprocess_count": self.baseline_dropped_subprocess_count,
+                "candidate_dropped_subprocess_count": self.candidate_dropped_subprocess_count,
+                "baseline_http_capture_status": self.baseline_http_capture_status,
+                "candidate_http_capture_status": self.candidate_http_capture_status,
+                "baseline_dropped_http_request_count": (self.baseline_dropped_http_request_count),
+                "candidate_dropped_http_request_count": (self.candidate_dropped_http_request_count),
+                "baseline_network_capture_status": self.baseline_network_capture_status,
+                "candidate_network_capture_status": self.candidate_network_capture_status,
+                "baseline_dropped_network_connection_count": (
+                    self.baseline_dropped_network_connection_count
+                ),
+                "candidate_dropped_network_connection_count": (
+                    self.candidate_dropped_network_connection_count
+                ),
+                "baseline_network_setup_capture_status": (
+                    self.baseline_network_setup_capture_status
+                ),
+                "candidate_network_setup_capture_status": (
+                    self.candidate_network_setup_capture_status
+                ),
+                "baseline_dropped_network_setup_phase_count": (
+                    self.baseline_dropped_network_setup_phase_count
+                ),
+                "candidate_dropped_network_setup_phase_count": (
+                    self.candidate_dropped_network_setup_phase_count
+                ),
+                "baseline_logical_operation_capture_status": (
+                    self.baseline_logical_operation_capture_status
+                ),
+                "candidate_logical_operation_capture_status": (
+                    self.candidate_logical_operation_capture_status
+                ),
+                "baseline_dropped_logical_operation_count": (
+                    self.baseline_dropped_logical_operation_count
+                ),
+                "candidate_dropped_logical_operation_count": (
+                    self.candidate_dropped_logical_operation_count
+                ),
                 "baseline_stdout_relay_error": self.baseline_stdout_relay_error,
                 "baseline_stderr_relay_error": self.baseline_stderr_relay_error,
                 "candidate_stdout_relay_error": self.candidate_stdout_relay_error,
@@ -274,6 +344,18 @@ class ExecutionDiff:
                 "environment_changes": [
                     change.as_json_value() for change in self.environment_changes
                 ],
+                **(
+                    {
+                        "instrumentation": {
+                            "baseline_mode": self.baseline_instrumentation_mode,
+                            "candidate_mode": self.candidate_instrumentation_mode,
+                            "timing_comparable": self.timing_comparable,
+                        }
+                    }
+                    if self.baseline_instrumentation_mode != "passive"
+                    or self.candidate_instrumentation_mode != "passive"
+                    else {}
+                ),
             },
         )
 
@@ -330,6 +412,64 @@ def _incomplete_streams(summary: ExecutionSummary) -> tuple[str, ...]:
     return tuple(
         stream for stream in ("stdout", "stderr") if getattr(summary, f"{stream}_complete") is False
     )
+
+
+def _semantic_capture_observation(
+    summary: SemanticCaptureSummary | None,
+) -> tuple[str | None, int | None]:
+    if summary is None:
+        return None, None
+    return summary.status, summary.dropped_subprocess_count
+
+
+def _http_capture_observation(
+    summary: HttpCaptureSummary | None,
+) -> tuple[str | None, int | None]:
+    if summary is None:
+        return None, None
+    return summary.status, summary.dropped_request_count
+
+
+def _network_capture_observation(
+    summary: NetworkCaptureSummary | None,
+) -> tuple[str | None, int | None]:
+    if summary is None:
+        return None, None
+    return summary.status, summary.dropped_connection_count
+
+
+def _network_setup_capture_observation(
+    summary: NetworkSetupCaptureSummary | None,
+) -> tuple[str | None, int | None]:
+    if summary is None:
+        return None, None
+    return summary.status, summary.dropped_phase_count
+
+
+def _logical_operation_capture_observation(
+    summary: LogicalOperationCaptureSummary | None,
+) -> tuple[str | None, int | None]:
+    if summary is None:
+        return None, None
+    return summary.status, summary.dropped_operation_count
+
+
+def _optional_semantic_observation_complete(
+    baseline_status: str | None,
+    candidate_status: str | None,
+) -> bool:
+    if baseline_status in {None, "unavailable"} and candidate_status in {None, "unavailable"}:
+        return True
+    return baseline_status == candidate_status == "complete"
+
+
+def _semantic_observation_complete(
+    baseline_status: str | None,
+    candidate_status: str | None,
+) -> bool:
+    if baseline_status is None and candidate_status is None:
+        return True
+    return baseline_status == candidate_status == "complete"
 
 
 def _outcome(*equivalences: bool | None) -> Outcome:
@@ -478,7 +618,17 @@ def _structural_edge_keys(
     for edge in reader.causal_edges():
         source = events[edge.source_event_id]
         target = events[edge.target_event_id]
-        if source.kind == "log.record" or target.kind == "log.record":
+        if source.kind in {
+            "log.record",
+            "python.call.aggregate",
+            "python.stack.sample",
+            "python.callsite",
+        } or target.kind in {
+            "log.record",
+            "python.call.aggregate",
+            "python.stack.sample",
+            "python.callsite",
+        }:
             continue
         source_entity = (
             entities[source.entity_id] if source.entity_id is not None else ("unowned", "unowned")
@@ -541,6 +691,22 @@ def _selected_environment(metadata: dict[str, JsonValue]) -> dict[str, str] | No
     return result
 
 
+def _instrumentation_mode(metadata: dict[str, JsonValue]) -> str:
+    capture = metadata.get("capture")
+    if not isinstance(capture, dict):
+        return "passive"
+    instrumentation = capture.get("instrumentation")
+    mode_value = instrumentation.get("mode") if isinstance(instrumentation, dict) else None
+    mode = mode_value if isinstance(mode_value, str) and mode_value else "passive"
+    process_observer = capture.get("process_observer")
+    observes_processes = (
+        isinstance(process_observer, dict) and process_observer.get("requested") is True
+    )
+    if not observes_processes:
+        return mode
+    return "process" if mode == "passive" else f"{mode}+process"
+
+
 def _environment_changes(
     baseline: dict[str, str] | None, candidate: dict[str, str] | None
 ) -> tuple[EnvironmentChange, ...]:
@@ -561,7 +727,24 @@ def compare_readers(
     candidate_summary = inspect_reader(candidate_reader)
     baseline_analysis = analyze_reader(baseline_reader, baseline_summary)
     candidate_analysis = analyze_reader(candidate_reader, candidate_summary)
-    baseline_environment = _selected_environment(baseline_reader.execution().metadata)
+    baseline_metadata = baseline_reader.execution().metadata
+    baseline_environment = _selected_environment(baseline_metadata)
+    baseline_instrumentation_mode = _instrumentation_mode(baseline_metadata)
+    baseline_semantic_status, baseline_dropped_subprocess_count = _semantic_capture_observation(
+        baseline_analysis.semantic_capture
+    )
+    baseline_http_status, baseline_dropped_http_request_count = _http_capture_observation(
+        baseline_analysis.http_capture
+    )
+    baseline_network_status, baseline_dropped_network_connection_count = (
+        _network_capture_observation(baseline_analysis.network_capture)
+    )
+    baseline_network_setup_status, baseline_dropped_network_setup_phase_count = (
+        _network_setup_capture_observation(baseline_analysis.network_setup_capture)
+    )
+    baseline_logical_operation_status, baseline_dropped_logical_operation_count = (
+        _logical_operation_capture_observation(baseline_analysis.logical_operation_capture)
+    )
     baseline_entities = baseline_reader.entity_counts()
     baseline_operations = baseline_reader.operation_counts()
     baseline_errors = baseline_reader.operation_error_counts()
@@ -570,7 +753,24 @@ def compare_readers(
     baseline_edges = _all_edge_counts(baseline_reader)
     baseline_structural_edges = _structural_edge_keys(baseline_reader)
     baseline_structural_parents = _structural_entity_parent_keys(baseline_reader)
-    candidate_environment = _selected_environment(candidate_reader.execution().metadata)
+    candidate_metadata = candidate_reader.execution().metadata
+    candidate_environment = _selected_environment(candidate_metadata)
+    candidate_instrumentation_mode = _instrumentation_mode(candidate_metadata)
+    candidate_semantic_status, candidate_dropped_subprocess_count = _semantic_capture_observation(
+        candidate_analysis.semantic_capture
+    )
+    candidate_http_status, candidate_dropped_http_request_count = _http_capture_observation(
+        candidate_analysis.http_capture
+    )
+    candidate_network_status, candidate_dropped_network_connection_count = (
+        _network_capture_observation(candidate_analysis.network_capture)
+    )
+    candidate_network_setup_status, candidate_dropped_network_setup_phase_count = (
+        _network_setup_capture_observation(candidate_analysis.network_setup_capture)
+    )
+    candidate_logical_operation_status, candidate_dropped_logical_operation_count = (
+        _logical_operation_capture_observation(candidate_analysis.logical_operation_capture)
+    )
     candidate_entities = candidate_reader.entity_counts()
     candidate_operations = candidate_reader.operation_counts()
     candidate_errors = candidate_reader.operation_error_counts()
@@ -605,6 +805,26 @@ def compare_readers(
         or candidate_summary.dropped_attribute_count is None
         or baseline_summary.dropped_attribute_count > 0
         or candidate_summary.dropped_attribute_count > 0
+        or not _semantic_observation_complete(
+            baseline_semantic_status,
+            candidate_semantic_status,
+        )
+        or not _semantic_observation_complete(
+            baseline_http_status,
+            candidate_http_status,
+        )
+        or not _semantic_observation_complete(
+            baseline_network_status,
+            candidate_network_status,
+        )
+        or not _semantic_observation_complete(
+            baseline_network_setup_status,
+            candidate_network_setup_status,
+        )
+        or not _optional_semantic_observation_complete(
+            baseline_logical_operation_status,
+            candidate_logical_operation_status,
+        )
         else baseline_errors == candidate_errors
     )
     if baseline_summary.id == candidate_summary.id:
@@ -633,6 +853,26 @@ def compare_readers(
         candidate_missing_causal_references=candidate_summary.missing_causal_references,
         baseline_dropped_attribute_count=baseline_summary.dropped_attribute_count,
         candidate_dropped_attribute_count=candidate_summary.dropped_attribute_count,
+        baseline_semantic_capture_status=baseline_semantic_status,
+        candidate_semantic_capture_status=candidate_semantic_status,
+        baseline_dropped_subprocess_count=baseline_dropped_subprocess_count,
+        candidate_dropped_subprocess_count=candidate_dropped_subprocess_count,
+        baseline_http_capture_status=baseline_http_status,
+        candidate_http_capture_status=candidate_http_status,
+        baseline_dropped_http_request_count=baseline_dropped_http_request_count,
+        candidate_dropped_http_request_count=candidate_dropped_http_request_count,
+        baseline_network_capture_status=baseline_network_status,
+        candidate_network_capture_status=candidate_network_status,
+        baseline_dropped_network_connection_count=(baseline_dropped_network_connection_count),
+        candidate_dropped_network_connection_count=(candidate_dropped_network_connection_count),
+        baseline_network_setup_capture_status=baseline_network_setup_status,
+        candidate_network_setup_capture_status=candidate_network_setup_status,
+        baseline_dropped_network_setup_phase_count=(baseline_dropped_network_setup_phase_count),
+        candidate_dropped_network_setup_phase_count=(candidate_dropped_network_setup_phase_count),
+        baseline_logical_operation_capture_status=baseline_logical_operation_status,
+        candidate_logical_operation_capture_status=candidate_logical_operation_status,
+        baseline_dropped_logical_operation_count=(baseline_dropped_logical_operation_count),
+        candidate_dropped_logical_operation_count=(candidate_dropped_logical_operation_count),
         baseline_stdout_relay_error=baseline_summary.stdout_relay_error,
         baseline_stderr_relay_error=baseline_summary.stderr_relay_error,
         candidate_stdout_relay_error=candidate_summary.stdout_relay_error,
@@ -693,6 +933,9 @@ def compare_readers(
         ),
         edge_count_changes=_edge_changes(baseline_edges, candidate_edges),
         environment_changes=_environment_changes(baseline_environment, candidate_environment),
+        baseline_instrumentation_mode=baseline_instrumentation_mode,
+        candidate_instrumentation_mode=candidate_instrumentation_mode,
+        timing_comparable=(baseline_instrumentation_mode == candidate_instrumentation_mode),
     )
 
 

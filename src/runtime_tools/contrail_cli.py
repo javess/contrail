@@ -13,18 +13,22 @@ from runtime_tools.batchscope.cli import main as batchscope_main
 from runtime_tools.cli import main as runtime_main
 from runtime_tools.proofline.cli import main as proofline_main
 from runtime_tools.rundiff.cli import main as rundiff_main
+from runtime_tools.storage import RunpackError
 from runtime_tools.terminal import broken_pipe_safe, terminal_text
 
 _RUNTIME_COMMANDS = frozenset(
     {
         "record",
+        "recover",
         "inspect",
+        "job",
         "serve",
         "query",
         "import-otel",
         "enrich-kubernetes",
         "enrich-prometheus",
         "enrich-otel-logs",
+        "enrich-temporal-history",
     }
 )
 _PROOFLINE_COMMANDS = frozenset({"validate", "verify", "run", "search"})
@@ -39,7 +43,10 @@ Start here:
 
 Core workflow (record → verify → serve):
   record                     capture one local process as a .runpack
+  recover                    finish a retained post-exit capture checkpoint
+  job                        discover, wait for, replay, or cancel a capture worker
   compare                    compare baseline and candidate runpacks
+  report                     combine candidate analysis, diff, and contract evidence
   verify                     evaluate a behavioral contract
   serve                      open the local evidence timeline
   inspect                    inspect normalized execution evidence
@@ -47,7 +54,8 @@ Core workflow (record → verify → serve):
 
 Automation and adapters:
   validate, run, search, query, import-otel,
-  enrich-kubernetes, enrich-prometheus, enrich-otel-logs
+  enrich-kubernetes, enrich-prometheus, enrich-otel-logs,
+  enrich-temporal-history
 
 Run 'contrail COMMAND --help' for command-specific options.
 """
@@ -103,6 +111,25 @@ def _demo_main(arguments: list[str]) -> int:
     print(f"adaptable workload: {terminal_text(result.workload)}")
     print(f"contract: {terminal_text(result.contract)}")
     print(f"explained report: {terminal_text(result.proofline_report)}")
+    print()
+    print("Compare the runtime change:")
+    print("  " + _command("contrail", "compare", result.baseline_runpack, result.candidate_runpack))
+    print()
+    print("Explain where the candidate spent its time:")
+    print("  " + _command("contrail", "analyze", result.candidate_runpack))
+    print()
+    print("Review one integrated diagnostic report:")
+    print(
+        "  "
+        + _command(
+            "contrail",
+            "report",
+            result.baseline_runpack,
+            result.candidate_runpack,
+            "--contract",
+            result.contract,
+        )
+    )
     print()
     recaptured_baseline = result.output_dir / "recaptured-baseline.runpack"
     recaptured_candidate = result.output_dir / "recaptured-candidate.runpack"
@@ -184,7 +211,40 @@ def _demo_main(arguments: list[str]) -> int:
     return 0
 
 
-def _dispatch(command: str, arguments: list[str]) -> int:
+def _report_main(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="contrail report",
+        description=(
+            "combine candidate BatchScope analysis, RunDiff comparison, and optional "
+            "Proofline evidence"
+        ),
+    )
+    parser.add_argument("baseline", type=Path)
+    parser.add_argument("candidate", type=Path)
+    parser.add_argument("--contract", type=Path)
+    args = parser.parse_args(arguments)
+    from runtime_tools.proofline.contracts import ContractError
+    from runtime_tools.suite_report import build_suite_report, render_suite_report
+
+    try:
+        report = build_suite_report(
+            args.baseline,
+            args.candidate,
+            contract=args.contract,
+        )
+    except (ContractError, RunpackError) as exc:
+        print(f"contrail: {terminal_text(exc)}", file=sys.stderr)
+        return 2
+    print(render_suite_report(report))
+    return 0
+
+
+def _dispatch(
+    command: str,
+    arguments: list[str],
+    *,
+    launch_capture_worker: bool = False,
+) -> int:
     if command in _RUNTIME_COMMANDS:
         return runtime_main(
             [command, *arguments],
@@ -210,6 +270,7 @@ def _dispatch(command: str, arguments: list[str]) -> int:
             prog="contrail",
             error_label="contrail",
             branded_commands=True,
+            _launch_capture_worker=launch_capture_worker,
         )
     raise AssertionError(f"unhandled Contrail command: {command}")
 
@@ -226,11 +287,17 @@ def main(argv: list[str] | None = None) -> int:
     command, *command_arguments = arguments
     if command == "demo":
         return _demo_main(command_arguments)
+    if command == "report":
+        return _report_main(command_arguments)
     if command not in _RUNTIME_COMMANDS | _PROOFLINE_COMMANDS | {"compare", "analyze"}:
         print(f"contrail: unknown command: {terminal_text(command)}", file=sys.stderr)
         print("Try 'contrail --help'.", file=sys.stderr)
         return 2
-    return _dispatch(command, command_arguments)
+    return _dispatch(
+        command,
+        command_arguments,
+        launch_capture_worker=argv is None,
+    )
 
 
 if __name__ == "__main__":

@@ -22,6 +22,12 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         f"matching:  {diff.match_level}",
     ]
     warnings: list[str] = []
+    if not diff.timing_comparable:
+        warnings.append(
+            "  timing is not comparable across "
+            f"{terminal_text(diff.baseline_instrumentation_mode)} and "
+            f"{terminal_text(diff.candidate_instrumentation_mode)} instrumentation"
+        )
     annotation_errors = (
         ("baseline", diff.baseline_annotation_error),
         ("candidate", diff.candidate_annotation_error),
@@ -77,6 +83,121 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         for side, count in dropped_attributes
         if count is None or count > 0
     )
+    semantic_capture = (
+        (
+            "baseline",
+            diff.baseline_semantic_capture_status,
+            diff.baseline_dropped_subprocess_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_semantic_capture_status,
+            diff.candidate_dropped_subprocess_count,
+        ),
+    )
+    if any(status is not None for _, status, _ in semantic_capture):
+        warnings.extend(
+            (
+                f"  {side}: subprocess capture unavailable"
+                if status is None
+                else f"  {side}: subprocess capture {status}"
+                + (f" ({dropped:,} omitted)" if dropped else "")
+            )
+            for side, status, dropped in semantic_capture
+            if status != "complete"
+        )
+    http_capture = (
+        (
+            "baseline",
+            diff.baseline_http_capture_status,
+            diff.baseline_dropped_http_request_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_http_capture_status,
+            diff.candidate_dropped_http_request_count,
+        ),
+    )
+    if any(status is not None for _, status, _ in http_capture):
+        warnings.extend(
+            (
+                f"  {side}: HTTP capture unavailable"
+                if status is None
+                else f"  {side}: HTTP capture {status}"
+                + (f" ({dropped:,} omitted)" if dropped else "")
+            )
+            for side, status, dropped in http_capture
+            if status != "complete"
+        )
+    network_capture = (
+        (
+            "baseline",
+            diff.baseline_network_capture_status,
+            diff.baseline_dropped_network_connection_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_network_capture_status,
+            diff.candidate_dropped_network_connection_count,
+        ),
+    )
+    if any(status is not None for _, status, _ in network_capture):
+        warnings.extend(
+            (
+                f"  {side}: network capture unavailable"
+                if status is None
+                else f"  {side}: network capture {status}"
+                + (f" ({dropped:,} omitted)" if dropped else "")
+            )
+            for side, status, dropped in network_capture
+            if status != "complete"
+        )
+    network_setup_capture = (
+        (
+            "baseline",
+            diff.baseline_network_setup_capture_status,
+            diff.baseline_dropped_network_setup_phase_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_network_setup_capture_status,
+            diff.candidate_dropped_network_setup_phase_count,
+        ),
+    )
+    if any(status is not None for _, status, _ in network_setup_capture):
+        warnings.extend(
+            (
+                f"  {side}: network setup capture unavailable"
+                if status is None
+                else f"  {side}: network setup capture {status}"
+                + (f" ({dropped:,} omitted)" if dropped else "")
+            )
+            for side, status, dropped in network_setup_capture
+            if status != "complete"
+        )
+    logical_operation_capture = (
+        (
+            "baseline",
+            diff.baseline_logical_operation_capture_status,
+            diff.baseline_dropped_logical_operation_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_logical_operation_capture_status,
+            diff.candidate_dropped_logical_operation_count,
+        ),
+    )
+    if any(status not in {None, "unavailable"} for _, status, _ in logical_operation_capture):
+        warnings.extend(
+            (
+                f"  {side}: logical operation capture unavailable"
+                if status in {None, "unavailable"}
+                else f"  {side}: logical operation capture {status}"
+                + (f" ({dropped:,} omitted)" if dropped else "")
+            )
+            for side, status, dropped in logical_operation_capture
+            if status != "complete"
+        )
     if warnings:
         lines.extend(("", "Evidence warnings", *warnings))
     lines.extend(

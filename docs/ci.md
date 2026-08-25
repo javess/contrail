@@ -191,7 +191,10 @@ The installed-wheel smoke creates a temporary virtual environment, installs the
 wheel without access to the source checkout, and exercises the primary
 `contrail` command plus all four compatibility entry points, their versioned
 JSON protocols, the complete demo-to-gate-to-timeline journey, and the packaged
-UI resources:
+UI resources. It captures real blocking and asyncio connections, and supplies
+dependency-free API-compatible `httpcore` and aiohttp workload modules to prove
+the installed observer's transport fallback and lazy optional HTTP adapters
+without adding either package to the project:
 
 ```bash
 uv export --locked --no-dev --no-emit-project --no-hashes \

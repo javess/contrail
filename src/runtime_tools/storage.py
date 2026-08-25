@@ -959,6 +959,41 @@ class RunpackWriter:
                 (_edge_values(edge) for edge in edges),
             )
 
+    def add_event_graph_and_set_execution_metadata(
+        self,
+        execution_id: str,
+        events: Iterable[Event],
+        edges: Iterable[CausalEdge],
+        metadata: dict[str, JsonValue],
+    ) -> None:
+        """Add one derived graph and its execution metadata atomically."""
+        normalized_execution_id = _text_value(execution_id, "execution id")
+        encoded_metadata = _json(metadata)
+        with self._writing(), self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO events(
+                    id, kind, name, entity_id, started_at_ns, finished_at_ns,
+                    clock_domain, uncertainty_ns, sequence, attributes_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (_event_values(event) for event in events),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO causal_edges(
+                    source_event_id, target_event_id, kind, confidence, attributes_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (_edge_values(edge) for edge in edges),
+            )
+            cursor = self._connection.execute(
+                "UPDATE executions SET metadata_json = ? WHERE id = ?",
+                (encoded_metadata, normalized_execution_id),
+            )
+            if cursor.rowcount != 1:
+                raise RunpackError(f"execution does not exist: {normalized_execution_id}")
+
     def add_causal_edge(self, edge: CausalEdge) -> None:
         with self._writing():
             self._connection.execute(
@@ -1425,7 +1460,9 @@ class RunpackReader:
                 count(*) AS event_count
             FROM events AS event
             LEFT JOIN entities AS entity ON entity.id = event.entity_id
-            WHERE event.kind != 'log.record'
+            WHERE event.kind NOT IN (
+                'log.record', 'python.call.aggregate', 'python.stack.sample', 'python.callsite'
+            )
             GROUP BY entity_kind, entity_name, event_kind, event_name
             """
         ).fetchall()
@@ -1442,7 +1479,9 @@ class RunpackReader:
                 event.attributes_json
             FROM events AS event
             LEFT JOIN entities AS entity ON entity.id = event.entity_id
-            WHERE event.kind != 'log.record'
+            WHERE event.kind NOT IN (
+                'log.record', 'python.call.aggregate', 'python.stack.sample', 'python.callsite'
+            )
             """
         ).fetchall()
         counts: dict[tuple[str, str, str, str], int] = {}
@@ -1482,7 +1521,9 @@ class RunpackReader:
                     / 1000000000.0 AS duration_seconds
             FROM events AS event
             LEFT JOIN entities AS entity ON entity.id = event.entity_id
-            WHERE event.kind != 'log.record'
+            WHERE event.kind NOT IN (
+                'log.record', 'python.call.aggregate', 'python.stack.sample', 'python.callsite'
+            )
             GROUP BY entity_kind, entity_name, event_kind, event_name
             HAVING count(*) = count(event.started_at_ns)
                AND count(*) = count(event.finished_at_ns)
@@ -1504,7 +1545,9 @@ class RunpackReader:
                     event.finished_at_ns
                 FROM events AS event
                 LEFT JOIN entities AS entity ON entity.id = event.entity_id
-                WHERE event.kind != 'log.record'
+                WHERE event.kind NOT IN (
+                    'log.record', 'python.call.aggregate', 'python.stack.sample', 'python.callsite'
+                )
             ),
             eligible AS (
                 SELECT entity_kind, entity_name, event_kind, event_name
@@ -1565,8 +1608,12 @@ class RunpackReader:
             JOIN events AS target_event ON target_event.id = edge.target_event_id
             LEFT JOIN entities AS source_entity ON source_entity.id = source_event.entity_id
             LEFT JOIN entities AS target_entity ON target_entity.id = target_event.entity_id
-            WHERE source_event.kind != 'log.record'
-              AND target_event.kind != 'log.record'
+            WHERE source_event.kind NOT IN (
+                    'log.record', 'python.call.aggregate', 'python.stack.sample', 'python.callsite'
+                  )
+              AND target_event.kind NOT IN (
+                    'log.record', 'python.call.aggregate', 'python.stack.sample', 'python.callsite'
+                  )
               AND source_event.entity_id IS NOT target_event.entity_id
             GROUP BY source_kind, source_name, target_kind, target_name, edge_kind
             """

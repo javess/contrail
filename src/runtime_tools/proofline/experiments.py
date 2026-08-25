@@ -9,12 +9,13 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from runtime_tools.artifacts import artifact_exists
-from runtime_tools.capture import CaptureError, record_process
+from runtime_tools.capture import CaptureError, record_process, resolve_capture_configuration
 from runtime_tools.json_support import output_document
 from runtime_tools.model import JsonValue
 from runtime_tools.proofline.contracts import Contract, load_contracts
@@ -263,8 +264,18 @@ def _run_experiment(
     output_dir: Path,
     cwd: Path | None = None,
     python_executable: Path | None = None,
+    capture_level: str | None = None,
     bind_artifacts: bool = False,
+    _capture_client_disconnected: threading.Event | None = None,
 ) -> ExperimentResult:
+    try:
+        resolve_capture_configuration(
+            capture_level=capture_level,
+            instrument=None,
+            observe_process_tree=False,
+        )
+    except CaptureError as exc:
+        raise ExperimentError(str(exc)) from exc
     python_executable = _validate_python_executable(python_executable)
     _validate_ref(baseline_ref)
     _validate_ref(candidate_ref)
@@ -321,8 +332,10 @@ def _run_experiment(
                 baseline_runpack,
                 name=f"baseline:{baseline_ref}",
                 cwd=baseline_worktree,
+                capture_level=capture_level,
                 _annotation_fd=annotation_fd,
                 _annotation_directory=annotation_directory,
+                _capture_client_disconnected=_capture_client_disconnected,
             )
             _require_clean_worktree(baseline_worktree, "baseline")
             remove_worktree(baseline_worktree)
@@ -333,8 +346,10 @@ def _run_experiment(
                 candidate_runpack,
                 name=f"candidate:{candidate_ref}",
                 cwd=candidate_worktree,
+                capture_level=capture_level,
                 _annotation_fd=annotation_fd,
                 _annotation_directory=annotation_directory,
+                _capture_client_disconnected=_capture_client_disconnected,
             )
             _require_clean_worktree(candidate_worktree, "candidate")
             remove_worktree(candidate_worktree)
@@ -395,7 +410,9 @@ def run_experiment(
     output_dir: Path,
     cwd: Path | None = None,
     python_executable: Path | None = None,
+    capture_level: str | None = None,
     bind_artifacts: bool = False,
+    _capture_client_disconnected: threading.Event | None = None,
 ) -> ExperimentResult:
     if artifact_exists(output_dir):
         raise ExperimentError(f"refusing to reuse output directory: {output_dir}")
@@ -414,7 +431,9 @@ def run_experiment(
         output_dir=output_dir,
         cwd=cwd,
         python_executable=python_executable,
+        capture_level=capture_level,
         bind_artifacts=bind_artifacts,
+        _capture_client_disconnected=_capture_client_disconnected,
     )
 
 

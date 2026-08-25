@@ -6,7 +6,10 @@ import argparse
 import json
 import os
 import shlex
+import signal
 import sys
+import threading
+from functools import partial
 from pathlib import Path
 
 from runtime_tools._version import __version__
@@ -15,6 +18,12 @@ from runtime_tools.artifacts import (
     AtomicArtifactPublication,
     prepare_atomic_artifact,
 )
+from runtime_tools.capture import (
+    CAPTURE_LEVELS,
+    CaptureError,
+)
+from runtime_tools.capture_jobs import record_current_capture_job_artifacts
+from runtime_tools.capture_worker import capture_worker_client_event, run_capture_worker
 from runtime_tools.json_support import output_document
 from runtime_tools.proofline import (
     ContractError,
@@ -93,7 +102,12 @@ def main(
     prog: str = "proofline",
     error_label: str = "proofline",
     branded_commands: bool = False,
+    _launch_capture_worker: bool | None = None,
 ) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    launch_capture_worker = (
+        argv is None if _launch_capture_worker is None else _launch_capture_worker
+    )
     parser = argparse.ArgumentParser(prog=prog)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -134,6 +148,18 @@ def main(
         help="Python executable used for both workload refs (default: current Python)",
     )
     run.add_argument("--output-dir", type=Path)
+    run.add_argument(
+        "--detach",
+        action="store_true",
+        help=(
+            "run in the background and privately retain bounded stdout/stderr (may contain secrets)"
+        ),
+    )
+    run.add_argument(
+        "--capture-level",
+        choices=CAPTURE_LEVELS,
+        help="use the same passive, process, sample, or expensive deep preset for both refs",
+    )
     run.add_argument("--format", choices=("text", "json"), default="text")
     run.add_argument(
         "--explain",
@@ -168,11 +194,42 @@ def main(
         help="Python executable used for every search workload (default: current Python)",
     )
     search.add_argument("--output-dir", type=Path)
+    search.add_argument(
+        "--detach",
+        action="store_true",
+        help=(
+            "run in the background and privately retain bounded stdout/stderr (may contain secrets)"
+        ),
+    )
+    search.add_argument(
+        "--capture-level",
+        choices=CAPTURE_LEVELS,
+        help="use the same passive, process, sample, or expensive deep preset for every run",
+    )
     search.add_argument("--format", choices=("text", "json"), default="text")
     search.add_argument(
         "--max-examples", type=int, default=25, help="search bound (hard limit: 1000)"
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
+    capture_worker_client: threading.Event | None = None
+    if launch_capture_worker and args.subcommand in {"run", "search"}:
+        try:
+            capture_worker_client = capture_worker_client_event()
+            if capture_worker_client is None:
+                module = (
+                    "runtime_tools.contrail_cli"
+                    if branded_commands
+                    else "runtime_tools.proofline.cli"
+                )
+                return run_capture_worker(
+                    tuple(arguments),
+                    module=module,
+                    detached=args.detach,
+                    detached_format=args.format,
+                )
+        except CaptureError as exc:
+            print(f"{error_label}: {terminal_text(exc)}", file=sys.stderr)
+            return 2
     diff: ExecutionDiff | None = None
     artifact_bindings: VerificationArtifactBindings | None = None
     report_publication: AtomicArtifactPublication | None = None
@@ -181,12 +238,34 @@ def main(
         if report_destination is not None:
             report_publication = prepare_atomic_artifact(report_destination, label="report")
         include_explanation = bool(getattr(args, "explain", False) or report_publication)
+        capture_level = getattr(args, "capture_level", None)
+        if capture_level == "deep":
+            print(
+                f"{error_label}: warning: deep capture observes every Python and native C call "
+                "plus "
+                "Python exception propagation "
+                "in both "
+                "arms; it is expensive, intrusive, and can materially perturb timings",
+                file=sys.stderr,
+            )
+        elif capture_level == "sample":
+            print(
+                f"{error_label}: note: sampling estimates Python hotspots in both arms and "
+                "may perturb timings",
+                file=sys.stderr,
+            )
         if args.subcommand == "validate":
             validation = validate_inputs(args.contract, args.parameters)
             print(render_validation(validation, args.format))
             return 0
         if args.subcommand == "search":
-            counterexample = search_counterexample(
+            search = search_counterexample
+            if capture_worker_client is not None:
+                search = partial(
+                    search,
+                    _capture_client_disconnected=capture_worker_client,
+                )
+            counterexample = search(
                 args.contract,
                 args.parameters,
                 baseline_ref=args.baseline_ref,
@@ -195,6 +274,7 @@ def main(
                 output_dir=args.output_dir or default_output_directory(),
                 max_examples=args.max_examples,
                 python_executable=args.python_executable,
+                capture_level=args.capture_level,
             )
             if counterexample is None:
                 if args.format == "json":
@@ -215,6 +295,12 @@ def main(
                 else:
                     print(f"No counterexample found in {args.max_examples} examples.")
                 return 0
+            record_current_capture_job_artifacts(
+                (
+                    counterexample.experiment.baseline_runpack,
+                    counterexample.experiment.candidate_runpack,
+                )
+            )
             if args.format == "json":
                 print(
                     json.dumps(
@@ -248,7 +334,13 @@ def main(
             )
             return 1
         if args.subcommand == "run":
-            experiment = run_experiment(
+            execute_experiment = run_experiment
+            if capture_worker_client is not None:
+                execute_experiment = partial(
+                    execute_experiment,
+                    _capture_client_disconnected=capture_worker_client,
+                )
+            experiment = execute_experiment(
                 args.contract,
                 baseline_ref=args.baseline_ref,
                 candidate_ref=args.candidate_ref,
@@ -256,8 +348,12 @@ def main(
                 workload_args=tuple(args.workload_arg),
                 output_dir=args.output_dir or default_output_directory(),
                 python_executable=args.python_executable,
+                capture_level=args.capture_level,
                 bind_artifacts=include_explanation
                 and (args.format == "json" or report_publication is not None),
+            )
+            record_current_capture_job_artifacts(
+                (experiment.baseline_runpack, experiment.candidate_runpack)
             )
             report = experiment.verification
             if include_explanation:
@@ -306,6 +402,15 @@ def main(
         if report_publication is not None:
             assert serialized_payload is not None
             report_publication.publish(serialized_payload.encode("utf-8"))
+            if experiment is not None:
+                assert report_destination is not None
+                record_current_capture_job_artifacts(
+                    (
+                        experiment.baseline_runpack,
+                        experiment.candidate_runpack,
+                        report_destination,
+                    )
+                )
 
         if args.format == "json":
             assert serialized_payload is not None
@@ -333,7 +438,11 @@ def main(
             print(f"baseline artifact:  {terminal_text(experiment.baseline_runpack)}")
             print(f"candidate artifact: {terminal_text(experiment.candidate_runpack)}")
         return 0 if report.passed else 1
-    except (ArtifactError, ContractError, ExperimentError, RunpackError) as exc:
+    except KeyboardInterrupt:
+        if capture_worker_client is not None:
+            return 128 + signal.SIGINT
+        raise
+    except (ArtifactError, CaptureError, ContractError, ExperimentError, RunpackError) as exc:
         print(f"{error_label}: {terminal_text(exc)}", file=sys.stderr)
         return 2
     finally:

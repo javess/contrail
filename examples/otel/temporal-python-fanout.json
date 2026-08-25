@@ -1,0 +1,236 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "job-api"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "temporalio.contrib.opentelemetry"},
+          "spans": [
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "0000000000000001",
+              "name": "StartWorkflow:DailyExport",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000000100000000",
+              "attributes": [
+                {
+                  "key": "temporalWorkflowID",
+                  "value": {"stringValue": "daily-export-42"}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "workflow-worker"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "temporalio.contrib.opentelemetry"},
+          "spans": [
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "0000000000000002",
+              "parentSpanId": "0000000000000001",
+              "name": "RunWorkflow:DailyExport",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1700000000500000000",
+              "endTimeUnixNano": "1700000000500000000",
+              "attributes": [
+                {
+                  "key": "temporalWorkflowID",
+                  "value": {"stringValue": "daily-export-42"}
+                },
+                {
+                  "key": "temporalRunID",
+                  "value": {"stringValue": "run-7f8192"}
+                }
+              ]
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "0000000000000003",
+              "parentSpanId": "0000000000000001",
+              "name": "StartActivity:compute-chunk",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1700000001000000000",
+              "endTimeUnixNano": "1700000001000000000"
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "0000000000000004",
+              "parentSpanId": "0000000000000001",
+              "name": "StartActivity:compute-chunk",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1700000001010000000",
+              "endTimeUnixNano": "1700000001010000000"
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "0000000000000005",
+              "parentSpanId": "0000000000000001",
+              "name": "StartActivity:compute-chunk",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1700000001020000000",
+              "endTimeUnixNano": "1700000001020000000"
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "0000000000000006",
+              "parentSpanId": "0000000000000001",
+              "name": "StartActivity:compute-chunk",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1700000001030000000",
+              "endTimeUnixNano": "1700000001030000000"
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "0000000000000007",
+              "parentSpanId": "0000000000000001",
+              "name": "StartActivity:compute-chunk",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1700000001040000000",
+              "endTimeUnixNano": "1700000001040000000"
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "000000000000000d",
+              "parentSpanId": "0000000000000001",
+              "name": "StartActivity:result-aggregation",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1700000020100000000",
+              "endTimeUnixNano": "1700000020100000000"
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "000000000000000f",
+              "parentSpanId": "0000000000000001",
+              "name": "CompleteWorkflow:DailyExport",
+              "kind": "SPAN_KIND_INTERNAL",
+              "startTimeUnixNano": "1700000045100000000",
+              "endTimeUnixNano": "1700000045100000000",
+              "attributes": [
+                {
+                  "key": "temporalWorkflowID",
+                  "value": {"stringValue": "daily-export-42"}
+                },
+                {
+                  "key": "temporalRunID",
+                  "value": {"stringValue": "run-7f8192"}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "activity-worker"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "temporalio.contrib.opentelemetry"},
+          "spans": [
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "0000000000000008",
+              "parentSpanId": "0000000000000003",
+              "name": "RunActivity:compute-chunk",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1700000001200000000",
+              "endTimeUnixNano": "1700000008000000000",
+              "attributes": [
+                {"key": "temporalWorkflowID", "value": {"stringValue": "daily-export-42"}},
+                {"key": "temporalRunID", "value": {"stringValue": "run-7f8192"}},
+                {"key": "temporalActivityID", "value": {"stringValue": "compute-1"}}
+              ]
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "0000000000000009",
+              "parentSpanId": "0000000000000004",
+              "name": "RunActivity:compute-chunk",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1700000001300000000",
+              "endTimeUnixNano": "1700000008200000000",
+              "attributes": [
+                {"key": "temporalWorkflowID", "value": {"stringValue": "daily-export-42"}},
+                {"key": "temporalRunID", "value": {"stringValue": "run-7f8192"}},
+                {"key": "temporalActivityID", "value": {"stringValue": "compute-2"}}
+              ]
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "000000000000000a",
+              "parentSpanId": "0000000000000005",
+              "name": "RunActivity:compute-chunk",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1700000001100000000",
+              "endTimeUnixNano": "1700000007900000000",
+              "attributes": [
+                {"key": "temporalWorkflowID", "value": {"stringValue": "daily-export-42"}},
+                {"key": "temporalRunID", "value": {"stringValue": "run-7f8192"}},
+                {"key": "temporalActivityID", "value": {"stringValue": "compute-3"}}
+              ]
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "000000000000000b",
+              "parentSpanId": "0000000000000006",
+              "name": "RunActivity:compute-chunk",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1700000001250000000",
+              "endTimeUnixNano": "1700000008100000000",
+              "attributes": [
+                {"key": "temporalWorkflowID", "value": {"stringValue": "daily-export-42"}},
+                {"key": "temporalRunID", "value": {"stringValue": "run-7f8192"}},
+                {"key": "temporalActivityID", "value": {"stringValue": "compute-4"}}
+              ]
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "000000000000000c",
+              "parentSpanId": "0000000000000007",
+              "name": "RunActivity:compute-chunk",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1700000001200000000",
+              "endTimeUnixNano": "1700000020000000000",
+              "attributes": [
+                {"key": "temporalWorkflowID", "value": {"stringValue": "daily-export-42"}},
+                {"key": "temporalRunID", "value": {"stringValue": "run-7f8192"}},
+                {"key": "temporalActivityID", "value": {"stringValue": "compute-5"}}
+              ]
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "000000000000000e",
+              "parentSpanId": "000000000000000d",
+              "name": "RunActivity:result-aggregation",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1700000020200000000",
+              "endTimeUnixNano": "1700000045000000000",
+              "attributes": [
+                {"key": "temporalWorkflowID", "value": {"stringValue": "daily-export-42"}},
+                {"key": "temporalRunID", "value": {"stringValue": "run-7f8192"}},
+                {"key": "temporalActivityID", "value": {"stringValue": "aggregate"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

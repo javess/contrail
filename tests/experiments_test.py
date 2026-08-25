@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 import venv
@@ -203,12 +205,85 @@ def test_proofline_run_cli_forwards_the_selected_workload_python(
             "workload.py",
             "--python",
             str(selected),
+            "--capture-level",
+            "process",
         ]
     )
 
     assert status == 0
     assert capsys.readouterr().err == ""
     assert calls[0]["python_executable"] == selected
+    assert calls[0]["capture_level"] == "process"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "operation"),
+    [
+        (
+            [
+                "run",
+                "contract.yaml",
+                "--baseline-ref",
+                "main",
+                "--candidate-ref",
+                "HEAD",
+                "--workload",
+                "workload.py",
+            ],
+            "run",
+        ),
+        (
+            [
+                "search",
+                "contract.yaml",
+                "--parameters",
+                "parameters.yaml",
+                "--baseline-ref",
+                "main",
+                "--candidate-ref",
+                "HEAD",
+                "--workload",
+                "workload.py",
+            ],
+            "search",
+        ),
+    ],
+)
+def test_proofline_execution_surfaces_forward_detached_json_launches(
+    arguments: list[str],
+    operation: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launches: list[tuple[tuple[str, ...], str, bool, str]] = []
+
+    def launch(
+        worker_arguments: tuple[str, ...],
+        *,
+        module: str,
+        detached: bool = False,
+        detached_format: str = "text",
+    ) -> int:
+        launches.append((worker_arguments, module, detached, detached_format))
+        return 0
+
+    monkeypatch.setattr(proofline_cli, "capture_worker_client_event", lambda: None)
+    monkeypatch.setattr(proofline_cli, "run_capture_worker", launch)
+
+    status = proofline_cli.main(
+        [*arguments, "--detach", "--format", "json"],
+        _launch_capture_worker=True,
+    )
+
+    assert status == 0
+    assert launches == [
+        (
+            (*arguments, "--detach", "--format", "json"),
+            "runtime_tools.proofline.cli",
+            True,
+            "json",
+        )
+    ]
+    assert operation in launches[0][0]
 
 
 def test_proofline_run_cli_reports_invalid_workload_python_without_creating_output(
@@ -304,6 +379,7 @@ def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Pat
         workload_args=(),
         output_dir=output,
         cwd=repo,
+        capture_level="process",
     )
 
     assert result.baseline_exit_code == 0
@@ -316,9 +392,257 @@ def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Pat
     assert result.diff.baseline_id == result.verification.baseline_id
     assert result.diff.candidate_id == result.verification.candidate_id
     assert result.diff.output_equivalent is False
+    for runpack in (result.baseline_runpack, result.candidate_runpack):
+        with RunpackReader(runpack) as reader:
+            capture = reader.execution().metadata["capture"]
+        assert isinstance(capture, dict)
+        assert capture["level"] == "process"
+        assert isinstance(capture["process_observer"], dict)
     worktrees = _git(repo, "worktree", "list", "--porcelain")
     assert worktrees.count("worktree ") == 1
     assert _git(repo, "status", "--short") == "?? contract.yaml"
+
+
+def test_proofline_capture_worker_finishes_both_refs_after_cli_is_killed(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Proofline Test")
+    _git(repo, "config", "user.email", "proofline@example.invalid")
+    ready = tmp_path / "baseline-ready"
+    workload = repo / "workload.py"
+    workload.write_text(
+        "from pathlib import Path\n"
+        "import time\n"
+        f"Path({str(ready)!r}).write_text('ready', encoding='utf-8')\n"
+        "time.sleep(0.4)\n"
+        "print('survived client loss')\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "workload.py")
+    _git(repo, "commit", "-m", "workload")
+    contract = repo / "contract.yaml"
+    contract.write_text(
+        "name: completion\nassertions:\n  - type: candidate_exit_success\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "results"
+    retained_report = tmp_path / "proofline-report.json"
+    job_root = tmp_path / "capture-jobs"
+    environment = {**os.environ, "_CONTRAIL_CAPTURE_JOB_ROOT": str(job_root)}
+    client = subprocess.Popen(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.proofline.cli",
+            "run",
+            str(contract),
+            "--baseline-ref",
+            "main",
+            "--candidate-ref",
+            "main",
+            "--workload",
+            "workload.py",
+            "--output-dir",
+            str(output),
+            "--report",
+            str(retained_report),
+        ),
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+
+        os.kill(client.pid, signal.SIGKILL)
+        assert client.wait(timeout=5) == -signal.SIGKILL
+        deadline = time.monotonic() + 5
+        job_id: str | None = None
+        while time.monotonic() < deadline:
+            listed = subprocess.run(
+                (
+                    sys.executable,
+                    "-m",
+                    "runtime_tools.contrail_cli",
+                    "job",
+                    "list",
+                    "--format",
+                    "json",
+                ),
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            jobs = json.loads(listed.stdout)["jobs"]
+            if jobs and jobs[0]["client_disconnected"]:
+                job_id = jobs[0]["job_id"]
+                assert jobs[0]["operation"] == "proofline run"
+                break
+            time.sleep(0.01)
+        assert job_id is not None
+
+        waited = subprocess.run(
+            (
+                sys.executable,
+                "-m",
+                "runtime_tools.contrail_cli",
+                "job",
+                "wait",
+                job_id,
+                "--format",
+                "json",
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=15,
+        )
+        stdout, stderr = client.communicate(timeout=5)
+
+        assert waited.returncode == 0
+        waited_job = json.loads(waited.stdout)["job"]
+        assert waited_job["state"] == "complete"
+        assert waited_job["client_disconnected"] is True
+        assert waited_job["artifacts"] == [
+            str(output / "baseline.runpack"),
+            str(output / "candidate.runpack"),
+            str(retained_report),
+        ]
+        assert (output / "candidate.runpack").is_file()
+        assert retained_report.is_file()
+        assert stderr == ""
+        assert "PROOFLINE" in stdout
+        assert "baseline artifact:" in stdout
+        assert "candidate artifact:" in stdout
+        for name in ("baseline", "candidate"):
+            with RunpackReader(output / f"{name}.runpack") as reader:
+                capture = reader.execution().metadata["capture"]
+            assert isinstance(capture, dict)
+            assert capture["worker"] == {
+                "format_version": 1,
+                "mode": "separate-process",
+                "client_disconnected": True,
+            }
+        assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
+    finally:
+        if client.poll() is None:
+            client.kill()
+            client.wait(timeout=5)
+
+
+def test_proofline_detached_json_run_replays_the_final_document_and_report(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Proofline Test")
+    _git(repo, "config", "user.email", "proofline@example.invalid")
+    workload = repo / "workload.py"
+    workload.write_text("print('detached proofline')\n", encoding="utf-8")
+    _git(repo, "add", "workload.py")
+    _git(repo, "commit", "-m", "workload")
+    contract = repo / "contract.yaml"
+    contract.write_text(
+        "name: completion\nassertions:\n  - type: candidate_exit_success\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "results"
+    report = tmp_path / "proofline-report.json"
+    job_root = tmp_path / "capture-jobs"
+    environment = {**os.environ, "_CONTRAIL_CAPTURE_JOB_ROOT": str(job_root)}
+
+    launched = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.proofline.cli",
+            "run",
+            str(contract),
+            "--baseline-ref",
+            "main",
+            "--candidate-ref",
+            "main",
+            "--workload",
+            "workload.py",
+            "--output-dir",
+            str(output),
+            "--report",
+            str(report),
+            "--detach",
+            "--format",
+            "json",
+        ),
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert launched.returncode == 0
+    launch_document = json.loads(launched.stdout)
+    assert launch_document["document_type"] == "runtime.capture_job"
+    launch_job = launch_document["job"]
+    assert launch_job["state"] == "starting"
+    assert launch_job["detached"] is True
+    job_id = launch_job["job_id"]
+    waited = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.contrail_cli",
+            "job",
+            "wait",
+            job_id,
+            "--format",
+            "json",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=15,
+    )
+    replayed = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "job",
+            "output",
+            job_id,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert waited.returncode == 0
+    waited_job = json.loads(waited.stdout)["job"]
+    assert waited_job["artifacts"] == [
+        str(output / "baseline.runpack"),
+        str(output / "candidate.runpack"),
+        str(report),
+    ]
+    assert waited_job["output"]["stdout_truncated"] is False
+    assert replayed.returncode == 0
+    replayed_document = json.loads(replayed.stdout)
+    assert replayed_document["document_type"] == "proofline.experiment"
+    assert replayed.stderr == ""
+    assert report.read_text(encoding="utf-8") == replayed.stdout
+    assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
 
 
 def test_proofline_can_run_both_refs_with_a_separate_workload_python(tmp_path: Path) -> None:

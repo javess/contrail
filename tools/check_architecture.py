@@ -27,16 +27,24 @@ _FOUNDATION = frozenset(
 _ADAPTERS = frozenset(
     {
         "annotations",
+        "_deep_profile_bootstrap",
+        "_sampling_profile_bootstrap",
+        "_semantic_capture_bootstrap",
         "capture",
+        "deep_profile",
         "enrichment",
         "kubernetes",
         "otel",
         "prometheus",
+        "process_observer",
         "runtime",
+        "temporal",
     }
 )
 _ANALYSES = frozenset({"inspect", "query", "batchscope", "rundiff", "proofline"})
-_PRESENTATION = frozenset({"cli", "contrail_cli", "demo", "ui"})
+_PRESENTATION = frozenset(
+    {"capture_jobs", "capture_worker", "cli", "contrail_cli", "demo", "suite_report", "ui"}
+)
 _PRESENTATION_MODULES = frozenset(
     {
         "runtime_tools.batchscope.cli",

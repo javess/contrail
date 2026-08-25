@@ -35,7 +35,7 @@ Internal modules follow four layers:
 | Layer | Responsibilities | May import |
 |---|---|---|
 | Foundation | model, storage, artifact safety, serialization, shared support | foundation |
-| Adapters | capture, annotations, OTel, Kubernetes, Prometheus | foundation, adapters |
+| Adapters | capture, annotations, OTel, Kubernetes, Prometheus, Temporal | foundation, adapters |
 | Analyses | inspection, queries, RunDiff, BatchScope, Proofline | foundation, adapters, analyses |
 | Presentation | public facade, CLIs, reports, demo, local UI | every layer |
 

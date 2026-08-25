@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import re
+from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, cast
@@ -14,9 +15,26 @@ from runtime_tools.batchscope.analysis import (
     BatchAnalysis,
     Bottleneck,
     CriticalPath,
+    HttpCaller,
+    HttpCaptureSummary,
+    HttpRequest,
     LifecyclePhase,
+    LogicalOperation,
+    LogicalOperationCaptureSummary,
+    LogicalOperationHotspot,
+    NetworkCaller,
+    NetworkCaptureSummary,
+    NetworkConnection,
+    NetworkConnectionHotspot,
+    NetworkSetupCaptureSummary,
+    NetworkSetupHotspot,
+    NetworkSetupPhase,
+    SemanticCaptureSummary,
+    SubprocessCall,
+    SubprocessCaller,
     Throughput,
 )
+from runtime_tools.capture_jobs import CaptureJob, capture_job_document, capture_jobs_document
 from runtime_tools.inspect import ExecutionSummary
 from runtime_tools.json_support import OUTPUT_FORMAT_VERSION, output_document
 from runtime_tools.proofline import cli as proofline_cli
@@ -47,6 +65,8 @@ GOLDEN_DIRECTORY = Path(__file__).parent / "fixtures" / "golden"
 PUBLIC_DOCUMENT_TYPES = (
     "runtime.inspect",
     "runtime.query",
+    "runtime.capture_job",
+    "runtime.capture_jobs",
     "rundiff.compare",
     "batchscope.inspect",
     "proofline.verification",
@@ -100,6 +120,26 @@ def _diff() -> ExecutionDiff:
         candidate_missing_causal_references=2,
         baseline_dropped_attribute_count=1,
         candidate_dropped_attribute_count=3,
+        baseline_semantic_capture_status="complete",
+        candidate_semantic_capture_status="truncated",
+        baseline_dropped_subprocess_count=0,
+        candidate_dropped_subprocess_count=2,
+        baseline_http_capture_status="complete",
+        candidate_http_capture_status="truncated",
+        baseline_dropped_http_request_count=0,
+        candidate_dropped_http_request_count=1,
+        baseline_network_capture_status="complete",
+        candidate_network_capture_status="truncated",
+        baseline_dropped_network_connection_count=0,
+        candidate_dropped_network_connection_count=2,
+        baseline_network_setup_capture_status="complete",
+        candidate_network_setup_capture_status="truncated",
+        baseline_dropped_network_setup_phase_count=0,
+        candidate_dropped_network_setup_phase_count=3,
+        baseline_logical_operation_capture_status="complete",
+        candidate_logical_operation_capture_status="truncated",
+        baseline_dropped_logical_operation_count=0,
+        candidate_dropped_logical_operation_count=4,
         baseline_stdout_relay_error=None,
         baseline_stderr_relay_error=None,
         candidate_stdout_relay_error="relay stopped",
@@ -208,6 +248,24 @@ def _counterexample() -> CounterexampleResult:
 
 
 def _documents() -> dict[str, dict[str, Any]]:
+    capture_job = CaptureJob(
+        "1" * 32,
+        "runtime record",
+        "complete",
+        1234,
+        1_000_000_000,
+        2_000_000_000,
+        True,
+        0,
+        ("/artifacts/example.runpack",),
+        detached=True,
+        stdout_size_bytes=128,
+        stderr_size_bytes=64,
+        stderr_truncated=True,
+        output_retention="head-tail",
+        stdout_head_size_bytes=128,
+        stderr_head_size_bytes=64,
+    )
     return {
         "runtime.inspect": _summary().as_json_value(),
         "runtime.query": QueryResult(
@@ -215,6 +273,8 @@ def _documents() -> dict[str, dict[str, Any]]:
             ((None, True, 3, 1.25, "ok", {"encoding": "hex", "value": "ff"}),),
             False,
         ).as_json_value(),
+        "runtime.capture_job": capture_job_document(capture_job),
+        "runtime.capture_jobs": capture_jobs_document((capture_job,)),
         "rundiff.compare": _diff().as_json_value(),
         "batchscope.inspect": _batch_analysis().as_json_value(),
         "proofline.verification": _verification().as_json_value(),
@@ -353,6 +413,485 @@ def test_packaged_schema_validates_all_golden_documents_without_optional_depende
         assert set(document) <= set(definition["properties"])
         _validate(document, definition, schema)
         _validate(document, schema, schema)
+
+
+def test_packaged_schema_types_optional_semantic_boundary_output() -> None:
+    schema = _schema()
+    analysis = replace(
+        _batch_analysis(),
+        semantic_capture=SemanticCaptureSummary(
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+        ),
+        subprocess_calls=(
+            SubprocessCall(
+                "semantic:subprocess:42:0",
+                "python",
+                42,
+                "root",
+                43,
+                True,
+                None,
+                "exited",
+                0,
+                None,
+                1_000_000_000,
+                0.25,
+                SubprocessCaller(
+                    "semantic:caller:abc",
+                    "application.run",
+                    "application",
+                    "run",
+                    "/work/application.py",
+                    4,
+                    "application",
+                    "exact",
+                    1.0,
+                ),
+            ),
+        ),
+        http_capture=HttpCaptureSummary(
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+            ("httpcore.sync", "stdlib.http.client"),
+        ),
+        http_requests=(
+            HttpRequest(
+                "semantic:http:42:0",
+                "GET",
+                "https",
+                443,
+                42,
+                "root",
+                "response",
+                200,
+                None,
+                1_000_000_000,
+                0.1,
+                HttpCaller(
+                    "semantic:http-caller:abc",
+                    "application.fetch",
+                    "application",
+                    "fetch",
+                    "/work/application.py",
+                    8,
+                    "application",
+                    "sampled",
+                    0.9,
+                ),
+                "httpcore.sync",
+            ),
+        ),
+        network_capture=NetworkCaptureSummary(
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+            ("stdlib.socket.connect",),
+            1,
+        ),
+        network_connections=(
+            NetworkConnection(
+                "semantic:network:42:0",
+                "stdlib.socket.connect",
+                "tcp",
+                "ipv4",
+                5432,
+                None,
+                42,
+                "root",
+                "connected",
+                None,
+                1_000_000_000,
+                0.05,
+                NetworkCaller(
+                    "semantic:network-caller:abc",
+                    "application.connect_database",
+                    "application",
+                    "connect_database",
+                    "/work/application.py",
+                    12,
+                    "application",
+                    "exact",
+                    1.0,
+                ),
+            ),
+        ),
+        network_connection_hotspots=(
+            NetworkConnectionHotspot(
+                "stdlib.socket.connect",
+                1,
+                1,
+                0,
+                0,
+                0.05,
+                0.05,
+                NetworkCaller(
+                    "semantic:network-caller:abc",
+                    "application.connect_database",
+                    "application",
+                    "connect_database",
+                    "/work/application.py",
+                    12,
+                    "application",
+                    "exact",
+                    1.0,
+                ),
+            ),
+        ),
+        network_setup_capture=NetworkSetupCaptureSummary(
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+            ("stdlib.socket.getaddrinfo",),
+            1,
+        ),
+        network_setup_phases=(
+            NetworkSetupPhase(
+                "semantic:network-setup:42:0",
+                "dns",
+                "stdlib.socket.getaddrinfo",
+                42,
+                "root",
+                "completed",
+                None,
+                1_000_000_000,
+                0.02,
+                NetworkCaller(
+                    "semantic:network-setup-caller:abc",
+                    "application.resolve_database",
+                    "application",
+                    "resolve_database",
+                    "/work/application.py",
+                    16,
+                    "application",
+                    "exact",
+                    1.0,
+                ),
+            ),
+        ),
+        network_setup_hotspots=(
+            NetworkSetupHotspot(
+                "dns",
+                "stdlib.socket.getaddrinfo",
+                1,
+                1,
+                0,
+                0,
+                0.02,
+                0.02,
+                NetworkCaller(
+                    "semantic:network-setup-caller:abc",
+                    "application.resolve_database",
+                    "application",
+                    "resolve_database",
+                    "/work/application.py",
+                    16,
+                    "application",
+                    "exact",
+                    1.0,
+                ),
+            ),
+        ),
+        logical_operation_capture=LogicalOperationCaptureSummary(
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+            "complete",
+            1,
+            1,
+            0,
+            0,
+            0,
+            ("stdlib.sqlite3.Connection",),
+            1,
+        ),
+        logical_operations=(
+            LogicalOperation(
+                "semantic:logical-operation:42:0",
+                "database",
+                "execute",
+                "stdlib.sqlite3.Connection",
+                42,
+                "root",
+                "completed",
+                None,
+                None,
+                1_000_000_000,
+                0.03,
+                NetworkCaller(
+                    "semantic:logical-operation-caller:abc",
+                    "application.execute_database",
+                    "application",
+                    "execute_database",
+                    "/work/application.py",
+                    20,
+                    "application",
+                    "exact",
+                    1.0,
+                ),
+            ),
+        ),
+        logical_operation_hotspots=(
+            LogicalOperationHotspot(
+                "database",
+                "execute",
+                "stdlib.sqlite3.Connection",
+                1,
+                1,
+                0,
+                0,
+                0.03,
+                0.03,
+                NetworkCaller(
+                    "semantic:logical-operation-caller:abc",
+                    "application.execute_database",
+                    "application",
+                    "execute_database",
+                    "/work/application.py",
+                    20,
+                    "application",
+                    "exact",
+                    1.0,
+                ),
+            ),
+        ),
+    )
+    document = analysis.as_json_value()
+
+    http_capture = document["http_capture"]
+    assert isinstance(http_capture, dict)
+    assert http_capture["adapters"] == ["httpcore.sync", "stdlib.http.client"]
+    http_requests = document["http_requests"]
+    assert isinstance(http_requests, list)
+    http_request = http_requests[0]
+    assert isinstance(http_request, dict)
+    assert http_request["adapter"] == "httpcore.sync"
+    network_capture = document["network_capture"]
+    assert isinstance(network_capture, dict)
+    assert network_capture["adapters"] == ["stdlib.socket.connect"]
+    assert network_capture["connection_hotspot_count"] == 1
+    network_connections = document["network_connections"]
+    assert isinstance(network_connections, list)
+    network_connection = network_connections[0]
+    assert isinstance(network_connection, dict)
+    assert network_connection["server_address"] is None
+    assert network_connection["server_port"] == 5432
+    network_hotspots = document["network_connection_hotspots"]
+    assert isinstance(network_hotspots, list)
+    network_hotspot = network_hotspots[0]
+    assert isinstance(network_hotspot, dict)
+    assert network_hotspot["connection_count"] == 1
+    assert network_hotspot["connected_connection_count"] == 1
+    assert network_hotspot["failed_connection_count"] == 0
+    network_setup_capture = document["network_setup_capture"]
+    assert isinstance(network_setup_capture, dict)
+    assert network_setup_capture["hostname_captured"] is False
+    assert network_setup_capture["hotspot_count"] == 1
+    network_setup_phases = document["network_setup_phases"]
+    assert isinstance(network_setup_phases, list)
+    network_setup_phase = network_setup_phases[0]
+    assert isinstance(network_setup_phase, dict)
+    assert network_setup_phase["phase"] == "dns"
+    network_setup_hotspots = document["network_setup_hotspots"]
+    assert isinstance(network_setup_hotspots, list)
+    network_setup_hotspot = network_setup_hotspots[0]
+    assert isinstance(network_setup_hotspot, dict)
+    assert network_setup_hotspot["completed_phase_count"] == 1
+    logical_operation_capture = document["logical_operation_capture"]
+    assert isinstance(logical_operation_capture, dict)
+    assert logical_operation_capture["statement_captured"] is False
+    assert logical_operation_capture["awaitable_captured"] is False
+    assert logical_operation_capture["task_name_captured"] is False
+    assert logical_operation_capture["context_captured"] is False
+    assert logical_operation_capture["route_captured"] is False
+    assert logical_operation_capture["headers_captured"] is False
+    assert logical_operation_capture["hotspot_count"] == 1
+    logical_operations = document["logical_operations"]
+    assert isinstance(logical_operations, list)
+    logical_operation = logical_operations[0]
+    assert isinstance(logical_operation, dict)
+    assert logical_operation["operation"] == "execute"
+    logical_operation_hotspots = document["logical_operation_hotspots"]
+    assert isinstance(logical_operation_hotspots, list)
+    logical_operation_hotspot = logical_operation_hotspots[0]
+    assert isinstance(logical_operation_hotspot, dict)
+    assert logical_operation_hotspot["completed_operation_count"] == 1
+
+    _validate(document, schema["$defs"]["batchscope.inspect"], schema)
+    _validate(document, schema, schema)
+
+    for category, operation, adapter in (
+        ("cache", "command", "redis.Redis"),
+        ("broker", "publish", "pika.BlockingChannel"),
+        ("scheduler", "task", "stdlib.asyncio.create_task"),
+        ("scheduler", "task", "stdlib.asyncio.ensure_future"),
+        ("scheduler", "task", "stdlib.asyncio.gather"),
+        ("server", "request", "stdlib.wsgiref"),
+    ):
+        optional_client_document = copy.deepcopy(document)
+        optional_capture = cast(
+            dict[str, Any], optional_client_document["logical_operation_capture"]
+        )
+        optional_capture["adapters"] = [adapter]
+        optional_operations = cast(
+            list[dict[str, Any]], optional_client_document["logical_operations"]
+        )
+        optional_operations[0]["category"] = category
+        optional_operations[0]["operation"] = operation
+        optional_operations[0]["adapter"] = adapter
+        optional_operations[0]["duration_boundary"] = (
+            "creation_to_completion" if category == "scheduler" else "logical_operation"
+        )
+        if category == "server":
+            optional_operations[0]["duration_boundary"] = "request_to_response_completion"
+            optional_operations[0]["status_code"] = 200
+        optional_hotspots = cast(
+            list[dict[str, Any]], optional_client_document["logical_operation_hotspots"]
+        )
+        optional_hotspots[0]["category"] = category
+        optional_hotspots[0]["operation"] = operation
+        optional_hotspots[0]["adapter"] = adapter
+        _validate(optional_client_document, schema["$defs"]["batchscope.inspect"], schema)
+        _validate(optional_client_document, schema, schema)
+
+
+def test_packaged_schema_types_native_call_output() -> None:
+    schema = _schema()
+    document = _batch_analysis().as_json_value()
+    document["deep_profile"] = {
+        "status": "complete",
+        "native_call_capture": {
+            "status": "complete",
+            "enabled": True,
+            "deep_only": True,
+            "function_count": 1,
+            "call_count": 4,
+            "exception_count": 1,
+            "arguments_captured": False,
+            "return_values_captured": False,
+            "exception_messages_captured": False,
+            "max_functions_per_process": 2_000,
+            "max_edges_per_process": 10_000,
+        },
+        "python_exception_capture": {
+            "status": "complete",
+            "enabled": True,
+            "deep_only": True,
+            "event_semantics": "per_propagated_frame",
+            "function_count": 1,
+            "event_count": 2,
+            "dropped_event_count": 0,
+            "arguments_captured": False,
+            "locals_captured": False,
+            "exception_types_captured": False,
+            "exception_values_captured": False,
+            "exception_messages_captured": False,
+            "tracebacks_captured": False,
+            "line_events_enabled": False,
+            "opcode_events_enabled": False,
+            "max_functions_per_process": 2_000,
+        },
+        "observer_integrity": {
+            "format_version": 1,
+            "status": "complete",
+            "process_count": 1,
+            "missing_process_count": 0,
+            "profile_hook_setter_call_count": 0,
+            "profile_hook_setter_process_count": 0,
+            "trace_hook_setter_call_count": 0,
+            "trace_hook_setter_process_count": 0,
+            "arguments_captured": False,
+            "locals_captured": False,
+            "hook_values_captured": False,
+        },
+    }
+    document["python_hotspots"] = [
+        {
+            "name": "sqlite3.Connection.execute",
+            "filename": "<native>",
+            "firstlineno": 0,
+            "scope": "runtime",
+            "call_count": 4,
+            "total_seconds": 0.002,
+            "self_seconds": 0.002,
+            "max_seconds": 0.001,
+            "process_attribution_status": "complete",
+            "processes": [
+                {
+                    "pid": 42,
+                    "role": "root",
+                    "process_name": "python",
+                    "parent_name": None,
+                    "observed_in_process_tree": True,
+                    "call_count": 4,
+                    "total_seconds": 0.002,
+                    "self_seconds": 0.002,
+                    "max_seconds": 0.001,
+                    "exception_count": 1,
+                }
+            ],
+            "implementation": "native",
+            "exception_count": 1,
+        }
+    ]
+
+    _validate(document, schema["$defs"]["batchscope.inspect"], schema)
+    _validate(document, schema, schema)
+
+    invalid = cast(dict[str, Any], copy.deepcopy(document))
+    invalid_profile = cast(dict[str, Any], invalid["deep_profile"])
+    invalid_native = cast(dict[str, Any], invalid_profile["native_call_capture"])
+    invalid_native["arguments_captured"] = True
+    with pytest.raises(AssertionError):
+        _validate(invalid, schema["$defs"]["batchscope.inspect"], schema)
+
+    invalid_integrity = cast(dict[str, Any], copy.deepcopy(document))
+    invalid_profile = cast(dict[str, Any], invalid_integrity["deep_profile"])
+    integrity = cast(dict[str, Any], invalid_profile["observer_integrity"])
+    integrity["hook_values_captured"] = True
+    with pytest.raises(AssertionError):
+        _validate(invalid_integrity, schema["$defs"]["batchscope.inspect"], schema)
 
 
 def test_packaged_schema_types_optional_proofline_explanations() -> None:

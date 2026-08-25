@@ -35,6 +35,7 @@ _WORKLOAD_SOURCE = '''\
 from __future__ import annotations
 
 import argparse
+import time
 
 from runtime_tools import runtime
 
@@ -46,17 +47,27 @@ def main() -> int:
 
     write_count = 3 if args.variant == "baseline" else 30
     # A named run groups related operations into one traceable unit of work.
-    with runtime.run("local-pipeline"):
-        for _ in range(write_count):
-            # Stable operation names make cardinality contracts reusable.
-            runtime.event("db.write", kind="client.request")
-        if args.variant == "candidate":
-            # peer.service turns a client operation into dependency evidence.
-            runtime.event(
-                "metadata.lookup",
-                kind="client.request",
-                **{"peer.service": "metadata-db"},
-            )
+    with runtime.run("local-pipeline", total_work=100):
+        runtime.progress(completed=0, total=100, series="items")
+        with runtime.stage("compute", phase="compute", concurrency=4):
+            time.sleep(0.002)
+            runtime.progress(completed=80, total=100, series="items")
+        # Repeat the compute-complete sample after the stage boundary so the
+        # downstream drain rate is measured from observed progress.
+        runtime.progress(completed=80, total=100, series="items")
+        with runtime.stage("result-aggregation", phase="draining", concurrency=1):
+            for _ in range(write_count):
+                # Stable operation names make cardinality contracts reusable.
+                runtime.event("db.write", kind="client.request")
+                time.sleep(0.001)
+            if args.variant == "candidate":
+                # peer.service turns a client operation into dependency evidence.
+                runtime.event(
+                    "metadata.lookup",
+                    kind="client.request",
+                    **{"peer.service": "metadata-db"},
+                )
+            runtime.progress(completed=100, total=100, series="items")
 
     # The result stays identical; the regression is the extra runtime work.
     print("pipeline result: 42")
@@ -275,7 +286,7 @@ def run_demo(output_dir: Path) -> DemoResult:
         process_name = Path(sys.executable).name
         _write_workload(workload)
         _write_contract(contract, process_name)
-        command_prefix = (sys.executable, str(workload))
+        command_prefix = (sys.executable, str(workload.resolve()))
         baseline_exit_code = record_process(
             (*command_prefix, "baseline"),
             baseline_runpack,

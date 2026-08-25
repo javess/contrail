@@ -3,13 +3,38 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import signal
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import BinaryIO, cast
 
 from runtime_tools._version import __version__
-from runtime_tools.capture import CaptureError, record_process
+from runtime_tools.capture import (
+    CAPTURE_LEVELS,
+    CaptureError,
+    record_process,
+    recover_process_capture,
+)
+from runtime_tools.capture_jobs import (
+    CaptureJob,
+    CaptureJobError,
+    CaptureJobOutput,
+    cancel_capture_job,
+    capture_job_document,
+    capture_jobs_document,
+    list_capture_jobs,
+    load_capture_job,
+    read_capture_job_output,
+    record_current_capture_job_artifacts,
+    render_capture_job,
+    render_capture_jobs,
+    wait_capture_job,
+)
+from runtime_tools.capture_worker import capture_worker_client_event, run_capture_worker
 from runtime_tools.enrichment import EnrichmentError
 from runtime_tools.inspect import inspect_reader, render_causal_tree_reader, render_summary
 from runtime_tools.kubernetes import KubernetesImportError, import_kubernetes_snapshot
@@ -17,8 +42,11 @@ from runtime_tools.otel import OtelImportError, import_otlp_json, import_otlp_lo
 from runtime_tools.prometheus import PrometheusImportError, import_prometheus_response
 from runtime_tools.query import QueryError, query_runpack, render_query
 from runtime_tools.storage import RunpackError, RunpackReader, resolve_runpack_path
+from runtime_tools.temporal import import_temporal_history
 from runtime_tools.terminal import broken_pipe_safe, terminal_text
 from runtime_tools.ui import TimelineError, serve_runpacks
+
+CAPTURE_JOB_OUTPUT_POLL_SECONDS = 0.1
 
 
 def _parser(*, prog: str = "runtime") -> argparse.ArgumentParser:
@@ -30,6 +58,13 @@ def _parser(*, prog: str = "runtime") -> argparse.ArgumentParser:
     record.add_argument("--name", help="logical execution name")
     record.add_argument("--output", type=Path, help="output .runpack path")
     record.add_argument("--cwd", type=Path, help="working directory for the command")
+    record.add_argument(
+        "--detach",
+        action="store_true",
+        help=(
+            "run in the background and privately retain bounded stdout/stderr (may contain secrets)"
+        ),
+    )
     record.add_argument(
         "--identify-env",
         action="append",
@@ -43,7 +78,56 @@ def _parser(*, prog: str = "runtime") -> argparse.ArgumentParser:
         help="store bounded stdout/stderr content (may contain secrets)",
     )
     record.add_argument("--output-limit-bytes", type=int)
+    record.add_argument(
+        "--capture-level",
+        choices=CAPTURE_LEVELS,
+        help=(
+            "capture preset: passive outcome, process resources, sampled Python, "
+            "or expensive deep Python and native C calls"
+        ),
+    )
+    record.add_argument(
+        "--instrument",
+        choices=("sample", "deep"),
+        help="sample Python stacks, or observe every call with expensive deep capture",
+    )
+    record.add_argument(
+        "--observe-process-tree",
+        action="store_true",
+        help="sample process-group RSS and CPU from the controller",
+    )
     record.add_argument("command", nargs=argparse.REMAINDER, help="command after --")
+
+    recover = subparsers.add_parser(
+        "recover",
+        help="finish a post-exit capture checkpoint after controller loss",
+    )
+    recover.add_argument("checkpoint", type=Path, help="retained .runpack.tmp-* checkpoint")
+    recover.add_argument("--output", type=Path, required=True, help="output .runpack path")
+
+    job = subparsers.add_parser("job", help="discover and control local capture workers")
+    job_commands = job.add_subparsers(dest="job_command", required=True)
+    job_list = job_commands.add_parser("list", help="list retained capture jobs")
+    job_list.add_argument("--format", choices=("text", "json"), default="text")
+    job_status = job_commands.add_parser("status", help="inspect one capture job")
+    job_status.add_argument("job_id")
+    job_status.add_argument("--format", choices=("text", "json"), default="text")
+    job_wait = job_commands.add_parser("wait", help="wait for one capture job")
+    job_wait.add_argument("job_id")
+    job_wait.add_argument("--timeout", type=float)
+    job_wait.add_argument("--format", choices=("text", "json"), default="text")
+    job_cancel = job_commands.add_parser("cancel", help="cancel and reap one capture job")
+    job_cancel.add_argument("job_id")
+    job_cancel.add_argument("--format", choices=("text", "json"), default="text")
+    job_output = job_commands.add_parser(
+        "output", help="replay bounded output retained by --detach"
+    )
+    job_output.add_argument("job_id")
+    job_output.add_argument(
+        "--follow",
+        action="store_true",
+        help="replay retained output, then follow new retained bytes until the job finishes",
+    )
 
     inspect = subparsers.add_parser("inspect", help="inspect a .runpack")
     inspect.add_argument("runpack", type=Path)
@@ -102,6 +186,14 @@ def _parser(*, prog: str = "runtime") -> argparse.ArgumentParser:
         help="store the source OTLP logs JSON in the runpack",
     )
 
+    temporal = subparsers.add_parser(
+        "enrich-temporal-history",
+        help="add bounded Temporal workflow history",
+    )
+    temporal.add_argument("runpack", type=Path)
+    temporal.add_argument("history", type=Path)
+    temporal.add_argument("--output", type=Path, required=True)
+
     query = subparsers.add_parser("query", help="run bounded read-only SQL over a runpack")
     query.add_argument("runpack", type=Path)
     query.add_argument("sql")
@@ -127,6 +219,90 @@ def _process_exit_status(return_code: int) -> int:
     return 128 - return_code if return_code < 0 else return_code
 
 
+def _write_output(name: str, content: bytes) -> None:
+    if not content:
+        return
+    binary = _binary_stream(name)
+    if binary is not None:
+        binary.write(content)
+        binary.flush()
+        return
+    stream = getattr(sys, name)
+    stream.write(content.decode("utf-8", errors="backslashreplace"))
+    stream.flush()
+
+
+def _report_capture_job_output_truncation(
+    output: CaptureJobOutput,
+    *,
+    error_label: str,
+) -> None:
+    _report_capture_job_stream_truncation(
+        "stdout",
+        output.stdout_truncated,
+        output.stdout_omitted_bytes,
+        output.stdout_omitted_bytes_truncated,
+        error_label=error_label,
+    )
+    _report_capture_job_stream_truncation(
+        "stderr",
+        output.stderr_truncated,
+        output.stderr_omitted_bytes,
+        output.stderr_omitted_bytes_truncated,
+        error_label=error_label,
+    )
+
+
+def _report_capture_job_stream_truncation(
+    stream: str,
+    truncated: bool,
+    omitted_bytes: int,
+    omitted_bytes_truncated: bool,
+    *,
+    error_label: str,
+) -> None:
+    if not truncated:
+        return
+    detail = ""
+    if omitted_bytes:
+        qualifier = "at least " if omitted_bytes_truncated else ""
+        detail = f"; omitted {qualifier}{omitted_bytes} bytes between retained head and tail"
+    elif omitted_bytes_truncated:
+        detail = "; the omitted byte count is not fully known"
+    print(
+        f"{error_label}: retained {stream} was truncated{detail}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _follow_capture_job_output(job_id: str, *, error_label: str) -> None:
+    stdout_offset = 0
+    stderr_offset = 0
+    while True:
+        output = read_capture_job_output(
+            job_id,
+            stdout_offset=stdout_offset,
+            stderr_offset=stderr_offset,
+        )
+        _write_output("stdout", output.stdout)
+        _write_output("stderr", output.stderr)
+        stdout_offset += len(output.stdout)
+        stderr_offset += len(output.stderr)
+        if output.terminal:
+            _write_output("stdout", output.stdout_tail)
+            _write_output("stderr", output.stderr_tail)
+            _report_capture_job_output_truncation(output, error_label=error_label)
+            return
+        time.sleep(CAPTURE_JOB_OUTPUT_POLL_SECONDS)
+
+
+def _render_capture_job_result(job: CaptureJob, output_format: str) -> str:
+    if output_format == "json":
+        return json.dumps(capture_job_document(job), allow_nan=False, indent=2, sort_keys=True)
+    return render_capture_job(job)
+
+
 @broken_pipe_safe
 def main(
     argv: list[str] | None = None,
@@ -134,9 +310,23 @@ def main(
     prog: str = "runtime",
     error_label: str = "runtime",
 ) -> int:
-    args = _parser(prog=prog).parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = _parser(prog=prog).parse_args(arguments)
+    capture_worker_client: threading.Event | None = None
     try:
         if args.subcommand == "record":
+            capture_worker_client = capture_worker_client_event()
+            if capture_worker_client is None:
+                module = (
+                    "runtime_tools.contrail_cli"
+                    if error_label == "contrail"
+                    else "runtime_tools.cli"
+                )
+                return run_capture_worker(
+                    tuple(arguments),
+                    module=module,
+                    detached=args.detach,
+                )
             command = tuple(args.command)
             if command and command[0] == "--":
                 command = command[1:]
@@ -151,6 +341,30 @@ def main(
                 if args.include_output
                 else None
             )
+            if args.capture_level is not None and (
+                args.instrument is not None or args.observe_process_tree
+            ):
+                raise CaptureError(
+                    "--capture-level cannot be combined with --instrument or --observe-process-tree"
+                )
+            effective_instrument = args.instrument
+            if args.capture_level in {"sample", "deep"}:
+                effective_instrument = args.capture_level
+            if effective_instrument == "deep":
+                print(
+                    f"{error_label}: warning: deep instrumentation is intrusive and can "
+                    "materially perturb timings; it observes every Python and native C call plus "
+                    "Python exception propagation "
+                    "and is the "
+                    "most expensive capture level",
+                    file=sys.stderr,
+                )
+            elif effective_instrument == "sample":
+                print(
+                    f"{error_label}: note: sampling estimates Python hotspots and may "
+                    "perturb timings",
+                    file=sys.stderr,
+                )
             exit_code = record_process(
                 command,
                 output,
@@ -160,9 +374,58 @@ def main(
                 stderr=_binary_stream("stderr"),
                 capture_output_limit=capture_output_limit,
                 identify_environment=tuple(args.identify_env),
+                capture_level=args.capture_level,
+                instrument=args.instrument,
+                observe_process_tree=args.observe_process_tree,
+                _capture_client_disconnected=capture_worker_client,
             )
+            record_current_capture_job_artifacts((output,))
             print(f"recorded {terminal_text(output)}", file=sys.stderr)
             return _process_exit_status(exit_code)
+        if args.subcommand == "recover":
+            recover_process_capture(args.checkpoint, args.output)
+            print(f"recovered {terminal_text(args.output)}", file=sys.stderr)
+            return 0
+        if args.subcommand == "job":
+            if args.job_command == "list":
+                jobs = list_capture_jobs()
+                if args.format == "json":
+                    print(
+                        json.dumps(
+                            capture_jobs_document(jobs),
+                            allow_nan=False,
+                            indent=2,
+                            sort_keys=True,
+                        )
+                    )
+                else:
+                    print(render_capture_jobs(jobs))
+                return 0
+            if args.job_command == "status":
+                job = load_capture_job(args.job_id)
+                print(_render_capture_job_result(job, args.format))
+                return 0
+            if args.job_command == "wait":
+                job = wait_capture_job(args.job_id, timeout_seconds=args.timeout)
+                print(_render_capture_job_result(job, args.format))
+                return job.exit_status if job.exit_status is not None else 2
+            if args.job_command == "output":
+                if args.follow:
+                    try:
+                        _follow_capture_job_output(args.job_id, error_label=error_label)
+                    except KeyboardInterrupt:
+                        return 128 + signal.SIGINT
+                    return 0
+                output = read_capture_job_output(args.job_id)
+                _write_output("stdout", output.stdout)
+                _write_output("stdout", output.stdout_tail)
+                _write_output("stderr", output.stderr)
+                _write_output("stderr", output.stderr_tail)
+                _report_capture_job_output_truncation(output, error_label=error_label)
+                return 0
+            job = cancel_capture_job(args.job_id)
+            print(_render_capture_job_result(job, args.format))
+            return 0
         if args.subcommand == "import-otel":
             name = args.name or args.source.stem
             output = args.output or args.source.with_suffix(".runpack")
@@ -225,6 +488,20 @@ def main(
                 file=sys.stderr,
             )
             return 0
+        if args.subcommand == "enrich-temporal-history":
+            temporal_result = import_temporal_history(
+                args.runpack,
+                args.history,
+                args.output,
+            )
+            print(
+                f"added {temporal_result.activity_count} Temporal activities, "
+                f"{temporal_result.queue_wait_count} queue waits, and "
+                f"{temporal_result.correlation_count} OTLP correlations to "
+                f"{terminal_text(args.output)}",
+                file=sys.stderr,
+            )
+            return 0
         if args.subcommand == "query":
             result = query_runpack(args.runpack, args.sql, limit=args.limit)
             rendered = render_query(result, args.format)
@@ -247,8 +524,13 @@ def main(
             print()
             print(causal_tree)
         return 0
+    except KeyboardInterrupt:
+        if capture_worker_client is not None:
+            return 128 + signal.SIGINT
+        raise
     except (
         CaptureError,
+        CaptureJobError,
         EnrichmentError,
         KubernetesImportError,
         OtelImportError,

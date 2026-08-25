@@ -231,6 +231,8 @@ def test_counterexample_search_cli_supports_json_output(
             "workload.py",
             "--python",
             str(tmp_path / "workload-python"),
+            "--capture-level",
+            "passive",
             "--max-examples",
             "7",
             "--format",
@@ -262,6 +264,7 @@ def test_counterexample_search_cli_supports_json_output(
             "workload": Path("workload.py"),
             "max_examples": 7,
             "python_executable": tmp_path / "workload-python",
+            "capture_level": "passive",
         }
     ]
     if counterexample is None:

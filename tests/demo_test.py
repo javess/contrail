@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 import runtime_tools.demo as demo_module
+from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.capture import CaptureError, record_process
 from runtime_tools.demo import DemoError, run_demo
 from runtime_tools.model import JsonValue
@@ -51,7 +52,8 @@ def test_run_demo_creates_and_proves_the_installed_traceability_story(tmp_path: 
     assert result.contract == output / "contract.yaml"
     assert result.proofline_report == output / "proofline-report.json"
     workload_source = result.workload.read_text(encoding="utf-8")
-    assert 'runtime.run("local-pipeline")' in workload_source
+    assert 'runtime.run("local-pipeline", total_work=100)' in workload_source
+    assert 'runtime.stage("result-aggregation", phase="draining", concurrency=1)' in workload_source
     assert 'runtime.event("db.write", kind="client.request")' in workload_source
     assert '"peer.service": "metadata-db"' in workload_source
 
@@ -95,6 +97,18 @@ def test_run_demo_creates_and_proves_the_installed_traceability_story(tmp_path: 
     dependency_identity = ("process", Path(sys.executable).name, "service", "metadata-db", "calls")
     assert baseline_dependencies.get(dependency_identity, 0) == 0
     assert candidate_dependencies[dependency_identity] == 1
+
+    analysis = analyze_runpack(result.candidate_runpack)
+    assert [phase.name for phase in analysis.lifecycle] == ["compute", "result-aggregation"]
+    assert analysis.throughput is not None
+    assert analysis.throughput.remaining_at_compute_completion == 20
+    assert analysis.throughput.post_compute_seconds is not None
+    assert analysis.throughput.post_compute_seconds > 0
+    assert any(
+        bottleneck.classification == "serialized_stage"
+        and "result-aggregation" in bottleneck.evidence
+        for bottleneck in analysis.bottlenecks
+    )
 
     report = json.loads(result.proofline_report.read_text(encoding="utf-8"))
     assert report["document_type"] == "proofline.verification"

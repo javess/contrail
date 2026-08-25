@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -168,6 +169,8 @@ def search_counterexample(
     max_examples: int = 25,
     cwd: Path | None = None,
     python_executable: Path | None = None,
+    capture_level: str | None = None,
+    _capture_client_disconnected: threading.Event | None = None,
 ) -> CounterexampleResult | None:
     if not isinstance(max_examples, int) or isinstance(max_examples, bool):
         raise ContractError("max_examples must be an integer")
@@ -204,6 +207,8 @@ def search_counterexample(
                 output_dir=Path(directory) / "artifacts",
                 cwd=repo,
                 python_executable=python_executable,
+                capture_level=capture_level,
+                _capture_client_disconnected=_capture_client_disconnected,
             )
             result = _has_violation(experiment)
             cache[key] = result
@@ -231,6 +236,8 @@ def search_counterexample(
         output_dir=output_dir,
         cwd=repo,
         python_executable=python_executable,
+        capture_level=capture_level,
+        _capture_client_disconnected=_capture_client_disconnected,
     )
     if not _has_violation(experiment):
         raise ExperimentError("selected counterexample did not reproduce on the preserved run")

@@ -1,0 +1,205 @@
+{
+  "events": [
+    {
+      "eventId": "1",
+      "eventTime": "2023-11-14T22:13:20.500000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {"name": "DailyExport"},
+        "workflowId": "daily-export-42"
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2023-11-14T22:13:20.600000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED"
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2023-11-14T22:13:20.700000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {"scheduledEventId": "2"}
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2023-11-14T22:13:21.000000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "startedEventId": "3"
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2023-11-14T22:13:21.000000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "compute-1",
+        "activityType": {"name": "compute-chunk"}
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2023-11-14T22:13:21.010000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "compute-2",
+        "activityType": {"name": "compute-chunk"}
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2023-11-14T22:13:21.020000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "compute-3",
+        "activityType": {"name": "compute-chunk"}
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2023-11-14T22:13:21.030000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "compute-4",
+        "activityType": {"name": "compute-chunk"}
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2023-11-14T22:13:21.040000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "compute-5",
+        "activityType": {"name": "compute-chunk"}
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2023-11-14T22:13:21.100000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {"scheduledEventId": "7", "attempt": 1}
+    },
+    {
+      "eventId": "11",
+      "eventTime": "2023-11-14T22:13:21.200000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {"scheduledEventId": "5", "attempt": 1}
+    },
+    {
+      "eventId": "12",
+      "eventTime": "2023-11-14T22:13:21.200000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {"scheduledEventId": "9", "attempt": 1}
+    },
+    {
+      "eventId": "13",
+      "eventTime": "2023-11-14T22:13:21.250000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {"scheduledEventId": "8", "attempt": 1}
+    },
+    {
+      "eventId": "14",
+      "eventTime": "2023-11-14T22:13:21.300000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {"scheduledEventId": "6", "attempt": 1}
+    },
+    {
+      "eventId": "15",
+      "eventTime": "2023-11-14T22:13:27.900000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {"scheduledEventId": "7", "startedEventId": "10"}
+    },
+    {
+      "eventId": "16",
+      "eventTime": "2023-11-14T22:13:28.000000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {"scheduledEventId": "5", "startedEventId": "11"}
+    },
+    {
+      "eventId": "17",
+      "eventTime": "2023-11-14T22:13:28.100000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {"scheduledEventId": "8", "startedEventId": "13"}
+    },
+    {
+      "eventId": "18",
+      "eventTime": "2023-11-14T22:13:28.200000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {"scheduledEventId": "6", "startedEventId": "14"}
+    },
+    {
+      "eventId": "19",
+      "eventTime": "2023-11-14T22:13:40.000000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {"scheduledEventId": "9", "startedEventId": "12"}
+    },
+    {
+      "eventId": "20",
+      "eventTime": "2023-11-14T22:13:40.010000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED"
+    },
+    {
+      "eventId": "21",
+      "eventTime": "2023-11-14T22:13:40.050000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {"scheduledEventId": "20"}
+    },
+    {
+      "eventId": "22",
+      "eventTime": "2023-11-14T22:13:40.100000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "20",
+        "startedEventId": "21"
+      }
+    },
+    {
+      "eventId": "23",
+      "eventTime": "2023-11-14T22:13:40.100000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "aggregate",
+        "activityType": {"name": "result-aggregation"}
+      }
+    },
+    {
+      "eventId": "24",
+      "eventTime": "2023-11-14T22:13:40.200000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {"scheduledEventId": "23", "attempt": 2}
+    },
+    {
+      "eventId": "25",
+      "eventTime": "2023-11-14T22:14:05.000000000Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {"scheduledEventId": "23", "startedEventId": "24"}
+    },
+    {
+      "eventId": "26",
+      "eventTime": "2023-11-14T22:14:05.000000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED"
+    },
+    {
+      "eventId": "27",
+      "eventTime": "2023-11-14T22:14:05.050000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {"scheduledEventId": "26"}
+    },
+    {
+      "eventId": "28",
+      "eventTime": "2023-11-14T22:14:05.100000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "26",
+        "startedEventId": "27"
+      }
+    },
+    {
+      "eventId": "29",
+      "eventTime": "2023-11-14T22:14:05.100000000Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+      "workflowExecutionCompletedEventAttributes": {"workflowTaskCompletedEventId": "28"}
+    }
+  ]
+}

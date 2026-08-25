@@ -11,11 +11,12 @@ import pytest
 from runtime_tools import __version__, record_process
 
 
-def _contrail(*arguments: str) -> subprocess.CompletedProcess[str]:
+def _contrail(*arguments: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         (sys.executable, "-m", "runtime_tools.contrail_cli", *arguments),
         check=False,
         capture_output=True,
+        cwd=cwd,
         text=True,
     )
 
@@ -81,6 +82,10 @@ def test_contrail_demo_is_a_self_contained_successful_walkthrough(tmp_path: Path
     )
     assert f"  {verify_command}\n" in result.stdout
     assert f"  {serve_command}\n" in result.stdout
+    assert (
+        f"  {shlex.join(('contrail', 'analyze', str(output / 'candidate.runpack')))}\n"
+        in result.stdout
+    )
 
     adaptation = result.stdout.split(
         "Adapt workload.py and contract.yaml, then capture the two variants again:\n", 1
@@ -95,6 +100,15 @@ def test_contrail_demo_is_a_self_contained_successful_walkthrough(tmp_path: Path
     assert collision.returncode == 2
     assert collision.stdout == ""
     assert collision.stderr.startswith("contrail: refusing to reuse demo output directory:")
+
+
+def test_contrail_demo_default_output_runs_from_a_fresh_directory(tmp_path: Path) -> None:
+    result = _contrail("demo", cwd=tmp_path)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout.startswith("CONTRAIL DEMO READY\n")
+    assert (tmp_path / "contrail-demo" / "proofline-report.json").is_file()
 
 
 def test_contrail_demo_commands_preserve_control_characters_in_paths(tmp_path: Path) -> None:
@@ -137,15 +151,18 @@ def test_contrail_unknown_command_is_a_branded_usage_error() -> None:
     (
         "demo",
         "record",
+        "recover",
         "inspect",
         "compare",
         "analyze",
+        "report",
         "serve",
         "query",
         "import-otel",
         "enrich-kubernetes",
         "enrich-prometheus",
         "enrich-otel-logs",
+        "enrich-temporal-history",
         "validate",
         "verify",
         "run",
@@ -162,6 +179,55 @@ def test_contrail_subcommand_help_keeps_the_branded_command_name(command: str) -
         assert "--python" in result.stdout
     if command in {"verify", "run"}:
         assert "--report" in result.stdout
+
+
+def test_contrail_report_combines_candidate_analysis_diff_and_contract_evidence(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "suite report demo"
+    demo = _contrail("demo", "--output-dir", str(output))
+    assert demo.returncode == 0
+
+    result = _contrail(
+        "report",
+        str(output / "baseline.runpack"),
+        str(output / "candidate.runpack"),
+        "--contract",
+        str(output / "contract.yaml"),
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout.startswith("CONTRAIL SUITE REPORT\n")
+    assert result.stdout.count("BATCHSCOPE\n") == 1
+    assert result.stdout.count("RUNTIME DIFF\n") == 1
+    assert result.stdout.count("PROOFLINE\n") == 1
+    assert "runtime behavior: equivalent" in result.stdout
+    assert "candidate bottleneck:" in result.stdout
+    assert "contracts: 3 passed, 2 failed, 0 unverifiable" in result.stdout
+    assert "db.write" in result.stdout
+    assert "3 → 30" in result.stdout
+    assert "metadata-db" in result.stdout
+    assert "diagnostic; use 'contrail verify' for a contract gate" in result.stdout
+
+
+def test_contrail_report_can_omit_contract_evaluation(tmp_path: Path) -> None:
+    output = tmp_path / "suite report demo"
+    demo = _contrail("demo", "--output-dir", str(output))
+    assert demo.returncode == 0
+
+    result = _contrail(
+        "report",
+        str(output / "baseline.runpack"),
+        str(output / "candidate.runpack"),
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert "BATCHSCOPE\n" in result.stdout
+    assert "RUNTIME DIFF\n" in result.stdout
+    assert "PROOFLINE\n" not in result.stdout
+    assert "contracts: not evaluated (pass --contract PATH to include Proofline)" in result.stdout
 
 
 def test_contrail_run_reports_an_invalid_workload_python_as_a_branded_usage_error(

@@ -9,10 +9,12 @@
   `foundation -> adapters -> analyses -> presentation`.
 - Foundation modules are `_version`, `artifacts`, `json_support`, `model`,
   `runpack`, `semantics`, `storage`, `terminal`, and `yaml_support`.
-- Adapters are `annotations`, `capture`, `enrichment`, `kubernetes`, `otel`,
-  `prometheus`, and `runtime`.
+- Adapters are `annotations`, `capture`, `deep_profile`, `enrichment`,
+  `kubernetes`, `otel`, `process_observer`, `prometheus`, `runtime`, `temporal`,
+  and the private Python profiling and semantic-capture bootstraps.
 - Analyses are `inspect`, `query`, `batchscope`, `rundiff`, and `proofline`.
-- Presentation is the package facade, command modules, `demo`, and `ui`.
+- Presentation is the package facade, command modules, `capture_jobs`,
+  `capture_worker`, `demo`, and `ui`.
 - A layer may depend on itself or a layer to its left. The architecture check
   must remain cycle-free. Split modules around cohesive responsibilities, not
   an arbitrary line limit.

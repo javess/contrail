@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import signal
 import sqlite3
@@ -801,6 +802,8 @@ def test_rundiff_text_report_bounds_each_change_section(
 
 
 def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path: Path) -> None:
+    job_root = tmp_path / "capture-jobs"
+    environment = {**os.environ, "_CONTRAIL_CAPTURE_JOB_ROOT": str(job_root)}
     recorded = subprocess.run(
         (
             sys.executable,
@@ -819,6 +822,7 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
         check=False,
         capture_output=True,
         text=True,
+        env=environment,
     )
     compared = subprocess.run(
         (
@@ -838,6 +842,34 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
     assert recorded.returncode == 0
     assert recorded.stdout == "result\n"
     assert (tmp_path / "custom-baseline.runpack").is_file()
+    with RunpackReader(tmp_path / "custom-baseline.runpack") as reader:
+        capture = reader.execution().metadata["capture"]
+    assert isinstance(capture, dict)
+    assert capture["worker"] == {
+        "format_version": 1,
+        "mode": "separate-process",
+        "client_disconnected": False,
+    }
+    jobs = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "job",
+            "list",
+            "--format",
+            "json",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert jobs.returncode == 0
+    job = json.loads(jobs.stdout)["jobs"][0]
+    assert job["operation"] == "rundiff record"
+    assert job["state"] == "complete"
+    assert job["artifacts"] == [str(tmp_path / "custom-baseline.runpack")]
     assert compared.returncode == 0
     assert "matching:  exact" in compared.stdout
     assert "Outcome\n  equivalent" in compared.stdout
@@ -845,6 +877,98 @@ def test_rundiff_cli_records_named_alias_and_resolves_it_for_comparison(tmp_path
         "No entity, structural, error, concurrency, duration, or operation-count changes."
         in compared.stdout
     )
+
+
+def test_rundiff_record_can_detach_and_publish_its_named_artifact(tmp_path: Path) -> None:
+    output = tmp_path / "detached-baseline.runpack"
+    job_root = tmp_path / "capture-jobs"
+    environment = {**os.environ, "_CONTRAIL_CAPTURE_JOB_ROOT": str(job_root)}
+    launched = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "record",
+            "baseline",
+            "--detach",
+            "--output",
+            str(output),
+            "--",
+            sys.executable,
+            "-c",
+            "print('detached rundiff')",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    job_id = next(
+        line.removeprefix("id:     ")
+        for line in launched.stdout.splitlines()
+        if line.startswith("id:     ")
+    )
+    waited = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.cli",
+            "job",
+            "wait",
+            job_id,
+            "--format",
+            "json",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=10,
+    )
+
+    assert launched.returncode == 0
+    assert f"status: runtime job status {job_id}" in launched.stdout
+    assert f"wait:   runtime job wait {job_id}" in launched.stdout
+    assert f"output: runtime job output {job_id}" in launched.stdout
+    assert f"follow: runtime job output {job_id} --follow" in launched.stdout
+    assert waited.returncode == 0
+    job = json.loads(waited.stdout)["job"]
+    assert job["operation"] == "rundiff record"
+    assert job["detached"] is True
+    assert job["artifacts"] == [str(output)]
+    assert output.is_file()
+
+
+def test_rundiff_record_supports_the_shared_process_capture_level(tmp_path: Path) -> None:
+    output = tmp_path / "process.runpack"
+
+    recorded = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "runtime_tools.rundiff.cli",
+            "record",
+            "process",
+            "--capture-level",
+            "process",
+            "--output",
+            str(output),
+            "--",
+            sys.executable,
+            "-c",
+            "import time; time.sleep(0.22)",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert recorded.returncode == 0
+    with RunpackReader(output) as reader:
+        capture = reader.execution().metadata["capture"]
+    assert isinstance(capture, dict)
+    assert capture["level"] == "process"
+    assert isinstance(capture["process_observer"], dict)
 
 
 def test_rundiff_record_rejects_an_output_limit_without_output_capture(tmp_path: Path) -> None:

@@ -179,11 +179,27 @@ def _max_regression(
     change: ValueChange,
     label: str,
     evidence: DiffEvidenceReference,
+    instrumentation_modes: tuple[str, str] | None = None,
 ) -> ClaimResult:
     percent = _number(assertion.config, "percent", assertion)
     if percent < 0:
         raise ContractError(f"{assertion.type} percent cannot be negative")
     expected = f"candidate {label} <= baseline + {percent:g}%"
+    if instrumentation_modes is not None and instrumentation_modes[0] != instrumentation_modes[1]:
+        baseline_mode, candidate_mode = instrumentation_modes
+        return _result(
+            contract,
+            assertion,
+            "unverifiable",
+            expected,
+            "timing instrumentation differs "
+            f"(baseline={baseline_mode}, candidate={candidate_mode})",
+            evidence.with_fact(
+                baseline_instrumentation=baseline_mode,
+                candidate_instrumentation=candidate_mode,
+                limit=None,
+            ),
+        )
     if change.baseline is None or change.candidate is None:
         return _result(
             contract,
@@ -268,6 +284,156 @@ def _incomplete_semantic_observation(diff: ExecutionDiff) -> str | None:
     return f"semantic evidence incomplete ({'; '.join(incomplete)})"
 
 
+def _incomplete_subprocess_observation(diff: ExecutionDiff) -> str | None:
+    incomplete = []
+    semantic_statuses = (
+        (
+            "baseline",
+            diff.baseline_semantic_capture_status,
+            diff.baseline_dropped_subprocess_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_semantic_capture_status,
+            diff.candidate_dropped_subprocess_count,
+        ),
+    )
+    if any(status is not None for _, status, _ in semantic_statuses):
+        for side, status, dropped_count in semantic_statuses:
+            if status is None:
+                incomplete.append(f"{side}: subprocess capture unavailable")
+            elif status != "complete":
+                omitted = (
+                    f", {dropped_count} omitted"
+                    if dropped_count is not None and dropped_count > 0
+                    else ""
+                )
+                incomplete.append(f"{side}: subprocess capture {status}{omitted}")
+    if not incomplete:
+        return None
+    return f"subprocess evidence incomplete ({'; '.join(incomplete)})"
+
+
+def _incomplete_http_observation(diff: ExecutionDiff) -> str | None:
+    incomplete = []
+    capture_statuses = (
+        (
+            "baseline",
+            diff.baseline_http_capture_status,
+            diff.baseline_dropped_http_request_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_http_capture_status,
+            diff.candidate_dropped_http_request_count,
+        ),
+    )
+    if any(status is not None for _, status, _ in capture_statuses):
+        for side, status, dropped_count in capture_statuses:
+            if status is None:
+                incomplete.append(f"{side}: HTTP capture unavailable")
+            elif status != "complete":
+                omitted = (
+                    f", {dropped_count} omitted"
+                    if dropped_count is not None and dropped_count > 0
+                    else ""
+                )
+                incomplete.append(f"{side}: HTTP capture {status}{omitted}")
+    if not incomplete:
+        return None
+    return f"HTTP evidence incomplete ({'; '.join(incomplete)})"
+
+
+def _incomplete_network_observation(diff: ExecutionDiff) -> str | None:
+    incomplete = []
+    capture_statuses = (
+        (
+            "baseline",
+            diff.baseline_network_capture_status,
+            diff.baseline_dropped_network_connection_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_network_capture_status,
+            diff.candidate_dropped_network_connection_count,
+        ),
+    )
+    if any(status is not None for _, status, _ in capture_statuses):
+        for side, status, dropped_count in capture_statuses:
+            if status is None:
+                incomplete.append(f"{side}: network capture unavailable")
+            elif status != "complete":
+                omitted = (
+                    f", {dropped_count} omitted"
+                    if dropped_count is not None and dropped_count > 0
+                    else ""
+                )
+                incomplete.append(f"{side}: network capture {status}{omitted}")
+    if not incomplete:
+        return None
+    return f"network evidence incomplete ({'; '.join(incomplete)})"
+
+
+def _incomplete_network_setup_observation(diff: ExecutionDiff) -> str | None:
+    incomplete = []
+    capture_statuses = (
+        (
+            "baseline",
+            diff.baseline_network_setup_capture_status,
+            diff.baseline_dropped_network_setup_phase_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_network_setup_capture_status,
+            diff.candidate_dropped_network_setup_phase_count,
+        ),
+    )
+    if any(status is not None for _, status, _ in capture_statuses):
+        for side, status, dropped_count in capture_statuses:
+            if status is None:
+                incomplete.append(f"{side}: network setup capture unavailable")
+            elif status != "complete":
+                omitted = (
+                    f", {dropped_count} omitted"
+                    if dropped_count is not None and dropped_count > 0
+                    else ""
+                )
+                incomplete.append(f"{side}: network setup capture {status}{omitted}")
+    if not incomplete:
+        return None
+    return f"network setup evidence incomplete ({'; '.join(incomplete)})"
+
+
+def _incomplete_logical_operation_observation(diff: ExecutionDiff) -> str | None:
+    incomplete = []
+    capture_statuses = (
+        (
+            "baseline",
+            diff.baseline_logical_operation_capture_status,
+            diff.baseline_dropped_logical_operation_count,
+        ),
+        (
+            "candidate",
+            diff.candidate_logical_operation_capture_status,
+            diff.candidate_dropped_logical_operation_count,
+        ),
+    )
+    if any(status not in {None, "unavailable"} for _, status, _ in capture_statuses):
+        for side, status, dropped_count in capture_statuses:
+            if status in {None, "unavailable"}:
+                incomplete.append(f"{side}: logical operation capture unavailable")
+            elif status != "complete":
+                omitted = (
+                    f", {dropped_count} omitted"
+                    if dropped_count is not None and dropped_count > 0
+                    else ""
+                )
+                incomplete.append(f"{side}: logical operation capture {status}{omitted}")
+    if not incomplete:
+        return None
+    return f"logical operation evidence incomplete ({'; '.join(incomplete)})"
+
+
 def _evaluate(
     contract: Contract,
     assertion: Assertion,
@@ -333,15 +499,30 @@ def _evaluate(
         )
     if assertion.type == "max_runtime_regression":
         return _max_regression(
-            contract, assertion, diff.wall_time, "runtime", _evidence("/wall_time")
+            contract,
+            assertion,
+            diff.wall_time,
+            "runtime",
+            _evidence("/wall_time"),
+            (diff.baseline_instrumentation_mode, diff.candidate_instrumentation_mode),
         )
     if assertion.type == "max_cpu_time_regression":
         return _max_regression(
-            contract, assertion, diff.cpu_time, "CPU time", _evidence("/cpu_time")
+            contract,
+            assertion,
+            diff.cpu_time,
+            "CPU time",
+            _evidence("/cpu_time"),
+            (diff.baseline_instrumentation_mode, diff.candidate_instrumentation_mode),
         )
     if assertion.type == "max_peak_memory_regression":
         return _max_regression(
-            contract, assertion, diff.peak_memory, "peak memory", _evidence("/peak_memory")
+            contract,
+            assertion,
+            diff.peak_memory,
+            "peak memory",
+            _evidence("/peak_memory"),
+            (diff.baseline_instrumentation_mode, diff.candidate_instrumentation_mode),
         )
     if assertion.type == "forbid_new_dependency":
         source = _string(assertion.config, "from", assertion)
@@ -408,6 +589,56 @@ def _evaluate(
                 "unverifiable",
                 f"candidate {count_label} count <= baseline x {factor:g}",
                 "annotation evidence incomplete",
+                evidence.with_fact(baseline=None, candidate=None, limit=None),
+            )
+        subprocess_observation = _incomplete_subprocess_observation(diff)
+        if subprocess_observation is not None:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"candidate {count_label} count <= baseline x {factor:g}",
+                subprocess_observation,
+                evidence.with_fact(baseline=None, candidate=None, limit=None),
+            )
+        http_observation = _incomplete_http_observation(diff)
+        if http_observation is not None:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"candidate {count_label} count <= baseline x {factor:g}",
+                http_observation,
+                evidence.with_fact(baseline=None, candidate=None, limit=None),
+            )
+        network_observation = _incomplete_network_observation(diff)
+        if network_observation is not None:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"candidate {count_label} count <= baseline x {factor:g}",
+                network_observation,
+                evidence.with_fact(baseline=None, candidate=None, limit=None),
+            )
+        network_setup_observation = _incomplete_network_setup_observation(diff)
+        if network_setup_observation is not None:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"candidate {count_label} count <= baseline x {factor:g}",
+                network_setup_observation,
+                evidence.with_fact(baseline=None, candidate=None, limit=None),
+            )
+        logical_operation_observation = _incomplete_logical_operation_observation(diff)
+        if logical_operation_observation is not None:
+            return _result(
+                contract,
+                assertion,
+                "unverifiable",
+                f"candidate {count_label} count <= baseline x {factor:g}",
+                logical_operation_observation,
                 evidence.with_fact(baseline=None, candidate=None, limit=None),
             )
         if errors_only:

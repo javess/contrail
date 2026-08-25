@@ -853,7 +853,7 @@ def test_record_process_normalizes_working_directory_symlink_loops(tmp_path: Pat
     assert not tuple(tmp_path.glob(".unresolved.*"))
 
 
-def test_record_process_normalizes_publication_failures_and_cleans_temporary_files(
+def test_record_process_retains_a_recoverable_checkpoint_after_publication_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "unpublished.runpack"
@@ -867,7 +867,27 @@ def test_record_process_normalizes_publication_failures_and_cleans_temporary_fil
         record_process((sys.executable, "-c", "pass"), output, name="unpublished")
 
     assert not output.exists()
-    assert not tuple(tmp_path.glob(".unpublished.runpack.tmp-*"))
+    checkpoints = tuple(tmp_path.glob(".unpublished.runpack.tmp-*"))
+    assert len(checkpoints) == 1
+
+    monkeypatch.undo()
+    recovered_exit_code = capture.recover_process_capture(checkpoints[0], output)
+
+    assert recovered_exit_code == 0
+    assert output.is_file()
+    assert not checkpoints[0].exists()
+    with RunpackReader(output) as reader:
+        capture_metadata = cast(
+            dict[str, JsonValue],
+            reader.execution().metadata["capture"],
+        )
+        recovery = capture_metadata["recovery"]
+    assert recovery == {
+        "format_version": 1,
+        "status": "complete",
+        "checkpoint": "post-exit",
+        "controller_restart_recovered": True,
+    }
 
 
 def test_record_process_bounds_annotation_diagnostics_without_losing_core_evidence(
@@ -925,6 +945,79 @@ def test_record_process_terminates_child_when_capture_is_interrupted(
     assert children[-1].poll() is not None
     assert not output.exists()
     assert not tuple(tmp_path.glob(".interrupted.runpack.tmp-*"))
+
+
+def test_sample_capture_recovers_after_post_exit_controller_kill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "controller-loss.runpack"
+    checkpoint_ready = tmp_path / "checkpoint-ready"
+
+    def block_after_checkpoint(*args: Any, **kwargs: Any) -> None:
+        checkpoint_ready.write_text("ready", encoding="utf-8")
+        time.sleep(30)
+
+    monkeypatch.setattr(capture, "_assemble_profile_checkpoint", block_after_checkpoint)
+    controller_pid = os.fork()
+    if controller_pid == 0:
+        try:
+            record_process(
+                (sys.executable, "-c", "import time; time.sleep(0.12)"),
+                output,
+                name="controller-loss",
+                capture_level="sample",
+            )
+        finally:
+            os._exit(0)
+
+    try:
+        deadline = time.monotonic() + 10
+        while not checkpoint_ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert checkpoint_ready.exists()
+        os.kill(controller_pid, signal.SIGKILL)
+        waited_pid, status = os.waitpid(controller_pid, 0)
+        assert waited_pid == controller_pid
+        assert os.waitstatus_to_exitcode(status) == -signal.SIGKILL
+
+        checkpoints = tuple(tmp_path.glob(".controller-loss.runpack.tmp-*"))
+        profile_directories = tuple(tmp_path.glob(".contrail-sample-profile-*"))
+        assert len(checkpoints) == 1
+        assert len(profile_directories) == 1
+
+        monkeypatch.undo()
+        recovered_exit_code = capture.recover_process_capture(checkpoints[0], output)
+
+        assert recovered_exit_code == 0
+        assert output.is_file()
+        assert not checkpoints[0].exists()
+        assert not profile_directories[0].exists()
+        with RunpackReader(output) as reader:
+            execution = reader.execution()
+        capture_metadata = cast(dict[str, JsonValue], execution.metadata["capture"])
+        recovery = cast(dict[str, JsonValue], capture_metadata["recovery"])
+        instrumentation = cast(dict[str, JsonValue], capture_metadata["instrumentation"])
+        assert recovery == {
+            "format_version": 1,
+            "status": "complete",
+            "checkpoint": "post-exit",
+            "controller_restart_recovered": True,
+        }
+        assert instrumentation["mode"] == "sample"
+        assert instrumentation["status"] == "complete"
+        assert instrumentation["transport"] == "controller-unix-socket"
+        snapshot_metrics = cast(dict[str, JsonValue], instrumentation["snapshot_metrics"])
+        assert snapshot_metrics["status"] == "available"
+        assert cast(int, snapshot_metrics["message_count"]) >= 2
+    finally:
+        try:
+            waited_pid, _ = os.waitpid(controller_pid, os.WNOHANG)
+        except ChildProcessError:
+            waited_pid = controller_pid
+        if waited_pid == 0:
+            os.kill(controller_pid, signal.SIGKILL)
+            os.waitpid(controller_pid, 0)
 
 
 def test_record_process_terminates_descendants_when_capture_is_interrupted(
@@ -1143,6 +1236,37 @@ def test_reader_holds_one_snapshot_until_it_closes(tmp_path: Path) -> None:
             mutator.close()
 
         assert reader.execution().name == "before"
+
+
+def test_derived_graph_and_execution_metadata_roll_back_together(tmp_path: Path) -> None:
+    output = tmp_path / "atomic-derived-graph.runpack"
+    with RunpackWriter(output) as writer:
+        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("process", "process", "python", None, {}))
+        with pytest.raises(RunpackError, match="execution does not exist"):
+            writer.add_event_graph_and_set_execution_metadata(
+                "missing",
+                (
+                    Event(
+                        "derived",
+                        "python.stack.sample",
+                        "work",
+                        "process",
+                        None,
+                        None,
+                        None,
+                        None,
+                        0,
+                        {},
+                    ),
+                ),
+                (),
+                {"capture": {"instrumentation": {"status": "complete"}}},
+            )
+
+    with RunpackReader(output) as reader:
+        assert reader.events() == ()
+        assert reader.execution().metadata == {}
 
 
 def test_reader_normalizes_runpack_path_resolution_failures(

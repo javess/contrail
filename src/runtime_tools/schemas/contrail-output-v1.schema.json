@@ -5,6 +5,8 @@
   "oneOf": [
     {"$ref": "#/$defs/runtime.inspect"},
     {"$ref": "#/$defs/runtime.query"},
+    {"$ref": "#/$defs/runtime.capture_job"},
+    {"$ref": "#/$defs/runtime.capture_jobs"},
     {"$ref": "#/$defs/rundiff.compare"},
     {"$ref": "#/$defs/batchscope.inspect"},
     {"$ref": "#/$defs/proofline.verification"},
@@ -122,6 +124,346 @@
         "confidence": {"type": "number"}
       }, "additionalProperties": true
     },
+    "semanticCaptureSummary": {
+      "type": "object",
+      "required": ["status", "observer", "zero_code", "process_count", "subprocess_count", "dropped_subprocess_count", "callback_error_count", "invalid_event_count", "arguments_captured", "environment_captured", "working_directory_captured"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "observer": {"const": "python-subprocess-wrapper"}, "zero_code": {"const": true},
+        "process_count": {"type": "integer", "minimum": 0},
+        "subprocess_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "dropped_subprocess_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "invalid_event_count": {"type": "integer", "minimum": 0},
+        "arguments_captured": {"const": false},
+        "environment_captured": {"const": false},
+        "working_directory_captured": {"const": false},
+        "caller_attribution": {"$ref": "#/$defs/callerAttributionSummary"}
+      }, "additionalProperties": true
+    },
+    "callerAttributionSummary": {
+      "type": "object",
+      "required": ["status", "caller_count", "attributed_subprocess_count", "unattributed_subprocess_count", "invalid_caller_count", "callback_error_count", "arguments_captured", "locals_captured"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "caller_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "attributed_subprocess_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "unattributed_subprocess_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "invalid_caller_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "arguments_captured": {"const": false},
+        "locals_captured": {"const": false}
+      }, "additionalProperties": true
+    },
+    "subprocessCaller": {
+      "type": "object",
+      "required": ["event_id", "name", "module", "qualname", "filename", "firstlineno", "scope", "observation", "confidence"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "module": {"type": "string", "minLength": 1},
+        "qualname": {"type": "string", "minLength": 1},
+        "filename": {"type": "string", "minLength": 1},
+        "firstlineno": {"type": "integer", "minimum": 0},
+        "scope": {"enum": ["application", "library", "runtime"]},
+        "observation": {"enum": ["exact", "sampled"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+      }, "additionalProperties": true
+    },
+    "subprocessCall": {
+      "type": "object",
+      "required": ["event_id", "name", "parent_pid", "role", "child_pid", "child_observed_in_process_tree", "shell", "outcome", "exit_code", "error_type", "started_at_ns", "duration_seconds"],
+      "properties": {
+        "event_id": {"type": "string"}, "name": {"type": "string", "minLength": 1},
+        "parent_pid": {"type": "integer", "minimum": 1},
+        "role": {"enum": ["root", "descendant", "unknown"]},
+        "child_pid": {"type": ["integer", "null"], "minimum": 1},
+        "child_observed_in_process_tree": {"type": "boolean"},
+        "shell": {"type": ["boolean", "null"]},
+        "outcome": {"enum": ["exited", "launch_error", "unknown"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "error_type": {"type": ["string", "null"]},
+        "started_at_ns": {"type": "integer", "minimum": 1},
+        "duration_seconds": {"type": ["number", "null"], "minimum": 0},
+        "caller": {"oneOf": [{"$ref": "#/$defs/subprocessCaller"}, {"type": "null"}]}
+      }, "additionalProperties": true
+    },
+    "httpCaptureSummary": {
+      "type": "object",
+      "required": ["status", "observer", "zero_code", "process_count", "request_count", "dropped_request_count", "callback_error_count", "invalid_event_count", "server_identity_policy", "method_captured", "scheme_captured", "server_address_captured", "path_captured", "query_captured", "headers_captured", "body_captured", "response_body_captured", "duration_boundary", "caller_attribution"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "observer": {"const": "python-http-client-wrapper"}, "zero_code": {"const": true},
+        "process_count": {"type": "integer", "minimum": 0},
+        "request_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "dropped_request_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "invalid_event_count": {"type": "integer", "minimum": 0},
+        "adapters": {"type": "array", "maxItems": 4, "uniqueItems": true, "items": {"enum": ["stdlib.http.client", "httpcore.sync", "httpcore.async", "aiohttp.async"]}},
+        "server_identity_policy": {"const": "redact"},
+        "method_captured": {"const": true}, "scheme_captured": {"const": true},
+        "server_address_captured": {"const": false}, "path_captured": {"const": false},
+        "query_captured": {"const": false}, "headers_captured": {"const": false},
+        "body_captured": {"const": false}, "response_body_captured": {"const": false},
+        "duration_boundary": {"const": "response_headers"},
+        "caller_attribution": {"$ref": "#/$defs/httpCallerAttributionSummary"}
+      }, "additionalProperties": true
+    },
+    "httpCallerAttributionSummary": {
+      "type": "object",
+      "required": ["status", "caller_count", "attributed_request_count", "unattributed_request_count", "invalid_caller_count", "callback_error_count", "arguments_captured", "locals_captured"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "caller_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "attributed_request_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "unattributed_request_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "invalid_caller_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "arguments_captured": {"const": false}, "locals_captured": {"const": false}
+      }, "additionalProperties": true
+    },
+    "httpRequest": {
+      "type": "object",
+      "required": ["event_id", "method", "scheme", "server_address", "server_port", "server_identity_policy", "parent_pid", "role", "outcome", "status_code", "error_type", "started_at_ns", "duration_seconds", "duration_boundary", "caller"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "method": {"type": "string", "minLength": 1, "maxLength": 32},
+        "adapter": {"enum": ["stdlib.http.client", "httpcore.sync", "httpcore.async", "aiohttp.async"]},
+        "scheme": {"enum": ["http", "https"]}, "server_address": {"type": "null"},
+        "server_port": {"type": ["integer", "null"], "minimum": 1, "maximum": 65535},
+        "server_identity_policy": {"const": "redact"},
+        "parent_pid": {"type": "integer", "minimum": 1},
+        "role": {"enum": ["root", "descendant", "unknown"]},
+        "outcome": {"enum": ["response", "request_error", "closed", "unknown"]},
+        "status_code": {"type": ["integer", "null"]},
+        "error_type": {"type": ["string", "null"]},
+        "started_at_ns": {"type": "integer", "minimum": 1},
+        "duration_seconds": {"type": ["number", "null"], "minimum": 0},
+        "duration_boundary": {"const": "response_headers"},
+        "caller": {"oneOf": [{"$ref": "#/$defs/subprocessCaller"}, {"type": "null"}]}
+      }, "additionalProperties": true
+    },
+    "networkCaptureSummary": {
+      "type": "object",
+      "required": ["status", "observer", "zero_code", "process_count", "connection_count", "connection_hotspot_count", "dropped_connection_count", "callback_error_count", "invalid_event_count", "adapters", "server_identity_policy", "server_address_captured", "path_captured", "credentials_captured", "duration_boundary", "caller_attribution"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "observer": {"const": "python-network-connection-wrapper"}, "zero_code": {"const": true},
+        "process_count": {"type": "integer", "minimum": 0},
+        "connection_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "connection_hotspot_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "dropped_connection_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "invalid_event_count": {"type": "integer", "minimum": 0},
+        "adapters": {"type": "array", "maxItems": 3, "uniqueItems": true, "items": {"enum": ["stdlib.socket.connect", "asyncio.create_connection", "asyncio.create_unix_connection"]}},
+        "server_identity_policy": {"const": "redact"},
+        "server_address_captured": {"const": false}, "path_captured": {"const": false},
+        "credentials_captured": {"const": false},
+        "duration_boundary": {"const": "connection_ready"},
+        "caller_attribution": {"$ref": "#/$defs/networkCallerAttributionSummary"}
+      }, "additionalProperties": true
+    },
+    "networkCallerAttributionSummary": {
+      "type": "object",
+      "required": ["status", "caller_count", "attributed_connection_count", "unattributed_connection_count", "invalid_caller_count", "callback_error_count", "arguments_captured", "locals_captured"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "caller_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "attributed_connection_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "unattributed_connection_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "invalid_caller_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "arguments_captured": {"const": false}, "locals_captured": {"const": false}
+      }, "additionalProperties": true
+    },
+    "networkConnection": {
+      "type": "object",
+      "required": ["event_id", "adapter", "transport", "address_family", "server_address", "server_port", "server_identity_policy", "tls_requested", "parent_pid", "role", "outcome", "error_type", "started_at_ns", "duration_seconds", "duration_boundary", "caller"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "adapter": {"enum": ["stdlib.socket.connect", "asyncio.create_connection", "asyncio.create_unix_connection"]},
+        "transport": {"enum": ["tcp", "unix"]},
+        "address_family": {"enum": ["ipv4", "ipv6", "unix", "unknown"]},
+        "server_address": {"type": "null"},
+        "server_port": {"type": ["integer", "null"], "minimum": 1, "maximum": 65535},
+        "server_identity_policy": {"const": "redact"},
+        "tls_requested": {"type": ["boolean", "null"]},
+        "parent_pid": {"type": "integer", "minimum": 1},
+        "role": {"enum": ["root", "descendant", "unknown"]},
+        "outcome": {"enum": ["connected", "connect_error", "unknown"]},
+        "error_type": {"type": ["string", "null"]},
+        "started_at_ns": {"type": "integer", "minimum": 1},
+        "duration_seconds": {"type": ["number", "null"], "minimum": 0},
+        "duration_boundary": {"const": "connection_ready"},
+        "caller": {"oneOf": [{"$ref": "#/$defs/subprocessCaller"}, {"type": "null"}]}
+      }, "additionalProperties": true
+    },
+    "networkConnectionHotspot": {
+      "type": "object",
+      "required": ["adapter", "connection_count", "connected_connection_count", "failed_connection_count", "unfinished_connection_count", "total_duration_seconds", "max_duration_seconds", "caller"],
+      "properties": {
+        "adapter": {"enum": ["stdlib.socket.connect", "asyncio.create_connection", "asyncio.create_unix_connection"]},
+        "connection_count": {"type": "integer", "minimum": 1, "maximum": 2000},
+        "connected_connection_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "failed_connection_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "unfinished_connection_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "total_duration_seconds": {"type": "number", "minimum": 0},
+        "max_duration_seconds": {"type": "number", "minimum": 0},
+        "caller": {"oneOf": [{"$ref": "#/$defs/subprocessCaller"}, {"type": "null"}]}
+      }, "additionalProperties": true
+    },
+    "networkSetupCaptureSummary": {
+      "type": "object",
+      "required": ["status", "observer", "zero_code", "process_count", "phase_count", "dropped_phase_count", "callback_error_count", "invalid_event_count", "adapters", "hotspot_count", "hostname_captured", "server_address_captured", "sni_captured", "certificate_captured", "credentials_captured", "caller_attribution"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "observer": {"const": "python-network-setup-wrapper"}, "zero_code": {"const": true},
+        "process_count": {"type": "integer", "minimum": 0},
+        "phase_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "dropped_phase_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "invalid_event_count": {"type": "integer", "minimum": 0},
+        "adapters": {"type": "array", "maxItems": 3, "uniqueItems": true, "items": {"enum": ["stdlib.socket.getaddrinfo", "stdlib.ssl.SSLObject.do_handshake", "stdlib.ssl.SSLSocket.do_handshake"]}},
+        "hotspot_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "hostname_captured": {"const": false}, "server_address_captured": {"const": false},
+        "sni_captured": {"const": false}, "certificate_captured": {"const": false},
+        "credentials_captured": {"const": false},
+        "caller_attribution": {"$ref": "#/$defs/networkSetupCallerAttributionSummary"}
+      }, "additionalProperties": true
+    },
+    "networkSetupCallerAttributionSummary": {
+      "type": "object",
+      "required": ["status", "caller_count", "attributed_phase_count", "unattributed_phase_count", "invalid_caller_count", "callback_error_count", "arguments_captured", "locals_captured"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "caller_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "attributed_phase_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "unattributed_phase_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "invalid_caller_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "arguments_captured": {"const": false}, "locals_captured": {"const": false}
+      }, "additionalProperties": true
+    },
+    "networkSetupPhase": {
+      "type": "object",
+      "required": ["event_id", "phase", "adapter", "parent_pid", "role", "outcome", "error_type", "started_at_ns", "duration_seconds", "duration_boundary", "hostname_captured", "server_address_captured", "sni_captured", "certificate_captured", "credentials_captured", "caller"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "phase": {"enum": ["dns", "tls"]},
+        "adapter": {"enum": ["stdlib.socket.getaddrinfo", "stdlib.ssl.SSLObject.do_handshake", "stdlib.ssl.SSLSocket.do_handshake"]},
+        "parent_pid": {"type": "integer", "minimum": 1},
+        "role": {"enum": ["root", "descendant", "unknown"]},
+        "outcome": {"enum": ["completed", "setup_error", "unknown"]},
+        "error_type": {"type": ["string", "null"]},
+        "started_at_ns": {"type": "integer", "minimum": 1},
+        "duration_seconds": {"type": ["number", "null"], "minimum": 0},
+        "duration_boundary": {"enum": ["dns", "tls"]},
+        "hostname_captured": {"const": false}, "server_address_captured": {"const": false},
+        "sni_captured": {"const": false}, "certificate_captured": {"const": false},
+        "credentials_captured": {"const": false},
+        "caller": {"oneOf": [{"$ref": "#/$defs/subprocessCaller"}, {"type": "null"}]}
+      }, "additionalProperties": true
+    },
+    "networkSetupHotspot": {
+      "type": "object",
+      "required": ["phase", "adapter", "phase_count", "completed_phase_count", "failed_phase_count", "unfinished_phase_count", "total_duration_seconds", "max_duration_seconds", "caller"],
+      "properties": {
+        "phase": {"enum": ["dns", "tls"]},
+        "adapter": {"enum": ["stdlib.socket.getaddrinfo", "stdlib.ssl.SSLObject.do_handshake", "stdlib.ssl.SSLSocket.do_handshake"]},
+        "phase_count": {"type": "integer", "minimum": 1, "maximum": 2000},
+        "completed_phase_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "failed_phase_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "unfinished_phase_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "total_duration_seconds": {"type": "number", "minimum": 0},
+        "max_duration_seconds": {"type": "number", "minimum": 0},
+        "caller": {"oneOf": [{"$ref": "#/$defs/subprocessCaller"}, {"type": "null"}]}
+      }, "additionalProperties": true
+    },
+    "logicalOperationCaptureSummary": {
+      "type": "object",
+      "required": ["status", "observer", "zero_code", "deep_only", "process_count", "operation_count", "dropped_operation_count", "callback_error_count", "invalid_event_count", "adapters", "hotspot_count", "statement_captured", "parameters_captured", "payload_captured", "queue_item_captured", "queue_identity_captured", "callable_captured", "awaitable_captured", "task_name_captured", "context_captured", "arguments_captured", "return_value_captured", "exception_messages_captured", "http_method_captured", "route_captured", "url_captured", "headers_captured", "body_captured", "response_body_captured", "client_address_captured", "caller_attribution"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "observer": {"const": "python-logical-operation-wrapper"}, "zero_code": {"const": true}, "deep_only": {"const": true},
+        "process_count": {"type": "integer", "minimum": 0},
+        "operation_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "dropped_operation_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "invalid_event_count": {"type": "integer", "minimum": 0},
+        "adapters": {"type": "array", "maxItems": 22, "uniqueItems": true, "items": {"enum": ["aiokafka.AIOKafkaConsumer", "aiokafka.AIOKafkaProducer", "pika.BlockingChannel", "redis.Pipeline", "redis.Redis", "redis.asyncio.Pipeline", "redis.asyncio.Redis", "sqlalchemy.engine.Connection", "sqlalchemy.ext.asyncio.AsyncConnection", "sqlalchemy.ext.asyncio.AsyncSession", "sqlalchemy.orm.Session", "stdlib.asyncio.Queue", "stdlib.asyncio.TaskGroup", "stdlib.asyncio.create_task", "stdlib.asyncio.ensure_future", "stdlib.asyncio.gather", "stdlib.concurrent.futures.ProcessPoolExecutor", "stdlib.concurrent.futures.ThreadPoolExecutor", "stdlib.queue.Queue", "stdlib.sqlite3.Connection", "stdlib.sqlite3.Cursor", "stdlib.wsgiref"]}},
+        "hotspot_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "statement_captured": {"const": false}, "parameters_captured": {"const": false},
+        "payload_captured": {"const": false}, "queue_item_captured": {"const": false},
+        "queue_identity_captured": {"const": false}, "callable_captured": {"const": false},
+        "awaitable_captured": {"const": false}, "task_name_captured": {"const": false},
+        "context_captured": {"const": false},
+        "arguments_captured": {"const": false}, "return_value_captured": {"const": false},
+        "exception_messages_captured": {"const": false},
+        "http_method_captured": {"const": false}, "route_captured": {"const": false},
+        "url_captured": {"const": false}, "headers_captured": {"const": false},
+        "body_captured": {"const": false}, "response_body_captured": {"const": false},
+        "client_address_captured": {"const": false},
+        "caller_attribution": {"$ref": "#/$defs/logicalOperationCallerAttributionSummary"}
+      }, "additionalProperties": true
+    },
+    "logicalOperationCallerAttributionSummary": {
+      "type": "object",
+      "required": ["status", "caller_count", "attributed_operation_count", "unattributed_operation_count", "invalid_caller_count", "callback_error_count", "arguments_captured", "locals_captured"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "caller_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "attributed_operation_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "unattributed_operation_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "invalid_caller_count": {"type": "integer", "minimum": 0},
+        "callback_error_count": {"type": "integer", "minimum": 0},
+        "arguments_captured": {"const": false}, "locals_captured": {"const": false}
+      }, "additionalProperties": true
+    },
+    "logicalOperation": {
+      "type": "object",
+      "required": ["event_id", "category", "operation", "adapter", "parent_pid", "role", "outcome", "error_type", "status_code", "started_at_ns", "duration_seconds", "duration_boundary", "statement_captured", "parameters_captured", "payload_captured", "queue_item_captured", "queue_identity_captured", "callable_captured", "awaitable_captured", "task_name_captured", "context_captured", "arguments_captured", "return_value_captured", "http_method_captured", "route_captured", "url_captured", "headers_captured", "body_captured", "response_body_captured", "client_address_captured", "caller"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "category": {"enum": ["broker", "cache", "database", "executor", "queue", "scheduler", "server"]},
+        "operation": {"enum": ["batch", "command", "commit", "consume", "execute", "executemany", "executescript", "get", "publish", "put", "request", "rollback", "task"]},
+        "adapter": {"enum": ["aiokafka.AIOKafkaConsumer", "aiokafka.AIOKafkaProducer", "pika.BlockingChannel", "redis.Pipeline", "redis.Redis", "redis.asyncio.Pipeline", "redis.asyncio.Redis", "sqlalchemy.engine.Connection", "sqlalchemy.ext.asyncio.AsyncConnection", "sqlalchemy.ext.asyncio.AsyncSession", "sqlalchemy.orm.Session", "stdlib.asyncio.Queue", "stdlib.asyncio.TaskGroup", "stdlib.asyncio.create_task", "stdlib.asyncio.ensure_future", "stdlib.asyncio.gather", "stdlib.concurrent.futures.ProcessPoolExecutor", "stdlib.concurrent.futures.ThreadPoolExecutor", "stdlib.queue.Queue", "stdlib.sqlite3.Connection", "stdlib.sqlite3.Cursor", "stdlib.wsgiref"]},
+        "parent_pid": {"type": "integer", "minimum": 1},
+        "role": {"enum": ["root", "descendant", "unknown"]},
+        "outcome": {"enum": ["completed", "operation_error", "unknown"]},
+        "error_type": {"type": ["string", "null"]},
+        "status_code": {"oneOf": [{"type": "integer", "minimum": 100, "maximum": 999}, {"type": "null"}]},
+        "started_at_ns": {"type": "integer", "minimum": 1},
+        "duration_seconds": {"type": ["number", "null"], "minimum": 0},
+        "duration_boundary": {"enum": ["creation_to_completion", "logical_operation", "request_to_response_completion", "submission_to_completion"]},
+        "statement_captured": {"const": false}, "parameters_captured": {"const": false},
+        "payload_captured": {"const": false}, "queue_item_captured": {"const": false},
+        "queue_identity_captured": {"const": false}, "callable_captured": {"const": false},
+        "awaitable_captured": {"const": false}, "task_name_captured": {"const": false},
+        "context_captured": {"const": false},
+        "arguments_captured": {"const": false}, "return_value_captured": {"const": false},
+        "http_method_captured": {"const": false}, "route_captured": {"const": false},
+        "url_captured": {"const": false}, "headers_captured": {"const": false},
+        "body_captured": {"const": false}, "response_body_captured": {"const": false},
+        "client_address_captured": {"const": false},
+        "caller": {"oneOf": [{"$ref": "#/$defs/subprocessCaller"}, {"type": "null"}]}
+      }, "additionalProperties": true
+    },
+    "logicalOperationHotspot": {
+      "type": "object",
+      "required": ["category", "operation", "adapter", "operation_count", "completed_operation_count", "failed_operation_count", "unfinished_operation_count", "total_duration_seconds", "max_duration_seconds", "caller"],
+      "properties": {
+        "category": {"enum": ["broker", "cache", "database", "executor", "queue", "scheduler", "server"]},
+        "operation": {"enum": ["batch", "command", "commit", "consume", "execute", "executemany", "executescript", "get", "publish", "put", "request", "rollback", "task"]},
+        "adapter": {"enum": ["aiokafka.AIOKafkaConsumer", "aiokafka.AIOKafkaProducer", "pika.BlockingChannel", "redis.Pipeline", "redis.Redis", "redis.asyncio.Pipeline", "redis.asyncio.Redis", "sqlalchemy.engine.Connection", "sqlalchemy.ext.asyncio.AsyncConnection", "sqlalchemy.ext.asyncio.AsyncSession", "sqlalchemy.orm.Session", "stdlib.asyncio.Queue", "stdlib.asyncio.TaskGroup", "stdlib.asyncio.create_task", "stdlib.asyncio.ensure_future", "stdlib.asyncio.gather", "stdlib.concurrent.futures.ProcessPoolExecutor", "stdlib.concurrent.futures.ThreadPoolExecutor", "stdlib.queue.Queue", "stdlib.sqlite3.Connection", "stdlib.sqlite3.Cursor", "stdlib.wsgiref"]},
+        "operation_count": {"type": "integer", "minimum": 1, "maximum": 2000},
+        "completed_operation_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "failed_operation_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "unfinished_operation_count": {"type": "integer", "minimum": 0, "maximum": 2000},
+        "total_duration_seconds": {"type": "number", "minimum": 0},
+        "max_duration_seconds": {"type": "number", "minimum": 0},
+        "caller": {"oneOf": [{"$ref": "#/$defs/subprocessCaller"}, {"type": "null"}]}
+      }, "additionalProperties": true
+    },
     "diffEvidenceReference": {
       "type": "object", "required": ["fact", "diff_path", "selector"],
       "properties": {
@@ -222,6 +564,192 @@
         "shrink_budget_exhausted": {"type": "boolean"}
       }, "additionalProperties": true
     },
+    "nativeCallCaptureSummary": {
+      "type": "object",
+      "required": ["status", "enabled", "deep_only", "function_count", "call_count", "exception_count", "arguments_captured", "return_values_captured", "exception_messages_captured", "max_functions_per_process", "max_edges_per_process"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "enabled": {"const": true}, "deep_only": {"const": true},
+        "function_count": {"type": "integer", "minimum": 0, "maximum": 20000},
+        "call_count": {"type": "integer", "minimum": 0},
+        "exception_count": {"type": "integer", "minimum": 0},
+        "arguments_captured": {"const": false},
+        "return_values_captured": {"const": false},
+        "exception_messages_captured": {"const": false},
+        "max_functions_per_process": {"const": 2000},
+        "max_edges_per_process": {"const": 10000}
+      }, "additionalProperties": true
+    },
+    "pythonExceptionControlFlowFilterSummary": {
+      "type": "object",
+      "required": ["format_version", "status", "event_semantics", "filtered_exception_types", "exception_type_identity_inspected", "exception_types_captured", "non_control_flow_function_count", "non_control_flow_event_count", "filtered_event_count", "dropped_non_control_flow_event_count", "dropped_filtered_event_count"],
+      "properties": {
+        "format_version": {"const": 1},
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "event_semantics": {"const": "exact_type_identity"},
+        "filtered_exception_types": {
+          "type": "array",
+          "prefixItems": [
+            {"const": "GeneratorExit"},
+            {"const": "StopAsyncIteration"},
+            {"const": "StopIteration"}
+          ],
+          "items": false
+        },
+        "exception_type_identity_inspected": {"const": true},
+        "exception_types_captured": {"const": false},
+        "non_control_flow_function_count": {"type": "integer", "minimum": 0, "maximum": 20000},
+        "non_control_flow_event_count": {"type": "integer", "minimum": 0},
+        "filtered_event_count": {"type": "integer", "minimum": 0},
+        "dropped_non_control_flow_event_count": {"type": "integer", "minimum": 0},
+        "dropped_filtered_event_count": {"type": "integer", "minimum": 0}
+      }, "additionalProperties": true
+    },
+    "pythonExceptionCaptureSummary": {
+      "type": "object",
+      "required": ["status", "enabled", "deep_only", "event_semantics", "function_count", "event_count", "dropped_event_count", "arguments_captured", "locals_captured", "exception_types_captured", "exception_values_captured", "exception_messages_captured", "tracebacks_captured", "line_events_enabled", "opcode_events_enabled", "max_functions_per_process"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "enabled": {"const": true}, "deep_only": {"const": true},
+        "event_semantics": {"const": "per_propagated_frame"},
+        "function_count": {"type": "integer", "minimum": 0, "maximum": 20000},
+        "event_count": {"type": "integer", "minimum": 0},
+        "dropped_event_count": {"type": "integer", "minimum": 0},
+        "arguments_captured": {"const": false},
+        "locals_captured": {"const": false},
+        "exception_types_captured": {"const": false},
+        "exception_values_captured": {"const": false},
+        "exception_messages_captured": {"const": false},
+        "tracebacks_captured": {"const": false},
+        "line_events_enabled": {"const": false},
+        "opcode_events_enabled": {"const": false},
+        "max_functions_per_process": {"const": 2000},
+        "control_flow_filter": {"$ref": "#/$defs/pythonExceptionControlFlowFilterSummary"}
+      }, "additionalProperties": true
+    },
+    "observerIntegritySummary": {
+      "type": "object",
+      "required": ["format_version", "status", "process_count", "missing_process_count", "profile_hook_setter_call_count", "profile_hook_setter_process_count", "trace_hook_setter_call_count", "trace_hook_setter_process_count", "arguments_captured", "locals_captured", "hook_values_captured"],
+      "properties": {
+        "format_version": {"const": 1},
+        "status": {"enum": ["complete", "partial", "unavailable", "invalid"]},
+        "process_count": {"type": "integer", "minimum": 0, "maximum": 128},
+        "missing_process_count": {"type": "integer", "minimum": 0, "maximum": 128},
+        "profile_hook_setter_call_count": {"type": "integer", "minimum": 0},
+        "profile_hook_setter_process_count": {"type": "integer", "minimum": 0, "maximum": 128},
+        "trace_hook_setter_call_count": {"type": "integer", "minimum": 0},
+        "trace_hook_setter_process_count": {"type": "integer", "minimum": 0, "maximum": 128},
+        "arguments_captured": {"const": false},
+        "locals_captured": {"const": false},
+        "hook_values_captured": {"const": false}
+      }, "additionalProperties": true
+    },
+    "deepProfileSummary": {
+      "type": "object",
+      "properties": {
+        "status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid"]},
+        "native_call_capture": {
+          "oneOf": [{"$ref": "#/$defs/nativeCallCaptureSummary"}, {"type": "null"}]
+        },
+        "python_exception_capture": {
+          "oneOf": [{"$ref": "#/$defs/pythonExceptionCaptureSummary"}, {"type": "null"}]
+        },
+        "observer_integrity": {
+          "oneOf": [{"$ref": "#/$defs/observerIntegritySummary"}, {"type": "null"}]
+        }
+      }, "additionalProperties": true
+    },
+    "pythonCallProcessContribution": {
+      "type": "object",
+      "required": ["pid", "role", "process_name", "parent_name", "observed_in_process_tree", "call_count", "total_seconds", "self_seconds", "max_seconds", "exception_count"],
+      "properties": {
+        "pid": {"type": "integer", "minimum": 1},
+        "role": {"enum": ["root", "descendant", "unknown"]},
+        "process_name": {"type": ["string", "null"]},
+        "parent_name": {"type": ["string", "null"]},
+        "observed_in_process_tree": {"type": "boolean"},
+        "call_count": {"type": "integer", "minimum": 0},
+        "total_seconds": {"type": "number", "minimum": 0},
+        "self_seconds": {"type": "number", "minimum": 0},
+        "max_seconds": {"type": "number", "minimum": 0},
+        "exception_count": {"type": "integer", "minimum": 0},
+        "non_control_flow_exception_count": {"type": "integer", "minimum": 0}
+      }, "additionalProperties": true
+    },
+    "pythonHotspot": {
+      "type": "object",
+      "required": ["name", "filename", "firstlineno", "scope", "call_count", "total_seconds", "self_seconds", "max_seconds", "process_attribution_status", "processes", "implementation", "exception_count"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "filename": {"type": "string", "minLength": 1},
+        "firstlineno": {"type": "integer", "minimum": 0},
+        "scope": {"enum": ["application", "library", "runtime"]},
+        "call_count": {"type": "integer", "minimum": 0},
+        "total_seconds": {"type": "number", "minimum": 0},
+        "self_seconds": {"type": "number", "minimum": 0},
+        "max_seconds": {"type": "number", "minimum": 0},
+        "process_attribution_status": {"enum": ["complete", "unavailable", "invalid"]},
+        "processes": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/pythonCallProcessContribution"}},
+        "implementation": {"enum": ["python", "native"]},
+        "exception_count": {"type": "integer", "minimum": 0},
+        "non_control_flow_exception_count": {"type": "integer", "minimum": 0}
+      }, "additionalProperties": true
+    },
+    "captureJob": {
+      "type": "object",
+      "required": ["job_id", "operation", "state", "worker_pid", "started_at_ns", "updated_at_ns", "client_disconnected", "exit_status", "artifacts"],
+      "properties": {
+        "job_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "operation": {"type": "string", "minLength": 1},
+        "state": {"enum": ["starting", "running", "complete", "failed", "lost"]},
+        "worker_pid": {"type": ["integer", "null"], "minimum": 1},
+        "started_at_ns": {"type": "integer", "minimum": 0},
+        "updated_at_ns": {"type": "integer", "minimum": 0},
+        "client_disconnected": {"type": "boolean"},
+        "exit_status": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
+        "artifacts": {"type": "array", "maxItems": 4, "items": {"type": "string"}},
+        "detached": {"type": "boolean"},
+        "output": {
+          "type": "object",
+          "required": ["retained", "limit_bytes_per_stream", "stdout_size_bytes", "stdout_truncated", "stderr_size_bytes", "stderr_truncated"],
+          "properties": {
+            "retained": {"type": "boolean"},
+            "limit_bytes_per_stream": {"const": 1048576},
+            "retention_strategy": {"enum": ["none", "head", "head-tail"]},
+            "head_limit_bytes_per_stream": {"type": "integer", "minimum": 0, "maximum": 1048576},
+            "tail_limit_bytes_per_stream": {"type": "integer", "minimum": 0, "maximum": 524288},
+            "stdout_size_bytes": {"type": "integer", "minimum": 0, "maximum": 1048576},
+            "stdout_head_size_bytes": {"type": "integer", "minimum": 0, "maximum": 1048576},
+            "stdout_tail_size_bytes": {"type": "integer", "minimum": 0, "maximum": 524288},
+            "stdout_omitted_bytes": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+            "stdout_omitted_bytes_truncated": {"type": "boolean"},
+            "stdout_truncated": {"type": "boolean"},
+            "stderr_size_bytes": {"type": "integer", "minimum": 0, "maximum": 1048576},
+            "stderr_head_size_bytes": {"type": "integer", "minimum": 0, "maximum": 1048576},
+            "stderr_tail_size_bytes": {"type": "integer", "minimum": 0, "maximum": 524288},
+            "stderr_omitted_bytes": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+            "stderr_omitted_bytes_truncated": {"type": "boolean"},
+            "stderr_truncated": {"type": "boolean"}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "runtime.capture_job": {
+      "type": "object", "required": ["document_type", "format_version", "job"],
+      "properties": {
+        "document_type": {"const": "runtime.capture_job"}, "format_version": {"const": "1"},
+        "job": {"$ref": "#/$defs/captureJob"}
+      }, "additionalProperties": true
+    },
+    "runtime.capture_jobs": {
+      "type": "object", "required": ["document_type", "format_version", "jobs"],
+      "properties": {
+        "document_type": {"const": "runtime.capture_jobs"}, "format_version": {"const": "1"},
+        "jobs": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/captureJob"}}
+      }, "additionalProperties": true
+    },
     "runtime.inspect": {
       "type": "object",
       "required": ["document_type", "format_version", "schema_version", "producer_version", "id", "name", "command", "working_directory", "revision", "started_at_ns", "finished_at_ns", "exit_code", "wall_time_seconds", "cpu_user_seconds", "cpu_system_seconds", "peak_memory_bytes", "stdout_bytes", "stdout_sha256", "stdout_complete", "stdout_relay_error", "stderr_bytes", "stderr_sha256", "stderr_complete", "stderr_relay_error", "annotation_error", "missing_causal_references", "dropped_attribute_count", "record_counts"],
@@ -255,7 +783,7 @@
     },
     "rundiff.compare": {
       "type": "object",
-      "required": ["document_type", "format_version", "baseline", "candidate", "match_level", "baseline_annotation_error", "candidate_annotation_error", "baseline_missing_causal_references", "candidate_missing_causal_references", "baseline_dropped_attribute_count", "candidate_dropped_attribute_count", "baseline_stdout_relay_error", "baseline_stderr_relay_error", "candidate_stdout_relay_error", "candidate_stderr_relay_error", "baseline_incomplete_streams", "candidate_incomplete_streams", "outcome", "exit_code_equivalent", "output_equivalent", "stderr_equivalent", "operation_errors_equivalent", "wall_time", "cpu_time", "critical_path", "baseline_critical_path_certainty", "candidate_critical_path_certainty", "peak_memory", "entity_count_changes", "operation_count_changes", "operation_error_count_changes", "operation_concurrency_changes", "operation_duration_changes", "edge_count_changes", "environment_changes"],
+      "required": ["document_type", "format_version", "baseline", "candidate", "match_level", "baseline_annotation_error", "candidate_annotation_error", "baseline_missing_causal_references", "candidate_missing_causal_references", "baseline_dropped_attribute_count", "candidate_dropped_attribute_count", "baseline_semantic_capture_status", "candidate_semantic_capture_status", "baseline_dropped_subprocess_count", "candidate_dropped_subprocess_count", "baseline_http_capture_status", "candidate_http_capture_status", "baseline_dropped_http_request_count", "candidate_dropped_http_request_count", "baseline_network_capture_status", "candidate_network_capture_status", "baseline_dropped_network_connection_count", "candidate_dropped_network_connection_count", "baseline_network_setup_capture_status", "candidate_network_setup_capture_status", "baseline_dropped_network_setup_phase_count", "candidate_dropped_network_setup_phase_count", "baseline_logical_operation_capture_status", "candidate_logical_operation_capture_status", "baseline_dropped_logical_operation_count", "candidate_dropped_logical_operation_count", "baseline_stdout_relay_error", "baseline_stderr_relay_error", "candidate_stdout_relay_error", "candidate_stderr_relay_error", "baseline_incomplete_streams", "candidate_incomplete_streams", "outcome", "exit_code_equivalent", "output_equivalent", "stderr_equivalent", "operation_errors_equivalent", "wall_time", "cpu_time", "critical_path", "baseline_critical_path_certainty", "candidate_critical_path_certainty", "peak_memory", "entity_count_changes", "operation_count_changes", "operation_error_count_changes", "operation_concurrency_changes", "operation_duration_changes", "edge_count_changes", "environment_changes"],
       "properties": {
         "document_type": {"const": "rundiff.compare"}, "format_version": {"const": "1"},
         "baseline": {"$ref": "#/$defs/executionReference"}, "candidate": {"$ref": "#/$defs/executionReference"},
@@ -263,6 +791,16 @@
         "baseline_annotation_error": {"type": ["string", "null"]}, "candidate_annotation_error": {"type": ["string", "null"]},
         "baseline_missing_causal_references": {"type": ["integer", "null"]}, "candidate_missing_causal_references": {"type": ["integer", "null"]},
         "baseline_dropped_attribute_count": {"type": ["integer", "null"]}, "candidate_dropped_attribute_count": {"type": ["integer", "null"]},
+        "baseline_semantic_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]}, "candidate_semantic_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]},
+        "baseline_dropped_subprocess_count": {"type": ["integer", "null"], "minimum": 0}, "candidate_dropped_subprocess_count": {"type": ["integer", "null"], "minimum": 0},
+        "baseline_http_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]}, "candidate_http_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]},
+        "baseline_dropped_http_request_count": {"type": ["integer", "null"], "minimum": 0}, "candidate_dropped_http_request_count": {"type": ["integer", "null"], "minimum": 0},
+        "baseline_network_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]}, "candidate_network_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]},
+        "baseline_dropped_network_connection_count": {"type": ["integer", "null"], "minimum": 0}, "candidate_dropped_network_connection_count": {"type": ["integer", "null"], "minimum": 0},
+        "baseline_network_setup_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]}, "candidate_network_setup_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]},
+        "baseline_dropped_network_setup_phase_count": {"type": ["integer", "null"], "minimum": 0}, "candidate_dropped_network_setup_phase_count": {"type": ["integer", "null"], "minimum": 0},
+        "baseline_logical_operation_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]}, "candidate_logical_operation_capture_status": {"enum": ["complete", "partial", "truncated", "unavailable", "invalid", null]},
+        "baseline_dropped_logical_operation_count": {"type": ["integer", "null"], "minimum": 0}, "candidate_dropped_logical_operation_count": {"type": ["integer", "null"], "minimum": 0},
         "baseline_stdout_relay_error": {"type": ["string", "null"]}, "baseline_stderr_relay_error": {"type": ["string", "null"]},
         "candidate_stdout_relay_error": {"type": ["string", "null"]}, "candidate_stderr_relay_error": {"type": ["string", "null"]},
         "baseline_incomplete_streams": {"type": "array", "items": {"type": "string"}},
@@ -293,7 +831,22 @@
         "lifecycle": {"type": "array", "items": {"$ref": "#/$defs/lifecyclePhase"}},
         "critical_path": {"anyOf": [{"$ref": "#/$defs/criticalPath"}, {"type": "null"}]},
         "throughput": {"anyOf": [{"$ref": "#/$defs/throughput"}, {"type": "null"}]},
-        "bottlenecks": {"type": "array", "items": {"$ref": "#/$defs/bottleneck"}}
+        "bottlenecks": {"type": "array", "items": {"$ref": "#/$defs/bottleneck"}},
+        "semantic_capture": {"$ref": "#/$defs/semanticCaptureSummary"},
+        "subprocess_calls": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/subprocessCall"}},
+        "http_capture": {"$ref": "#/$defs/httpCaptureSummary"},
+        "http_requests": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/httpRequest"}},
+        "network_capture": {"$ref": "#/$defs/networkCaptureSummary"},
+        "network_connections": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/networkConnection"}},
+        "network_connection_hotspots": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/networkConnectionHotspot"}},
+        "network_setup_capture": {"$ref": "#/$defs/networkSetupCaptureSummary"},
+        "network_setup_phases": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/networkSetupPhase"}},
+        "network_setup_hotspots": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/networkSetupHotspot"}},
+        "logical_operation_capture": {"$ref": "#/$defs/logicalOperationCaptureSummary"},
+        "logical_operations": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/logicalOperation"}},
+        "logical_operation_hotspots": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/logicalOperationHotspot"}},
+        "deep_profile": {"oneOf": [{"$ref": "#/$defs/deepProfileSummary"}, {"type": "null"}]},
+        "python_hotspots": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/pythonHotspot"}}
       }, "additionalProperties": true
     },
     "proofline.verification": {

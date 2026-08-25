@@ -21,6 +21,18 @@ from typing import BinaryIO, cast
 
 from runtime_tools.annotations import AnnotationError, load_annotations
 from runtime_tools.artifacts import artifact_exists, publish_without_overwrite, remove_best_effort
+from runtime_tools.deep_profile import (
+    DEEP_PROFILE_DIRECTORY_ENV,
+    PROFILE_SNAPSHOT_SOCKET_ENV,
+    SAMPLE_PROFILE_DIRECTORY_ENV,
+    DeepProfileError,
+    DeepProfileSession,
+    load_python_profile,
+    prepare_deep_profile_session,
+    prepare_sample_profile_session,
+    profile_session_checkpoint,
+    recover_profile_session,
+)
 from runtime_tools.model import (
     Attachment,
     CausalEdge,
@@ -30,7 +42,8 @@ from runtime_tools.model import (
     JsonValue,
     Measurement,
 )
-from runtime_tools.storage import RunpackError, RunpackWriter
+from runtime_tools.process_observer import ProcessObservationResult, ProcessTreeObserver
+from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
 from runtime_tools.terminal import terminal_text
 
 
@@ -43,10 +56,19 @@ MAX_POST_EXIT_DRAIN_BYTES = 1024 * 1024
 MAX_CUSTOM_ENVIRONMENT_IDENTITIES = 256
 MAX_ENVIRONMENT_NAME_BYTES = 1024
 PROCESS_TERMINATION_TIMEOUT_SECONDS = 1.0
+CAPTURE_LEVELS = ("passive", "process", "sample", "deep")
 _STATUS_POLL_EVENT = threading.Event()
 _ANNOTATIONS_FD_ENV = "_CONTRAIL_ANNOTATIONS_FD"
 _ANNOTATIONS_FALLBACK_ENV = "_CONTRAIL_ANNOTATIONS_FALLBACK"
 _ANNOTATIONS_IDENTITY_ENV = "_CONTRAIL_ANNOTATIONS_IDENTITY"
+_CAPTURE_WORKER_CLIENT_FD_ENV = "_CONTRAIL_CAPTURE_WORKER_CLIENT_FD"
+_CAPTURE_WORKER_DETACHED_ENV = "_CONTRAIL_CAPTURE_WORKER_DETACHED"
+_CAPTURE_WORKER_STDOUT_FD_ENV = "_CONTRAIL_CAPTURE_WORKER_STDOUT_FD"
+_CAPTURE_WORKER_STDERR_FD_ENV = "_CONTRAIL_CAPTURE_WORKER_STDERR_FD"
+_CAPTURE_JOB_ID_ENV = "_CONTRAIL_CAPTURE_JOB_ID"
+_CAPTURE_JOB_ROOT_ENV = "_CONTRAIL_CAPTURE_JOB_ROOT"
+_CAPTURE_RECOVERY_VERSION = 1
+_CAPTURE_WORKER_METADATA_VERSION = 1
 _IDENTIFIED_ENVIRONMENT_VARIABLES = (
     "CI",
     "CUDA_VISIBLE_DEVICES",
@@ -68,6 +90,38 @@ class OutputDigest:
     truncated: bool
     relay_error: str | None
     pipe_open_after_exit: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureConfiguration:
+    requested_level: str | None
+    instrument: str | None
+    observe_process_tree: bool
+
+
+def resolve_capture_configuration(
+    *,
+    capture_level: str | None,
+    instrument: str | None,
+    observe_process_tree: bool,
+) -> CaptureConfiguration:
+    """Resolve one capture preset while retaining the lower-level expert options."""
+    if capture_level is not None and capture_level not in CAPTURE_LEVELS:
+        expected = ", ".join(repr(level) for level in CAPTURE_LEVELS)
+        raise CaptureError(f"capture level must be one of {expected}, or None")
+    if instrument not in (None, "sample", "deep"):
+        raise CaptureError("instrument must be 'sample', 'deep', or None")
+    if not isinstance(observe_process_tree, bool):
+        raise CaptureError("observe process tree must be a boolean")
+    if capture_level is not None and (instrument is not None or observe_process_tree):
+        raise CaptureError(
+            "capture level cannot be combined with instrumentation or process-tree observation"
+        )
+    if capture_level == "process":
+        return CaptureConfiguration(capture_level, None, True)
+    if capture_level in {"sample", "deep"}:
+        return CaptureConfiguration(capture_level, capture_level, True)
+    return CaptureConfiguration(capture_level, instrument, observe_process_tree)
 
 
 def _git_revision(cwd: Path) -> str | None:
@@ -351,6 +405,263 @@ def _initial_metadata(
     }
 
 
+def _metadata_with_recovery(
+    metadata: dict[str, JsonValue],
+    *,
+    status: str,
+    recovered: bool,
+    profile_checkpoint: dict[str, JsonValue] | None = None,
+    root_process_id: int | None = None,
+    entity_id: str | None = None,
+) -> dict[str, JsonValue]:
+    capture_metadata = metadata.get("capture")
+    if not isinstance(capture_metadata, dict):
+        raise CaptureError("capture metadata is unavailable for recovery")
+    recovery: dict[str, JsonValue] = {
+        "format_version": _CAPTURE_RECOVERY_VERSION,
+        "status": status,
+        "checkpoint": "post-exit",
+        "controller_restart_recovered": recovered,
+    }
+    if profile_checkpoint is not None:
+        recovery["profile_session"] = profile_checkpoint
+    if root_process_id is not None:
+        recovery["root_process_id"] = root_process_id
+    if entity_id is not None:
+        recovery["entity_id"] = entity_id
+    return {
+        **metadata,
+        "capture": {
+            **capture_metadata,
+            "recovery": recovery,
+        },
+    }
+
+
+def _invalid_instrumentation_metadata(
+    session: DeepProfileSession,
+    exc: BaseException,
+) -> dict[str, JsonValue]:
+    return {
+        "mode": session.mode,
+        "observer": (
+            "python-sys-setprofile-and-settrace"
+            if session.mode == "deep"
+            else "python-stack-sampler"
+        ),
+        "intrusive": True,
+        "estimated": session.mode == "sample",
+        "per_call": session.mode == "deep",
+        "status": "invalid",
+        "error": terminal_text(exc),
+    }
+
+
+def _metadata_with_instrumentation(
+    metadata: dict[str, JsonValue],
+    instrumentation: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
+    capture_metadata = metadata.get("capture")
+    if not isinstance(capture_metadata, dict):
+        raise CaptureError("capture metadata is unavailable for instrumentation")
+    return {
+        **metadata,
+        "capture": {
+            **capture_metadata,
+            "instrumentation": instrumentation,
+        },
+    }
+
+
+def _metadata_with_capture_worker(
+    metadata: dict[str, JsonValue],
+    client_disconnected: threading.Event,
+) -> dict[str, JsonValue]:
+    capture_metadata = metadata.get("capture")
+    if not isinstance(capture_metadata, dict):
+        raise CaptureError("capture metadata is unavailable for worker provenance")
+    return {
+        **metadata,
+        "capture": {
+            **capture_metadata,
+            "worker": {
+                "format_version": _CAPTURE_WORKER_METADATA_VERSION,
+                "mode": "separate-process",
+                "client_disconnected": client_disconnected.is_set(),
+            },
+        },
+    }
+
+
+def _assemble_profile_checkpoint(
+    writer: RunpackWriter,
+    *,
+    execution_id: str,
+    entity_id: str,
+    root_process_id: int,
+    metadata: dict[str, JsonValue],
+    session: DeepProfileSession,
+    profile_checkpoint: dict[str, JsonValue],
+    recovered: bool,
+) -> dict[str, JsonValue]:
+    try:
+        result = load_python_profile(
+            session,
+            entity_id=entity_id,
+            root_process_id=root_process_id,
+        )
+        assembled = _metadata_with_instrumentation(metadata, result.as_metadata())
+        assembled = _metadata_with_recovery(
+            assembled,
+            status="assembled",
+            recovered=recovered,
+            profile_checkpoint=profile_checkpoint,
+        )
+        writer.add_event_graph_and_set_execution_metadata(
+            execution_id,
+            result.events,
+            result.edges,
+            assembled,
+        )
+    except (DeepProfileError, RunpackError) as exc:
+        assembled = _metadata_with_instrumentation(
+            metadata,
+            _invalid_instrumentation_metadata(session, exc),
+        )
+        assembled = _metadata_with_recovery(
+            assembled,
+            status="assembled",
+            recovered=recovered,
+            profile_checkpoint=profile_checkpoint,
+        )
+        writer.set_execution_metadata(execution_id, assembled)
+    session.close()
+    complete = _metadata_with_recovery(
+        assembled,
+        status="complete",
+        recovered=recovered,
+    )
+    writer.set_execution_metadata(execution_id, complete)
+    return complete
+
+
+def _recovery_object(metadata: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    capture_metadata = metadata.get("capture")
+    if not isinstance(capture_metadata, dict):
+        raise CaptureError("recovery checkpoint has no capture metadata")
+    recovery = capture_metadata.get("recovery")
+    if not isinstance(recovery, dict):
+        raise CaptureError("runpack has no post-exit recovery checkpoint")
+    if recovery.get("format_version") != _CAPTURE_RECOVERY_VERSION:
+        raise CaptureError("capture recovery checkpoint version is unsupported")
+    if recovery.get("checkpoint") != "post-exit":
+        raise CaptureError("capture recovery checkpoint kind is unsupported")
+    status = recovery.get("status")
+    if status not in {"pending", "assembled", "complete"}:
+        raise CaptureError("capture recovery checkpoint status is unsupported")
+    if not isinstance(recovery.get("controller_restart_recovered"), bool):
+        raise CaptureError("capture recovery checkpoint provenance is invalid")
+    return recovery
+
+
+def _pending_profile_session(
+    recovery: dict[str, JsonValue],
+    *,
+    entity_ids: set[str],
+) -> tuple[DeepProfileSession, dict[str, JsonValue], str, int] | None:
+    raw_checkpoint = recovery.get("profile_session")
+    raw_entity_id = recovery.get("entity_id")
+    raw_root_process_id = recovery.get("root_process_id")
+    if raw_checkpoint is None:
+        if raw_entity_id is not None or raw_root_process_id is not None:
+            raise CaptureError("capture recovery checkpoint has incomplete profile identity")
+        return None
+    if not isinstance(raw_checkpoint, dict):
+        raise CaptureError("capture recovery profile session is invalid")
+    if not isinstance(raw_entity_id, str) or not raw_entity_id or raw_entity_id not in entity_ids:
+        raise CaptureError("capture recovery profile entity is invalid")
+    if (
+        not isinstance(raw_root_process_id, int)
+        or isinstance(raw_root_process_id, bool)
+        or raw_root_process_id <= 0
+        or raw_root_process_id > (1 << 63) - 1
+    ):
+        raise CaptureError("capture recovery root process id is invalid")
+    try:
+        session = recover_profile_session(raw_checkpoint)
+    except DeepProfileError as exc:
+        raise CaptureError(str(exc)) from exc
+    return session, raw_checkpoint, raw_entity_id, raw_root_process_id
+
+
+def recover_process_capture(checkpoint: Path, output: Path) -> int:
+    """Finish and publish a post-exit capture checkpoint after controller loss."""
+    if not isinstance(checkpoint, Path) or not isinstance(output, Path):
+        raise CaptureError("capture recovery paths must be paths")
+    if artifact_exists(output):
+        raise CaptureError(f"refusing to overwrite existing runpack: {output}")
+    if not output.parent.is_dir():
+        raise CaptureError(f"output directory does not exist: {output.parent}")
+    try:
+        with RunpackReader(checkpoint) as reader:
+            source = reader.path
+            execution = reader.execution()
+            entities = reader.entities()
+    except RunpackError as exc:
+        raise CaptureError(f"invalid capture recovery checkpoint: {exc}") from exc
+    if execution.finished_at_ns is None or execution.exit_code is None:
+        raise CaptureError("capture recovery checkpoint was not created after workload exit")
+    recovery = _recovery_object(execution.metadata)
+    status = recovery["status"]
+    pending_profile = (
+        _pending_profile_session(
+            recovery,
+            entity_ids={entity.id for entity in entities},
+        )
+        if status == "pending"
+        else None
+    )
+    writer: RunpackWriter | None = None
+    try:
+        writer = RunpackWriter.open_existing(source)
+        if status == "pending" and pending_profile is not None:
+            session, profile_checkpoint, entity_id, root_process_id = pending_profile
+            _assemble_profile_checkpoint(
+                writer,
+                execution_id=execution.id,
+                entity_id=entity_id,
+                root_process_id=root_process_id,
+                metadata=execution.metadata,
+                session=session,
+                profile_checkpoint=profile_checkpoint,
+                recovered=True,
+            )
+        else:
+            if status == "assembled":
+                raw_profile = recovery.get("profile_session")
+                if raw_profile is not None:
+                    try:
+                        recover_profile_session(raw_profile).close()
+                    except DeepProfileError:
+                        pass
+            complete = _metadata_with_recovery(
+                execution.metadata,
+                status="complete",
+                recovered=True,
+            )
+            writer.set_execution_metadata(execution.id, complete)
+    finally:
+        if writer is not None:
+            writer.close()
+    try:
+        publish_without_overwrite(source, output)
+    except FileExistsError as exc:
+        raise CaptureError(f"refusing to overwrite existing runpack: {output}") from exc
+    except OSError as exc:
+        raise CaptureError(f"could not publish recovered runpack {output}: {exc}") from exc
+    return execution.exit_code
+
+
 def record_process(
     command: tuple[str, ...],
     output: Path,
@@ -361,10 +672,23 @@ def record_process(
     stderr: BinaryIO | None = None,
     capture_output_limit: int | None = None,
     identify_environment: tuple[str, ...] = (),
+    capture_level: str | None = None,
+    instrument: str | None = None,
+    observe_process_tree: bool = False,
     _annotation_fd: int | None = None,
     _annotation_directory: Path | None = None,
+    _capture_client_disconnected: threading.Event | None = None,
 ) -> int:
-    """Run ``command``, write ``output``, and return the process exit code."""
+    """Run ``command``, write ``output``, and return the process exit code.
+
+    ``capture_level`` selects ``passive``, ``process``, ``sample``, or ``deep``.
+    The sampling and deep presets also enable controller-side process capture.
+    ``instrument="sample"`` injects bounded statistical Python stack sampling.
+    ``instrument="deep"`` injects intrusive, bounded Python and native C call profiling.
+    Both modes require interpreters that honor inherited site initialization.
+    ``observe_process_tree=True`` samples process-group RSS and CPU from the
+    controller without modifying the workload.
+    """
     if not isinstance(command, tuple) or not all(isinstance(item, str) for item in command):
         raise CaptureError("command must be a tuple of strings")
     if not command:
@@ -394,8 +718,19 @@ def record_process(
         raise CaptureError(
             f"capture output limit cannot exceed {MAX_CAPTURE_OUTPUT_BYTES} bytes per stream"
         )
+    configuration = resolve_capture_configuration(
+        capture_level=capture_level,
+        instrument=instrument,
+        observe_process_tree=observe_process_tree,
+    )
+    instrument = configuration.instrument
+    observe_process_tree = configuration.observe_process_tree
     environment_names = _identified_environment_names(identify_environment)
     _validate_annotation_fd(_annotation_fd)
+    if _capture_client_disconnected is not None and not isinstance(
+        _capture_client_disconnected, threading.Event
+    ):
+        raise CaptureError("capture client-disconnected state must be a threading event")
     if artifact_exists(output):
         raise CaptureError(f"refusing to overwrite existing runpack: {output}")
     try:
@@ -430,7 +765,21 @@ def record_process(
     temporary_created = False
     annotation_created = False
     annotation_fd_installed = False
+    recovery_ready = False
+    published = False
+    deep_profile_session: DeepProfileSession | None = None
+    process_observer: ProcessTreeObserver | None = None
     try:
+        if instrument == "deep":
+            try:
+                deep_profile_session = prepare_deep_profile_session(annotation_directory)
+            except DeepProfileError as exc:
+                raise CaptureError(str(exc)) from exc
+        elif instrument == "sample":
+            try:
+                deep_profile_session = prepare_sample_profile_session(annotation_directory)
+            except DeepProfileError as exc:
+                raise CaptureError(str(exc)) from exc
         try:
             annotation_descriptor = os.open(
                 annotation_path,
@@ -477,15 +826,36 @@ def record_process(
         child_environment.pop(_ANNOTATIONS_FD_ENV, None)
         child_environment.pop(_ANNOTATIONS_FALLBACK_ENV, None)
         child_environment.pop(_ANNOTATIONS_IDENTITY_ENV, None)
+        child_environment.pop(_CAPTURE_WORKER_CLIENT_FD_ENV, None)
+        child_environment.pop(_CAPTURE_WORKER_DETACHED_ENV, None)
+        child_environment.pop(_CAPTURE_WORKER_STDOUT_FD_ENV, None)
+        child_environment.pop(_CAPTURE_WORKER_STDERR_FD_ENV, None)
+        child_environment.pop(_CAPTURE_JOB_ID_ENV, None)
+        child_environment.pop(_CAPTURE_JOB_ROOT_ENV, None)
+        child_environment.pop(DEEP_PROFILE_DIRECTORY_ENV, None)
+        child_environment.pop(SAMPLE_PROFILE_DIRECTORY_ENV, None)
+        child_environment.pop(PROFILE_SNAPSHOT_SOCKET_ENV, None)
         if _annotation_fd is not None:
             child_environment[_ANNOTATIONS_FD_ENV] = str(_annotation_fd)
             child_environment[_ANNOTATIONS_FALLBACK_ENV] = str(resolved_annotation_path)
             child_environment[_ANNOTATIONS_IDENTITY_ENV] = (
                 f"{annotation_status.st_dev}:{annotation_status.st_ino}"
             )
+        if deep_profile_session is not None:
+            deep_profile_session.configure_environment(child_environment)
         metadata: dict[str, JsonValue] = _initial_metadata(
             environment_names, environment=child_environment
         )
+        if configuration.requested_level is not None:
+            capture_metadata = metadata.get("capture")
+            assert isinstance(capture_metadata, dict)
+            metadata = {
+                **metadata,
+                "capture": {
+                    **capture_metadata,
+                    "level": configuration.requested_level,
+                },
+            }
         runpack_writer = RunpackWriter(temporary)
         temporary_created = True
         with runpack_writer as writer:
@@ -538,6 +908,16 @@ def record_process(
                         f"could not restore reserved annotation transport fd: {exc}"
                     ) from exc
 
+            if observe_process_tree:
+                process_observer = ProcessTreeObserver(
+                    process_group_id=process.pid,
+                    execution_id=execution_id,
+                    root_entity_id=entity_id,
+                    started_at_ns=started_at_ns,
+                    started_monotonic_ns=started_monotonic_ns,
+                )
+                process_observer.start()
+
             if process.stdout is None or process.stderr is None:
                 _terminate_and_reap(process)
                 raise CaptureError("failed to capture process output")
@@ -576,6 +956,9 @@ def record_process(
             elapsed_ns = time.perf_counter_ns() - started_monotonic_ns
             finished_at_ns = started_at_ns + elapsed_ns
             wall_seconds = elapsed_ns / 1_000_000_000
+            process_observation: ProcessObservationResult | None = None
+            if process_observer is not None:
+                process_observation = process_observer.stop()
             metadata = {
                 **metadata,
                 "output": {
@@ -583,6 +966,28 @@ def record_process(
                     "stderr": _output_metadata(stderr_digest),
                 },
             }
+            if process_observation is not None:
+                process_observation_metadata: dict[str, JsonValue]
+                try:
+                    writer.add_entities(process_observation.entities)
+                    writer.add_measurements(process_observation.measurements)
+                    process_observation_metadata = process_observation.as_metadata()
+                except RunpackError as exc:
+                    process_observation_metadata = {
+                        "requested": True,
+                        "observer": "posix-process-table",
+                        "status": "invalid",
+                        "error": terminal_text(exc),
+                    }
+                capture_metadata = metadata.get("capture")
+                assert isinstance(capture_metadata, dict)
+                metadata = {
+                    **metadata,
+                    "capture": {
+                        **capture_metadata,
+                        "process_observer": process_observation_metadata,
+                    },
+                }
             try:
                 annotation_events, annotation_edges = load_annotations(
                     annotation_path, entity_id=entity_id
@@ -599,6 +1004,16 @@ def record_process(
                         "annotation_error": terminal_text(exc),
                     },
                 }
+            profile_checkpoint: dict[str, JsonValue] | None = None
+            if deep_profile_session is not None:
+                try:
+                    profile_checkpoint = profile_session_checkpoint(deep_profile_session)
+                except DeepProfileError as exc:
+                    metadata = _metadata_with_instrumentation(
+                        metadata,
+                        _invalid_instrumentation_metadata(deep_profile_session, exc),
+                    )
+                    deep_profile_session.close()
             measurements = (
                 Measurement("process.wall_time", wall_seconds, "s", finished_at_ns, entity_id, {}),
                 Measurement(
@@ -690,14 +1105,52 @@ def record_process(
                 for annotation_event in annotation_events
                 if annotation_event.id not in annotation_targets
             )
+            if annotation_created and _annotation_directory is None:
+                remove_best_effort(annotation_path)
+                annotation_created = artifact_exists(annotation_path)
+            metadata = _metadata_with_recovery(
+                metadata,
+                status="pending",
+                recovered=False,
+                profile_checkpoint=profile_checkpoint,
+                root_process_id=process.pid if profile_checkpoint is not None else None,
+                entity_id=entity_id if profile_checkpoint is not None else None,
+            )
+            writer.set_execution_metadata(execution_id, metadata)
+            recovery_ready = True
+            if deep_profile_session is not None and profile_checkpoint is not None:
+                metadata = _assemble_profile_checkpoint(
+                    writer,
+                    execution_id=execution_id,
+                    entity_id=entity_id,
+                    root_process_id=process.pid,
+                    metadata=metadata,
+                    session=deep_profile_session,
+                    profile_checkpoint=profile_checkpoint,
+                    recovered=False,
+                )
+            else:
+                metadata = _metadata_with_recovery(
+                    metadata,
+                    status="complete",
+                    recovered=False,
+                )
+                writer.set_execution_metadata(execution_id, metadata)
+            if _capture_client_disconnected is not None:
+                metadata = _metadata_with_capture_worker(
+                    metadata,
+                    _capture_client_disconnected,
+                )
+                writer.set_execution_metadata(execution_id, metadata)
         try:
             publish_without_overwrite(temporary, output)
+            published = True
         except FileExistsError as exc:
             raise CaptureError(f"refusing to overwrite existing runpack: {output}") from exc
         except OSError as exc:
             raise CaptureError(f"could not publish runpack {output}: {exc}") from exc
     except BaseException:
-        if temporary_created:
+        if temporary_created and not recovery_ready:
             remove_best_effort(temporary)
         raise
     finally:
@@ -716,4 +1169,8 @@ def record_process(
                 )
         if annotation_created and _annotation_directory is None:
             remove_best_effort(annotation_path)
+        if deep_profile_session is not None and (not recovery_ready or published):
+            deep_profile_session.close()
+        if process_observer is not None:
+            process_observer.stop()
     return exit_code

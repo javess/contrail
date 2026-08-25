@@ -1,0 +1,37 @@
+{
+  "document_type": "runtime.capture_job",
+  "format_version": "1",
+  "job": {
+    "artifacts": [
+      "/artifacts/example.runpack"
+    ],
+    "client_disconnected": true,
+    "detached": true,
+    "exit_status": 0,
+    "job_id": "11111111111111111111111111111111",
+    "operation": "runtime record",
+    "output": {
+      "head_limit_bytes_per_stream": 524288,
+      "limit_bytes_per_stream": 1048576,
+      "retained": true,
+      "retention_strategy": "head-tail",
+      "stderr_head_size_bytes": 64,
+      "stderr_omitted_bytes": 0,
+      "stderr_omitted_bytes_truncated": false,
+      "stderr_size_bytes": 64,
+      "stderr_tail_size_bytes": 0,
+      "stderr_truncated": true,
+      "stdout_head_size_bytes": 128,
+      "stdout_omitted_bytes": 0,
+      "stdout_omitted_bytes_truncated": false,
+      "stdout_size_bytes": 128,
+      "stdout_tail_size_bytes": 0,
+      "stdout_truncated": false,
+      "tail_limit_bytes_per_stream": 524288
+    },
+    "started_at_ns": 1000000000,
+    "state": "complete",
+    "updated_at_ns": 2000000000,
+    "worker_pid": 1234
+  }
+}
