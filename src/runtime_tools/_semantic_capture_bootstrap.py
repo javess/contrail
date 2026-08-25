@@ -71,6 +71,8 @@ LOGICAL_OPERATION_ADAPTER_CATEGORIES = {
     "stdlib.asyncio.ensure_future": "scheduler",
     "stdlib.asyncio.gather": "scheduler",
     "stdlib.wsgiref": "server",
+    "uvicorn.h11": "server",
+    "uvicorn.httptools": "server",
     "stdlib.concurrent.futures.ProcessPoolExecutor": "executor",
     "stdlib.concurrent.futures.ThreadPoolExecutor": "executor",
     "stdlib.asyncio.Queue": "queue",
@@ -582,6 +584,24 @@ def attribute_active_caller(thread_id: int, caller: CallerIdentity) -> None:
             if kind == "logical_operation"
             else None
         )
+        if record is not None and record.get("caller") is None:
+            record["caller"] = value
+
+
+def attribute_logical_operation_caller(
+    identifier: int | None,
+    caller: CallerIdentity,
+) -> None:
+    """Attach one exact caller directly to a concurrent logical operation."""
+
+    if identifier is None:
+        return
+    value = _caller_value(caller)
+    if value is None:
+        _record_logical_operation_caller_callback_error()
+        return
+    with _lock:
+        record = _logical_operation_records.get(identifier)
         if record is not None and record.get("caller") is None:
             record["caller"] = value
 
@@ -1266,24 +1286,55 @@ def _run_asyncio_create_task(
     return task
 
 
-def begin_wsgi_request() -> tuple[int | None, ActiveToken | None]:
-    """Start one Deep-only standard WSGI request boundary."""
-
+def _begin_server_request(
+    adapter: str,
+    *,
+    active: bool,
+) -> tuple[int | None, ActiveToken | None]:
     identifier: int | None = None
     token: ActiveToken | None = None
     try:
         identifier = _reserve_logical_operation_boundary(
             category="server",
             operation="request",
-            adapter="stdlib.wsgiref",
+            adapter=adapter,
             capture_caller=False,
         )
-        token = _begin_active_logical_operation(identifier)
+        if active:
+            token = _begin_active_logical_operation(identifier)
         with _lock:
-            _logical_operation_adapters.add("stdlib.wsgiref")
+            if adapter in LOGICAL_OPERATION_ADAPTERS:
+                _logical_operation_adapters.add(adapter)
     except BaseException:
         _record_logical_operation_callback_error()
     return identifier, token
+
+
+def begin_wsgi_request() -> tuple[int | None, ActiveToken | None]:
+    """Start one Deep-only standard WSGI request boundary."""
+
+    return _begin_server_request("stdlib.wsgiref", active=True)
+
+
+def begin_asgi_request(adapter: str) -> int | None:
+    """Start one Deep-only Uvicorn HTTP request boundary."""
+
+    identifier, _ = _begin_server_request(adapter, active=False)
+    return identifier
+
+
+def _record_server_status(identifier: int | None, status_code: object) -> None:
+    if (
+        identifier is None
+        or not isinstance(status_code, int)
+        or isinstance(status_code, bool)
+        or not 100 <= status_code <= 999
+    ):
+        return
+    with _lock:
+        record = _logical_operation_records.get(identifier)
+        if record is not None and record.get("duration_ns") is None:
+            record["status_code"] = status_code
 
 
 def record_wsgi_status(identifier: int | None, status: object) -> None:
@@ -1298,33 +1349,41 @@ def record_wsgi_status(identifier: int | None, status: object) -> None:
     if not 100 <= status_code <= 999:
         return
     try:
-        with _lock:
-            record = _logical_operation_records.get(identifier)
-            if record is not None and record.get("duration_ns") is None:
-                record["status_code"] = status_code
+        _record_server_status(identifier, status_code)
     except BaseException:
         _record_logical_operation_callback_error()
+
+
+def record_asgi_status(identifier: int | None, status: object) -> None:
+    """Retain only the numeric status from an ASGI response-start message."""
+
+    try:
+        _record_server_status(identifier, status)
+    except BaseException:
+        _record_logical_operation_callback_error()
+
+
+def _finish_server_request(identifier: int | None) -> None:
+    status_code: int | None = None
+    with _lock:
+        record = _logical_operation_records.get(identifier) if identifier is not None else None
+        raw_status_code = record.get("status_code") if record is not None else None
+        if isinstance(raw_status_code, int) and not isinstance(raw_status_code, bool):
+            status_code = raw_status_code
+    _finish_logical_operation_record(
+        identifier,
+        outcome=(
+            "operation_error" if status_code is not None and status_code >= 500 else "completed"
+        ),
+        error_type=("HTTPStatusError" if status_code is not None and status_code >= 500 else None),
+    )
 
 
 def finish_wsgi_request(identifier: int | None, token: ActiveToken | None) -> None:
     """Finish one WSGI request without inspecting its environment or body."""
 
     try:
-        status_code: int | None = None
-        with _lock:
-            record = _logical_operation_records.get(identifier) if identifier is not None else None
-            raw_status_code = record.get("status_code") if record is not None else None
-            if isinstance(raw_status_code, int) and not isinstance(raw_status_code, bool):
-                status_code = raw_status_code
-        _finish_logical_operation_record(
-            identifier,
-            outcome="operation_error"
-            if status_code is not None and status_code >= 500
-            else "completed",
-            error_type=(
-                "HTTPStatusError" if status_code is not None and status_code >= 500 else None
-            ),
-        )
+        _finish_server_request(identifier)
     except BaseException:
         _record_logical_operation_callback_error()
     finally:
@@ -1332,6 +1391,15 @@ def finish_wsgi_request(identifier: int | None, token: ActiveToken | None) -> No
             _end_active(token)
         except BaseException:
             _record_logical_operation_caller_callback_error()
+
+
+def finish_asgi_request(identifier: int | None) -> None:
+    """Finish one ASGI HTTP request without retaining its message or scope."""
+
+    try:
+        _finish_server_request(identifier)
+    except BaseException:
+        _record_logical_operation_callback_error()
 
 
 def _asyncio_task_scheduling_origin() -> str | None:

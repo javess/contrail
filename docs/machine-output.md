@@ -258,6 +258,16 @@ handler returns after iterating and transmitting the response. Statuses below
 the synthetic safe class `HTTPStatusError`. A missing status is nullable and
 makes the capture partial rather than invalid.
 
+For `uvicorn.h11` and `uvicorn.httptools`, the interval begins when the HTTP
+`RequestResponseCycle.run_asgi` coroutine first executes and ends after the
+final `http.response.body` send returns. This includes streamed-body suspension
+and protocol transmission work. Only `type`, numeric `status`, and `more_body`
+are read transiently from ASGI send messages; the messages and ASGI scope are
+never retained. Concurrent cycles are associated by transient object/frame
+identity rather than a thread-local stack. WebSocket protocol lifecycles are
+not `server.request` evidence. A completed boundary without a trustworthy
+status remains timed but makes the family partial.
+
 Normalized `database.*`, `cache.*`, `queue.*`, `broker.*`, `executor.task`, and
 `scheduler.task` and `server.request` events are
 operation evidence. RunDiff adds `baseline_logical_operation_capture_status`,

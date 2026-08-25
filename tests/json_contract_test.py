@@ -768,6 +768,8 @@ def test_packaged_schema_types_optional_semantic_boundary_output() -> None:
         ("scheduler", "task", "stdlib.asyncio.ensure_future"),
         ("scheduler", "task", "stdlib.asyncio.gather"),
         ("server", "request", "stdlib.wsgiref"),
+        ("server", "request", "uvicorn.h11"),
+        ("server", "request", "uvicorn.httptools"),
     ):
         optional_client_document = copy.deepcopy(document)
         optional_capture = cast(

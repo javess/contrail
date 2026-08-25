@@ -442,6 +442,78 @@ finally:
     )
 
 
+def write_asgi_server_workload(path: Path, count: int) -> None:
+    package = path.parent / "uvicorn" / "protocols" / "http"
+    package.mkdir(parents=True, exist_ok=True)
+    for parent in (package.parent.parent, package.parent, package):
+        (parent / "__init__.py").write_text("", encoding="utf-8")
+    cycle_source = """
+class RequestResponseCycle:
+    def __init__(self):
+        self.scope = {
+            "type": "http",
+            "method": "PRIVATE-BENCHMARK-METHOD",
+            "path": "/asgi-server-benchmark-private-path",
+            "query_string": b"asgi-server-benchmark-private-query",
+            "headers": [(b"x-private", b"asgi-server-benchmark-request-secret")],
+            "client": ("asgi-server-benchmark-private-client", 54321),
+            "status": 200,
+        }
+
+    async def receive(self):
+        return {
+            "type": "http.request",
+            "body": b"asgi-server-benchmark-request-body-secret",
+            "more_body": False,
+        }
+
+    async def run_asgi(self, app):
+        await app(self.scope, self.receive, self.send)
+
+    async def send(self, message):
+        if message["type"] == "http.response.body" and not message.get("more_body", False):
+            self.response_complete = True
+""".strip()
+    for module_name in ("h11_impl.py", "httptools_impl.py"):
+        (package / module_name).write_text(cycle_source, encoding="utf-8")
+    path.write_text(
+        f"""
+import asyncio
+import time
+from uvicorn.protocols.http.h11_impl import RequestResponseCycle as H11Cycle
+from uvicorn.protocols.http.httptools_impl import RequestResponseCycle as HttpToolsCycle
+
+async def application(scope, receive, send):
+    request = await receive()
+    assert request["body"] == b"asgi-server-benchmark-request-body-secret"
+    await send({{
+        "type": "http.response.start",
+        "status": scope["status"],
+        "headers": [(b"x-private", b"asgi-server-benchmark-response-secret")],
+    }})
+    await send({{
+        "type": "http.response.body",
+        "body": b"asgi-server-benchmark-response-body-one-secret",
+        "more_body": True,
+    }})
+    await asyncio.sleep(0)
+    await send({{
+        "type": "http.response.body",
+        "body": b"asgi-server-benchmark-response-body-two-secret",
+    }})
+
+async def main():
+    cycle_types = (H11Cycle, HttpToolsCycle)
+    for index in range({count}):
+        await cycle_types[index % 2]().run_asgi(application)
+
+time.sleep(0.05)
+asyncio.run(main())
+""".strip(),
+        encoding="utf-8",
+    )
+
+
 def write_deep_profile_reports(directory: Path, retained_function_count: int) -> None:
     overflow = (
         min(2_000, retained_function_count)

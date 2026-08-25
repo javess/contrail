@@ -149,6 +149,12 @@ when an experiment produces evidence.
   amplification. A 200-request no-op gate retained every boundary but measured
   9.276x Deep/passive workload time, confirming that semantic value can be
   zero-touch while the instrument-everything tier remains explicitly expensive.
+  Uvicorn h11 and httptools now reuse that same `server.request` contract
+  without server imports or ASGI middleware. Concurrent 200/503 requests retain
+  exact application attribution and final streamed-body timing; a WebSocket
+  lifecycle produces no request record. RunDiff and Proofline reuse the WSGI
+  policy path, and the 200-cycle ASGI-shaped expensive-tier gate measured
+  2.109x Deep/passive under its explicit 15x ceiling.
   Deep now also counts Python exception propagation without line/opcode events
   or retained exception payloads. It preserves raw compatibility counts while
   a second count excludes exact built-in iterator-control type identities. A

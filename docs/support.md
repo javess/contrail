@@ -168,8 +168,14 @@ is not an adapters-only supported configuration.
   Standard-library `wsgiref` requests are observed through Deep's existing
   call hook from `BaseHandler.run` entry through return. The numeric status and
   first application function are retained; method, route, URL, headers, bodies,
-  and client address are not. Gunicorn, uWSGI, Waitress, ASGI servers, custom
-  gateways, and replaced `wsgiref` methods remain generic profiler evidence.
+  and client address are not. Uvicorn h11 and httptools HTTP requests are
+  observed through the same call hook from `RequestResponseCycle.run_asgi`
+  entry through the final response-body send. Uvicorn is neither imported nor
+  installed by Contrail. ASGI scope and messages are not retained, and
+  WebSocket lifecycles are deliberately unclassified. Gunicorn, uWSGI,
+  Waitress, other ASGI servers, custom gateways, replaced request-cycle
+  methods, and Uvicorn protocol layouts outside the qualified shape remain
+  generic profiler evidence.
   This broad method wrapping is intentionally unavailable in Sample mode.
 - Git is optional for capture, inspection, adapters, RunDiff, BatchScope, and
   verification of existing artifacts. It is required for `proofline run` and

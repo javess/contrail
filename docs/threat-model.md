@@ -172,7 +172,13 @@ only the transient status argument long enough to parse a three-digit integer.
 It does not inspect the WSGI environment, method, route, URL, headers, request
 or response body, or client address. Status, duration, safe failure class,
 application caller identity, and the fact that a request occurred may still be
-sensitive. Operation
+sensitive. The Uvicorn adapters recognize only exact h11/httptools HTTP
+request-cycle frames. They transiently inspect ASGI send-message `type`,
+numeric `status`, and `more_body` to identify response completion; they do not
+retain the message, inspect the ASGI scope, or match Uvicorn WebSocket protocol
+modules. A malicious or incompatible server can replace those methods, forge
+their module/qualname shape, or send inconsistent messages, so adapter identity
+is compatibility evidence rather than authentication. Operation
 class, adapter, exception class, frequency, timing, and caller filename can
 still be sensitive. The SQLite adapter substitutes standard subclasses for the
 module's default connection and cursor factories; queue and optional-client

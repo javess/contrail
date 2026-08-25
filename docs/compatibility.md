@@ -121,8 +121,9 @@ classes, the executor/scheduler categories and
 the SQLAlchemy/Redis/Pika/aiokafka/concurrent-futures/asyncio adapter
 identifiers—including the additive top-level `ensure_future` and `gather`
 identifiers—plus the server category, request operation,
-`request_to_response_completion`, nullable `status_code`, `stdlib.wsgiref`
-adapter, and server privacy markers extend the same family; older readers that
+`request_to_response_completion`, nullable `status_code`, `stdlib.wsgiref`,
+`uvicorn.h11`, and `uvicorn.httptools` adapters, and server privacy markers
+extend the same family; older readers that
 only understand the initial
 database/queue values may reject those new events rather than misclassify them.
 Additive false privacy markers state that callables, awaitables, task names,

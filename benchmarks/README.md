@@ -47,6 +47,14 @@ is a deliberately near-zero-work application measured under the complete Deep
 preset, its 12x Passive/Deep ceiling is an explicit worst-case qualification
 bound rather than a typical request-overhead claim; the absolute gate remains
 five seconds.
+The inbound ASGI case divides the same 200/256 bounded no-op cycles across
+Uvicorn's h11 and httptools request-cycle module/qualname shapes. It requires
+exact status and application attribution, final-body completion, both adapter
+identities, and omission of method, path/query, scope-derived address/header,
+and body sentinels. Its explicit 15x Passive/Deep ceiling qualifies the
+expensive tier; the qualifying full PR run measured 2.109x (0.216s versus 0.103s). The
+generated workload keeps this performance gate dependency-free, while real
+Uvicorn h11/httptools behavior is exercised by the focused integration suite.
 The native-call case compares Passive with Deep while running 1,000 (PR) or
 5,000 (release) native compression calls after a fixed startup wait. It
 requires the exact aggregate call count, native identity, zero exceptions, and

@@ -80,6 +80,8 @@ SEMANTIC_LOGICAL_OPERATION_ADAPTER_CATEGORIES = {
     "stdlib.asyncio.ensure_future": "scheduler",
     "stdlib.asyncio.gather": "scheduler",
     "stdlib.wsgiref": "server",
+    "uvicorn.h11": "server",
+    "uvicorn.httptools": "server",
     "stdlib.concurrent.futures.ProcessPoolExecutor": "executor",
     "stdlib.concurrent.futures.ThreadPoolExecutor": "executor",
     "stdlib.asyncio.Queue": "queue",

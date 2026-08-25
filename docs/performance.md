@@ -128,7 +128,7 @@ isolated wrapper-overhead claim.
 
 Deep logical-operation capture has a fifth independent 256-record
 per-interpreter and 2,000-record controller budget. Supported SQLite, queue,
-executor, asyncio scheduler, WSGI server, SQLAlchemy, Redis, Pika, and aiokafka
+executor, asyncio scheduler, WSGI/Uvicorn HTTP server, SQLAlchemy, Redis, Pika, and aiokafka
 boundaries allocate one bounded
 record and take the observer lock at operation start and completion; no
 operation performs IPC or inspects a statement, key, destination, message,
@@ -144,6 +144,12 @@ thread-local origin only while converting coroutine arguments and does not
 retain or inspect those arguments. WSGI uses the existing Deep call hook and
 adds no application wrapper or completion callback; request start, status, and
 completion each take the semantic observer lock once.
+Uvicorn h11/httptools uses that same call hook and exact request-cycle frame
+identities; it adds no server import, monkeypatch, middleware, application
+wrapper, or task callback. Request start, response status, and completion after
+the final body-send return each take the semantic observer lock. Concurrent
+cycles use bounded transient frame/object maps rather than a thread-local
+active region.
 Blocking calls may receive caller attribution from the existing Deep stack,
 while async calls never add a thread-local sampling marker.
 This layer is deliberately absent from Sample mode because method replacement
@@ -169,6 +175,16 @@ sentinels. The first 200-request run measured 9.276x Deep/passive whole-workload
 time (0.560s versus 0.060s). Its deliberately broad 12x ceiling qualifies the
 worst-case near-zero-work handler under the complete instrument-everything
 preset; it is not a typical request-overhead promise.
+The dependency-free ASGI-shaped gate divides 200 no-op request cycles in PR and
+256 in release across the exact Uvicorn h11/httptools module and qualname
+boundaries. It requires complete status/caller evidence, streamed-body
+completion semantics, both adapter identities, and omission of method,
+path/query, scope-derived address/header/body sentinels. The first PR run
+measured 2.109x Deep/passive whole-workload time (0.216s versus 0.103s) under an
+explicit 15x expensive-tier ceiling and a five-second absolute ceiling. This
+synthetic gate isolates the qualified control-flow shape; real Uvicorn engine
+behavior is covered by separate h11/httptools integration tests and the ratio
+is not an application latency promise.
 
 When merged function or relationship cardinality exceeds its parent bound,
 normalization retains an exact aggregate top-K instead of the first identities

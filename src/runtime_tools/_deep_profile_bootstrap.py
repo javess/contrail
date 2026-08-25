@@ -7,6 +7,7 @@ This module must remain standard-library-only: capture copies it as
 from __future__ import annotations
 
 import atexit
+import dis
 import importlib
 import json
 import os
@@ -54,6 +55,10 @@ _SEMANTIC_OBSERVER_MODULE = "_semantic_capture_bootstrap"
 _CALLER_WRAPPER_MODULES = frozenset({"subprocess", "asyncio.subprocess", "asyncio.base_subprocess"})
 _THREAD_PROFILE_HOOK_SETTERS = frozenset({"setprofile", "setprofile_all_threads"})
 _THREAD_TRACE_HOOK_SETTERS = frozenset({"settrace", "settrace_all_threads"})
+_UVICORN_HTTP_ADAPTERS = {
+    "uvicorn.protocols.http.h11_impl": "uvicorn.h11",
+    "uvicorn.protocols.http.httptools_impl": "uvicorn.httptools",
+}
 _NATIVE_FILENAME = "<native>"
 _PYTHON_EXCEPTION_FILTER_VERSION = 1
 _FILTERED_CONTROL_FLOW_EXCEPTION_TYPES = (
@@ -90,6 +95,11 @@ _stacks: dict[int, list[_StackEntry]] = {}
 _wsgi_boundaries: dict[int, _WsgiBoundary] = {}
 _active_wsgi_frames: dict[int, list[int]] = {}
 _attributed_wsgi_frames: set[int] = set()
+_asgi_boundaries: dict[int, int | None] = {}
+_asgi_cycle_frames: dict[int, int] = {}
+_asgi_frame_cycles: dict[int, int] = {}
+_asgi_final_send_frames: dict[int, int] = {}
+_attributed_asgi_frames: set[int] = set()
 _dropped_call_count = 0
 _dropped_edge_count = 0
 _dropped_exception_event_count = 0
@@ -251,6 +261,95 @@ def _finish_wsgi_request(frame: FrameType, thread_id: int) -> None:
         _semantic_capture.finish_wsgi_request(*boundary)
 
 
+def _uvicorn_http_adapter(frame: FrameType, method: str) -> str | None:
+    module_name = frame.f_globals.get("__name__")
+    if not isinstance(module_name, str):
+        return None
+    adapter = _UVICORN_HTTP_ADAPTERS.get(module_name)
+    if adapter is None or frame.f_code.co_qualname != f"RequestResponseCycle.{method}":
+        return None
+    return adapter
+
+
+def _start_asgi_request(frame: FrameType, adapter: str) -> None:
+    frame_id = id(frame)
+    if frame_id in _asgi_boundaries:
+        return
+    cycle = frame.f_locals.get("self")
+    if cycle is None:
+        return
+    cycle_id = id(cycle)
+    if cycle_id in _asgi_cycle_frames:
+        return
+    identifier = _semantic_capture.begin_asgi_request(adapter)
+    _asgi_boundaries[frame_id] = identifier
+    _asgi_cycle_frames[cycle_id] = frame_id
+    _asgi_frame_cycles[frame_id] = cycle_id
+
+
+def _attribute_asgi_request(frame: FrameType, key: _FunctionKey) -> None:
+    if key[4] != "application":
+        return
+    ancestor = frame.f_back
+    while ancestor is not None:
+        frame_id = id(ancestor)
+        if frame_id in _asgi_boundaries:
+            if frame_id not in _attributed_asgi_frames:
+                _semantic_capture.attribute_logical_operation_caller(
+                    _asgi_boundaries[frame_id],
+                    (*key, "exact"),
+                )
+                _attributed_asgi_frames.add(frame_id)
+            return
+        ancestor = ancestor.f_back
+
+
+def _observe_asgi_send(frame: FrameType) -> None:
+    cycle = frame.f_locals.get("self")
+    if cycle is None:
+        return
+    request_frame_id = _asgi_cycle_frames.get(id(cycle))
+    if request_frame_id is None:
+        return
+    message = frame.f_locals.get("message")
+    if type(message) is not dict:
+        return
+    message_type = message.get("type")
+    if message_type == "http.response.start":
+        _semantic_capture.record_asgi_status(
+            _asgi_boundaries.get(request_frame_id),
+            message.get("status"),
+        )
+    elif message_type == "http.response.body" and message.get("more_body", False) is False:
+        _asgi_final_send_frames[id(frame)] = request_frame_id
+
+
+def _coroutine_suspended(frame: FrameType) -> bool:
+    instruction = frame.f_lasti
+    code = frame.f_code.co_code
+    if not 0 <= instruction < len(code):
+        return False
+    operation = dis.opname[code[instruction]]
+    if operation in {"YIELD_FROM", "YIELD_VALUE"}:
+        return True
+    return (
+        operation == "RESUME"
+        and instruction >= 2
+        and dis.opname[code[instruction - 2]] == "YIELD_VALUE"
+    )
+
+
+def _finish_asgi_request(request_frame_id: int) -> None:
+    if request_frame_id not in _asgi_boundaries:
+        return
+    identifier = _asgi_boundaries.pop(request_frame_id)
+    cycle_id = _asgi_frame_cycles.pop(request_frame_id, None)
+    if cycle_id is not None and _asgi_cycle_frames.get(cycle_id) == request_frame_id:
+        _asgi_cycle_frames.pop(cycle_id, None)
+    _attributed_asgi_frames.discard(request_frame_id)
+    _semantic_capture.finish_asgi_request(identifier)
+
+
 def _profile(frame: FrameType, event: str, argument: object) -> None:
     global _callback_error_count, _dropped_call_count, _dropped_edge_count
     global _profile_hook_setter_call_count, _trace_hook_setter_call_count
@@ -281,6 +380,12 @@ def _profile(frame: FrameType, event: str, argument: object) -> None:
                     _start_wsgi_request(frame, thread_id)
                 elif _is_wsgi_handler_frame(frame, "start_response"):
                     _record_wsgi_status(frame, thread_id)
+                else:
+                    asgi_adapter = _uvicorn_http_adapter(frame, "run_asgi")
+                    if asgi_adapter is not None:
+                        _start_asgi_request(frame, asgi_adapter)
+                    elif _uvicorn_http_adapter(frame, "send") is not None:
+                        _observe_asgi_send(frame)
             tracked_key: _FunctionKey | None
             native = event == "c_call"
             if (stack and stack[-1][0] is _IGNORED_OBSERVER_KEY) or frame.f_globals.get(
@@ -299,12 +404,25 @@ def _profile(frame: FrameType, event: str, argument: object) -> None:
                     tracked_key = None
             if tracked_key is not None and tracked_key is not _IGNORED_OBSERVER_KEY:
                 _attribute_wsgi_request(thread_id, tracked_key)
+                if event == "call":
+                    _attribute_asgi_request(frame, tracked_key)
             if len(stack) >= _MAX_STACK_DEPTH:
                 tracked_key = None
             stack.append((tracked_key, time.perf_counter_ns(), 0, native))
             return
-        if event == "return" and _is_wsgi_handler_frame(frame, "run"):
-            _finish_wsgi_request(frame, thread_id)
+        if event == "return":
+            if _is_wsgi_handler_frame(frame, "run"):
+                _finish_wsgi_request(frame, thread_id)
+            elif _uvicorn_http_adapter(frame, "send") is not None:
+                send_frame_id = id(frame)
+                request_frame_id = _asgi_final_send_frames.get(send_frame_id)
+                if request_frame_id is not None and not _coroutine_suspended(frame):
+                    _asgi_final_send_frames.pop(send_frame_id, None)
+                    _finish_asgi_request(request_frame_id)
+            elif _uvicorn_http_adapter(frame, "run_asgi") is not None and not (
+                _coroutine_suspended(frame)
+            ):
+                _finish_asgi_request(id(frame))
         if event not in {"return", "c_return", "c_exception"} or not stack:
             return
         key, started_at_ns, child_ns, native = stack.pop()
@@ -428,6 +546,11 @@ def _reset_after_fork() -> None:
     _wsgi_boundaries.clear()
     _active_wsgi_frames.clear()
     _attributed_wsgi_frames.clear()
+    _asgi_boundaries.clear()
+    _asgi_cycle_frames.clear()
+    _asgi_frame_cycles.clear()
+    _asgi_final_send_frames.clear()
+    _attributed_asgi_frames.clear()
     _dropped_call_count = 0
     _dropped_edge_count = 0
     _dropped_exception_event_count = 0

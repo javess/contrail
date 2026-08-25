@@ -4451,8 +4451,10 @@ def test_invalid_optional_logical_adapter_category_does_not_discard_profile(
     assert metadata["status"] == "complete"
 
 
-def test_wsgi_request_without_status_retains_duration_but_marks_capture_partial(
+@pytest.mark.parametrize("adapter", ("stdlib.wsgiref", "uvicorn.h11", "uvicorn.httptools"))
+def test_server_request_without_status_retains_duration_but_marks_capture_partial(
     tmp_path: Path,
+    adapter: str,
 ) -> None:
     document = {
         "format_version": 1,
@@ -4471,14 +4473,14 @@ def test_wsgi_request_without_status_retains_duration_but_marks_capture_partial(
             "dropped_logical_operation_count": 0,
             "logical_operation_callback_error_count": 0,
             "logical_operation_caller_callback_error_count": 0,
-            "logical_operation_adapters": ["stdlib.wsgiref"],
+            "logical_operation_adapters": [adapter],
             "limits": {"max_logical_operations": 256},
             "logical_operations": [
                 {
                     "id": 0,
                     "category": "server",
                     "operation": "request",
-                    "adapter": "stdlib.wsgiref",
+                    "adapter": adapter,
                     "parent_pid": 42,
                     "started_at_ns": 100,
                     "duration_ns": 5,

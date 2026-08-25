@@ -519,9 +519,11 @@ queue items and identities, payloads, return values, and exception messages are
 never serialized. Executor callables, arguments, successful results, and
 exception messages are likewise excluded. Asyncio awaitables, task names,
 context values, arguments, successful results, and exception messages are also
-excluded. The WSGI adapter retains only status, request-to-response duration,
-and the exact application caller: HTTP method, route, URL, headers, request and
-response bodies, and client address are excluded. Nested adapters are
+excluded. Inbound WSGI and Uvicorn ASGI adapters retain only adapter identity,
+status, request-to-response duration, safe 5xx classification, PID/role, and
+the exact application caller: HTTP method, route or path, URL/query, ASGI
+scope, headers, request and response bodies, client address, arguments, locals,
+and exception messages are excluded. Nested adapters are
 task-locally suppressed, so an `AsyncSession` or
 Redis pipeline remains one logical operation rather than also counting every
 lower client layer it invokes.
@@ -612,16 +614,23 @@ CPU time. Direct loop scheduling, direct use of the `asyncio.tasks` submodule,
 custom task factories, and alternate event loops remain outside this semantic
 adapter.
 
-Inbound WSGI request capture is zero-code and does not replace the application
-or handler. Deep's existing call observer recognizes the standard-library
-`wsgiref` request lifecycle, associates the first application function with the
-request, and retains the numeric response status. The example serves one 200
-and one deliberately slow 503 response:
+Inbound WSGI and Uvicorn ASGI request capture is zero-code and does not replace
+the application, handler, or protocol cycle. Deep's existing call observer
+recognizes the standard-library `wsgiref` lifecycle plus Uvicorn's h11 and
+httptools request cycles, associates the first application function with each
+request, and retains the numeric response status. Contrail does not import or
+depend on Uvicorn; the local ASGI example installs it only for that command and
+serves concurrent 200/503 requests with a streamed success response:
 
 ```bash
 uv run contrail record --capture-level deep --name wsgi-server -- \
   python examples/local/wsgi_server.py
 uv run contrail analyze wsgi-server.runpack
+
+uv run --with 'uvicorn[standard]' contrail record \
+  --capture-level deep --name asgi-server -- \
+  python examples/local/asgi_server.py --http h11
+uv run contrail analyze asgi-server.runpack
 ```
 
 ```text
@@ -630,19 +639,21 @@ Bottleneck
     1 of 2 retained server operations failed
 
 Logical operation hotspots
-  SERVER request __main__.application [exact, 100%], adapter stdlib.wsgiref
-    2 calls: 1 completed, 1 failed, 0 unfinished; max 70.9ms
+  SERVER request __main__.application [exact, 100%], adapter uvicorn.h11
+    2 calls: 1 completed, 1 failed, 0 unfinished; max 63.9ms
 
 Logical operations
-  SERVER request  70.9ms, status 503, error HTTPStatusError
-  SERVER request  1.8ms, status 200, completed
+  SERVER request  3.1ms, status 503, error HTTPStatusError
+  SERVER request  63.9ms, status 200, completed
 ```
 
-These durations include response iteration and transmission through the WSGI
-handler; they are not isolated application CPU time. The initial adapter covers
-the standard-library `wsgiref` handler. Gunicorn, uWSGI, Waitress, ASGI servers,
-custom gateways, and replaced handler methods remain generic Deep profiler
-evidence until they receive explicit semantic adapters.
+These durations include WSGI response iteration/transmission or ASGI streaming
+through the final response-body send; they are not isolated application CPU
+time. The supported inbound adapters are standard-library `wsgiref` and
+Uvicorn h11/httptools. WebSockets are deliberately ignored. Gunicorn, uWSGI,
+Waitress, other ASGI servers, custom gateways, and replaced request-cycle
+methods remain generic Deep profiler evidence until they receive explicit
+semantic adapters.
 
 This family has its own 256-operation per-interpreter and 2,000-operation
 controller limits. BatchScope diagnoses retained database, cache, queue, broker,

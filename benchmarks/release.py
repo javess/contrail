@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import cast
 
 from generate import (
+    write_asgi_server_workload,
     write_async_task_workload,
     write_causal_chain,
     write_deep_profile_reports,
@@ -524,6 +525,106 @@ def _worker(case: str, count: int) -> dict[str, object]:
                 )
             ):
                 raise RuntimeError("wsgi_server_capture omitted privacy markers")
+            case_metrics = {
+                "passive_workload_seconds": round(passive_seconds, 6),
+                "deep_workload_seconds": round(deep_seconds, 6),
+                "capture_overhead_ratio": round(deep_seconds / passive_seconds, 3),
+            }
+        elif case == "asgi_server_capture":
+            workload = root / "asgi-server-workload.py"
+            passive = root / "asgi-server-passive.runpack"
+            output = root / "asgi-server-deep.runpack"
+            write_asgi_server_workload(workload, count)
+            start = time.perf_counter()
+            record_process(
+                (sys.executable, str(workload)),
+                passive,
+                name="asgi-server-passive",
+                capture_level="passive",
+            )
+            record_process(
+                (sys.executable, str(workload)),
+                output,
+                name="asgi-server-deep",
+                capture_level="deep",
+            )
+            analysis = analyze_runpack(output)
+            summary = analysis.logical_operation_capture
+            server_requests = tuple(
+                operation
+                for operation in analysis.logical_operations
+                if operation.category == "server"
+            )
+            server_hotspots = tuple(
+                hotspot
+                for hotspot in analysis.logical_operation_hotspots
+                if hotspot.category == "server"
+            )
+            observed = summary.operation_count if summary is not None else 0
+            if (
+                summary is None
+                or summary.status != "complete"
+                or summary.operation_count != count
+                or summary.dropped_operation_count != 0
+                or not server_requests
+                or {request.adapter for request in server_requests}
+                != {"uvicorn.h11", "uvicorn.httptools"}
+                or sum(hotspot.operation_count for hotspot in server_hotspots) != count
+                or any(
+                    request.operation != "request"
+                    or request.outcome != "completed"
+                    or request.status_code != 200
+                    or request.duration_seconds is None
+                    or request.caller is None
+                    or request.caller.name != "__main__.application"
+                    for request in server_requests
+                )
+            ):
+                raise RuntimeError("asgi_server_capture did not retain complete request evidence")
+            with RunpackReader(passive) as reader:
+                passive_execution = reader.execution()
+            with RunpackReader(output) as reader:
+                deep_execution = reader.execution()
+            if passive_execution.finished_at_ns is None or deep_execution.finished_at_ns is None:
+                raise RuntimeError("asgi_server_capture produced an unfinished execution")
+            passive_seconds = (
+                passive_execution.finished_at_ns - passive_execution.started_at_ns
+            ) / 1_000_000_000
+            deep_seconds = (
+                deep_execution.finished_at_ns - deep_execution.started_at_ns
+            ) / 1_000_000_000
+            if passive_seconds <= 0:
+                raise RuntimeError("asgi_server_capture passive duration was not positive")
+            runpack_bytes = output.read_bytes()
+            if any(
+                private_value in runpack_bytes
+                for private_value in (
+                    b"PRIVATE-BENCHMARK-METHOD",
+                    b"asgi-server-benchmark-private-path",
+                    b"asgi-server-benchmark-private-query",
+                    b"asgi-server-benchmark-request-secret",
+                    b"asgi-server-benchmark-private-client",
+                    b"asgi-server-benchmark-request-body-secret",
+                    b"asgi-server-benchmark-response-secret",
+                    b"asgi-server-benchmark-response-body-one-secret",
+                    b"asgi-server-benchmark-response-body-two-secret",
+                )
+            ):
+                raise RuntimeError("asgi_server_capture retained private request data")
+            public_summary = summary.as_json_value()
+            if any(
+                public_summary.get(marker) is not False
+                for marker in (
+                    "http_method_captured",
+                    "route_captured",
+                    "url_captured",
+                    "headers_captured",
+                    "body_captured",
+                    "response_body_captured",
+                    "client_address_captured",
+                )
+            ):
+                raise RuntimeError("asgi_server_capture omitted privacy markers")
             case_metrics = {
                 "passive_workload_seconds": round(passive_seconds, 6),
                 "deep_workload_seconds": round(deep_seconds, 6),

@@ -120,15 +120,17 @@ explicit `asyncio.create_task` and `TaskGroup.create_task`, top-level
 `asyncio.gather`, all with creation-to-completion timing, plus
 documented public SQLAlchemy, Redis, Pika blocking-channel, and aiokafka methods
 when those optional packages are present. The standard-library `wsgiref`
-handler adds `server.request` from handler entry through response completion,
-with its numeric status and exact first application caller. Each event contains
+handler and Uvicorn h11/httptools request cycles add `server.request` from
+protocol entry through response completion, with numeric status and exact
+first application caller. Each event contains
 only operation category and class, adapter, PID/role, start and duration, safe
 outcome or exception class, and optional exact caller. Statements, parameters,
 cache command names and keys, broker destinations and messages, returned rows,
 queue items and identity, executor callables and arguments, asyncio awaitables,
 task names and context values, payloads, and return values are explicitly
-absent. WSGI method, route, URL, headers, request/response bodies, and client
-address are explicitly absent. Application-originated queue calls are retained; library-only queue
+absent. Inbound HTTP method, route/path, URL/query, ASGI scope, headers,
+request/response bodies, client address, arguments, locals, and exception
+messages are explicitly absent. Application-originated queue calls are retained; library-only queue
 polling is excluded. A
 task-local marker suppresses nested wrapped layers, and a `performs` edge links
 an attributed operation to its `python.callsite`.

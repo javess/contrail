@@ -232,6 +232,19 @@ not hide application hotspots. Frame locals other than the transient WSGI
 status string are never read. A request that closes without a valid status is
 retained with duration but makes logical-operation completeness partial.
 
+Uvicorn uses the same profile hook without importing or patching the optional
+server. Exact `RequestResponseCycle.run_asgi` frames in the h11 and httptools
+protocol modules open `uvicorn.h11` or `uvicorn.httptools` boundaries. The
+observer associates the transient cycle identity with its coroutine frame, so
+concurrent tasks on one event-loop thread cannot attach status or caller data to
+one another. It reads only `type`, numeric `status`, and `more_body` from
+transient `RequestResponseCycle.send` messages. A boundary closes after the
+final `http.response.body` send returns, preserving streamed-response timing;
+terminal `run_asgi` return is an incomplete-cycle cleanup boundary. The first
+application-scope frame under that exact coroutine becomes the caller without a
+thread-local active-region marker. Uvicorn WebSocket protocol modules never
+match and remain ordinary Deep function evidence.
+
 Each process retains at most 256 records containing only database/cache/queue/
 broker/executor/scheduler/server category, generic operation class, adapter, timing, safe outcome
 or exception class, PID, and caller. Statements, parameters, cache commands and
@@ -239,7 +252,8 @@ keys, broker destinations and messages, rows, queue items and identity,
 executor callables and arguments, asyncio awaitables, names, context values,
 payloads, credentials, exception messages, and return values are never copied.
 Server method, route, URL, headers, bodies, and client address are likewise
-excluded; only a numeric WSGI response status may be retained.
+excluded; only a numeric WSGI or ASGI response status may be retained. ASGI
+scope and exception messages are also excluded.
 Controller normalization retains at most 2,000 operations, prioritizing failed
 or unfinished work and then duration. It emits `database.*`, `cache.*`,
 `queue.*`, `broker.*`, `executor.task`, `scheduler.task`, or `server.request` events plus

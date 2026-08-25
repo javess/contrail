@@ -13,6 +13,15 @@ Contrail 0.9 is the beta compatibility-freeze release ahead of 1.0.
 
 ### Changed
 
+- Deep Capture now recognizes Uvicorn h11 and httptools inbound HTTP request
+  cycles without importing Uvicorn, wrapping the ASGI application, or requiring
+  application instrumentation. The existing `server.request` contract retains
+  adapter, request-to-final-body-send timing, numeric status, safe 5xx class,
+  PID/role, and exact application caller while omitting method, path/query,
+  ASGI scope, headers, bodies, client address, arguments, locals, and exception
+  messages. Concurrent requests are associated by cycle identity, and
+  WebSockets remain unclassified.
+
 - Deep Capture now recognizes standard-library `wsgiref` inbound requests with
   zero application changes. It retains request-to-response duration, numeric
   status, safe 5xx classification, and exact application caller while omitting

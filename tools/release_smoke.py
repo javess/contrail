@@ -222,6 +222,42 @@ class ClientSession:
     )
 
 
+def _write_uvicorn_http_fakes(site_packages: Path) -> None:
+    package = site_packages / "uvicorn" / "protocols" / "http"
+    package.mkdir(parents=True)
+    for parent in (package.parent.parent, package.parent, package):
+        (parent / "__init__.py").write_text("", encoding="utf-8")
+    source = """
+class RequestResponseCycle:
+    def __init__(self, status):
+        self.status = status
+        self.scope = {
+            "type": "http",
+            "method": "WHEEL-PRIVATE-METHOD",
+            "path": "/wheel-private-asgi-path",
+            "query_string": b"wheel-private-asgi-query",
+            "headers": [(b"x-private", b"wheel-private-asgi-request-header")],
+            "client": ("wheel-private-asgi-client", 54321),
+        }
+
+    async def receive(self):
+        return {
+            "type": "http.request",
+            "body": b"wheel-private-asgi-request-body",
+            "more_body": False,
+        }
+
+    async def run_asgi(self, app):
+        await app(self.scope, self.receive, self.send)
+
+    async def send(self, message):
+        if message["type"] == "http.response.body" and not message.get("more_body", False):
+            self.response_complete = True
+""".strip()
+    for module_name in ("h11_impl.py", "httptools_impl.py"):
+        (package / module_name).write_text(source, encoding="utf-8")
+
+
 def smoke(
     wheel: Path,
     *,
@@ -253,6 +289,7 @@ def smoke(
                 cwd=root,
             ).stdout.strip()
         )
+        _write_uvicorn_http_fakes(workload_site_packages)
         _install_wheel(
             tool_python,
             wheel,
@@ -861,6 +898,8 @@ import queue
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from uvicorn.protocols.http.h11_impl import RequestResponseCycle as H11Cycle
+from uvicorn.protocols.http.httptools_impl import RequestResponseCycle as HttpToolsCycle
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 database = sqlite3.connect(":memory:")
@@ -986,6 +1025,36 @@ finally:
     connection.close()
     thread.join()
     server.server_close()
+
+async def asgi_application(scope, receive, send):
+    request = await receive()
+    assert request["body"] == b"wheel-private-asgi-request-body"
+    await send({
+        "type": "http.response.start",
+        "status": scope["status"],
+        "headers": [(b"x-private", b"wheel-private-asgi-response-header")],
+    })
+    await send({
+        "type": "http.response.body",
+        "body": b"wheel-private-asgi-response-body-one",
+        "more_body": True,
+    })
+    await asyncio.sleep(0.03)
+    await send({
+        "type": "http.response.body",
+        "body": b"wheel-private-asgi-response-body-two",
+    })
+
+async def exercise_asgi():
+    success = H11Cycle(200)
+    failure = HttpToolsCycle(503)
+    success.scope["status"] = success.status
+    success.scope["path"] = "/wheel-private-asgi-success"
+    failure.scope["status"] = failure.status
+    await success.run_asgi(asgi_application)
+    await failure.run_asgi(asgi_application)
+
+asyncio.run(exercise_asgi())
 """.strip(),
             encoding="utf-8",
         )
@@ -1023,7 +1092,7 @@ finally:
         if (
             not isinstance(logical_capture, dict)
             or logical_capture.get("status") != "complete"
-            or logical_capture.get("operation_count") != 22
+            or logical_capture.get("operation_count") != 24
             or logical_capture.get("dropped_operation_count") != 0
             or logical_capture.get("statement_captured") is not False
             or logical_capture.get("queue_item_captured") is not False
@@ -1053,9 +1122,11 @@ finally:
                 "stdlib.sqlite3.Connection",
                 "stdlib.sqlite3.Cursor",
                 "stdlib.wsgiref",
+                "uvicorn.h11",
+                "uvicorn.httptools",
             ]
             or not isinstance(logical_operations, list)
-            or len(logical_operations) != 22
+            or len(logical_operations) != 24
             or not all(isinstance(operation, dict) for operation in logical_operations)
             or not isinstance(logical_hotspots, list)
             or not logical_hotspots
@@ -1100,10 +1171,10 @@ finally:
                 and operation.get("client_address_captured") is False
                 and isinstance(operation.get("caller"), dict)
                 and cast(dict[str, object], operation["caller"]).get("name")
-                == "__main__.application"
+                in {"__main__.application", "__main__.asgi_application"}
                 for operation in logical_operation_objects
             )
-            != 2
+            != 4
             or {
                 operation.get("status_code")
                 for operation in logical_operation_objects
@@ -1114,7 +1185,7 @@ finally:
                 operation.get("outcome") == "operation_error"
                 for operation in logical_operation_objects
             )
-            != 4
+            != 5
         ):
             raise RuntimeError("installed Deep Capture emitted invalid logical operations")
         encoded_logical = json.dumps(logical_document)
@@ -1141,6 +1212,15 @@ finally:
                 "wheel-private-success-response",
                 "wheel-private-failure-response",
                 "wheel-private-request-header",
+                "WHEEL-PRIVATE-METHOD",
+                "wheel-private-asgi-path",
+                "wheel-private-asgi-query",
+                "wheel-private-asgi-request-header",
+                "wheel-private-asgi-request-body",
+                "wheel-private-asgi-client",
+                "wheel-private-asgi-response-header",
+                "wheel-private-asgi-response-body-one",
+                "wheel-private-asgi-response-body-two",
             )
         ):
             raise RuntimeError("installed logical operation capture retained private data")

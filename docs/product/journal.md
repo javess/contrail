@@ -2069,3 +2069,70 @@ truncate a request-heavy service quickly.
 Qualify the installed wheel and full suite, then add one production-relevant
 WSGI or ASGI server adapter using the same control-flow recognition pattern
 without collecting routes, headers, or bodies.
+
+## 2026-08-25 15:53 BST
+
+### What changed
+
+Deep now recognizes Uvicorn's h11 and httptools inbound HTTP request cycles
+without importing Uvicorn, installing middleware, or changing the application.
+Each bounded operation reuses `server.request` and
+`request_to_response_completion`, ending only after the final response-body
+send returns. It retains adapter, numeric status, safe 5xx classification,
+PID/role, timing, and the exact first application function. WebSocket protocol
+lifecycles are deliberately ignored.
+
+### What we learned
+
+The WSGI thread-local active-frame design cannot be copied into asyncio:
+concurrent request tasks interleave on one event-loop thread. Exact Uvicorn
+`run_asgi` frame and transient request-cycle identities provide the stable
+boundary, while ancestor frames identify the first application call directly.
+The send message needs only three transient fields—`type`, numeric `status`,
+and `more_body`—to distinguish response start from final-body completion. No
+ASGI scope or message needs to cross the observer boundary.
+
+Coroutine profile callbacks also report `return` when an await suspends. A
+terminal-return check is therefore required before closing either `send` or
+`run_asgi`; otherwise the first streamed-body await truncates timing and can
+drop the cycle before status normalization.
+
+### Evidence
+
+- Unmodified Uvicorn 0.52.4 h11 and httptools applications produced identical
+  Passive and Deep output for concurrent streamed 200 and 503 requests.
+- Each engine retained exactly two HTTP operations with exact
+  `__main__.application` callers, one `HTTPStatusError`, and no duplicate lower
+  adapter. The streamed 200 remained open for at least the deliberate 50ms
+  delay.
+- A real WebSocket upgrade exercised the same application but produced no
+  `server.request`. A completed synthetic record without status retained its
+  interval and made logical evidence partial.
+- BatchScope diagnosed the 5xx; RunDiff observed `2 → 3`; Proofline rejected a
+  1.0x request-count contract; and the format-version-1 schema accepted both
+  additive adapter identities.
+- Method, path/query, ASGI scope-derived header/body/client sentinels, response
+  headers/bodies, arguments, locals, and the application exception-message
+  sentinel were absent from the runpack.
+- The 200-cycle dependency-free PR gate retained both engine identities with no
+  drops at 0.216s Deep versus 0.103s Passive, a 2.109x whole-workload ratio
+  under the explicit 15x expensive-tier ceiling.
+- Real Uvicorn 0.30.6 and 0.52.4 focused suites pass for both engines. The
+  latest suite also passes on managed CPython 3.12.12, 3.13.11, and 3.14.2;
+  installed-wheel smoke exercises both adapter identities from a clean
+  workload environment.
+
+### What remains uncertain
+
+The adapter qualifies Uvicorn's HTTP/1.1 h11 and httptools request-cycle shape,
+not other ASGI servers, HTTP/2 implementations, custom protocol classes, or
+methods replaced after import. Request duration includes application awaits,
+streaming, and Uvicorn protocol send work; it is not application CPU time or a
+network-flush latency guarantee. The shared 256-record process budget can still
+truncate a busy service quickly.
+
+### Next highest-value action
+
+Exercise the adapter against real production middleware stacks and sustained
+concurrency before considering another server. Keep WebSocket semantics as a
+separate future contract rather than treating them as HTTP requests.
