@@ -2,7 +2,8 @@
 
 ## 0.9.0
 
-Contrail 0.9 is the beta compatibility-freeze release ahead of 1.0.
+Contrail 0.9 is the active beta line ahead of 1.0. It keeps one canonical
+latest-version Python layout while versioning portable artifacts and JSON.
 
 ### Fixed
 
@@ -13,6 +14,17 @@ Contrail 0.9 is the beta compatibility-freeze release ahead of 1.0.
 
 ### Changed
 
+- Evidence integrations now use a typed, lazy provider registry under
+  `runtime_tools.providers`. Built-in OpenTelemetry, Kubernetes, Prometheus,
+  and Temporal providers have one canonical modular package layout; external
+  distributions can contribute disabled-by-default commands through the
+  `contrail.providers` entry-point group. Provider selection, collisions,
+  failures, packaging, and installed-wheel behavior are validated without
+  adding dependencies or importing disabled providers.
+- The README and public documentation now lead with the demo, visual evidence,
+  capture workflow, provider extension path, and concise task-oriented guides.
+  Detailed contracts, safety limits, privacy boundaries, and qualification
+  commands remain in focused reference pages.
 - Deep Capture now recognizes Uvicorn h11 and httptools inbound HTTP request
   cycles without importing Uvicorn, wrapping the ASGI application, or requiring
   application instrumentation. The existing `server.request` contract retains

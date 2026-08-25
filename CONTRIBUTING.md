@@ -55,7 +55,7 @@ Report suspected vulnerabilities through the private process in the
 ## Make a change
 
 Keep changes focused on a public outcome. Add or update tests that demonstrate
-that outcome, and preserve unrelated compatibility behavior. Runtime behavior
+that outcome, and preserve unrelated public contracts. Runtime behavior
 changes should include evidence from a focused baseline/candidate reproduction
 when that is practical. Documentation-only changes do not need runtime
 artifacts.
@@ -74,6 +74,9 @@ uv run python benchmarks/release.py --profile pr
 
 The [Python development guide](docs/development.md) defines the module layers,
 typing policy, package workflow, and testing expectations behind these checks.
+Evidence integrations belong behind the documented
+[provider contract](docs/providers.md); do not add provider-specific branches
+to the core CLI.
 
 The supported runpack boundary is documented in the
 [runpack compatibility policy](docs/compatibility.md). Versioned JSON documents

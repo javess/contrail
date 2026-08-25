@@ -2136,3 +2136,62 @@ truncate a busy service quickly.
 Exercise the adapter against real production middleware stacks and sustained
 concurrency before considering another server. Keep WebSocket semantics as a
 separate future contract rather than treating them as HTTP requests.
+
+## 2026-08-25 16:34 BST
+
+### What changed
+
+Evidence integrations now share a typed provider contract and lazy registry.
+OpenTelemetry, Kubernetes, Prometheus, and Temporal each have one canonical
+package under `runtime_tools.providers.builtins`; the core CLI discovers their
+commands instead of branching on provider names. External distributions can
+publish `contrail.providers` entry points and remain disabled and unimported
+until explicitly selected.
+
+The public documentation was reorganized around the product journey: see the
+failure, run the demo, capture evidence, enforce a contract, then extend the
+tool. The README now uses real local-UI screenshots, while long architecture,
+capture, compatibility, machine-output, support, security, CI, and performance
+material is split into concise task and reference pages.
+
+### What we learned
+
+An extensible provider boundary needs more than a protocol. Selection,
+discoverability without import, command ownership, collision failure, safe
+errors, packaging, and an installed-wheel example all belong to the contract.
+Keeping integrations behind a host-side boundary lets contributors normalize
+new evidence without weakening the standard-library-only workload observer.
+
+Maintaining top-level compatibility modules would create two obvious import
+paths and obscure the structure contributors should copy. During the beta, one
+clean canonical surface is more valuable than preserving those internal-era
+module locations. Artifact and structured-output compatibility remain separate
+public commitments.
+
+### Evidence
+
+- A temporary installed distribution is discoverable without importing its
+  module, becomes executable only when enabled, and adds a CLI command without
+  modifying the core parser or dispatcher.
+- Registry tests reject unknown selections, key conflicts, duplicate commands,
+  malformed providers, and collisions with core commands. Unexpected provider
+  failures expose only a safe exception class, never the message.
+- Built-ins can be disabled independently while core capture and analysis stay
+  available.
+- The external hello-provider template installs through a standard entry point;
+  installed-wheel smoke exercises the same boundary outside the checkout.
+- The architecture checker enforces the provider layer, and focused provider,
+  CLI, artifact, and packaging suites pass before full qualification.
+
+### What remains uncertain
+
+The first extension boundary adds host-side commands only. Providers do not yet
+contribute UI panels, new normalized record schemas, workload-side capture
+hooks, or persistent configuration. Those are separate product and trust
+decisions, not incidental follow-ons to command discovery.
+
+### Next highest-value action
+
+Validate the modular boundary against a real third-party evidence source and
+use contributor feedback to decide whether providers need shared importer
+utilities beyond the current atomic enrichment helpers.
