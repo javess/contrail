@@ -10,6 +10,9 @@ from pathlib import Path
 import pytest
 
 import runtime_tools.capture_jobs as capture_jobs
+import runtime_tools.capture_jobs._models as capture_job_models
+import runtime_tools.capture_jobs._repository as capture_job_repository
+import runtime_tools.capture_jobs._service as capture_job_service
 import runtime_tools.capture_worker as capture_worker
 from runtime_tools.capture_jobs import (
     CAPTURE_JOB_OUTPUT_LIMIT_BYTES,
@@ -59,7 +62,7 @@ def test_capture_job_uses_its_lock_instead_of_a_stale_pid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("_CONTRAIL_CAPTURE_JOB_ROOT", str(tmp_path / "jobs"))
-    monkeypatch.setattr(capture_jobs, "CAPTURE_JOB_STARTUP_GRACE_SECONDS", 0.0)
+    monkeypatch.setattr(capture_job_repository, "CAPTURE_JOB_STARTUP_GRACE_SECONDS", 0.0)
     job, _ = create_capture_job("proofline search")
 
     lost = load_capture_job(job.job_id)
@@ -148,73 +151,16 @@ def test_capture_job_output_replays_stable_head_and_tail_with_explicit_gap(
     assert output.terminal is True
 
 
-def test_legacy_head_only_capture_job_state_remains_readable() -> None:
+def test_previous_capture_job_state_version_is_rejected() -> None:
     job_id = "1" * 32
-    job = capture_jobs._capture_job_from_value(
-        {
-            "format_version": 1,
-            "job_id": job_id,
-            "operation": "runtime record",
-            "state": "complete",
-            "worker_pid": 123,
-            "started_at_ns": 1,
-            "updated_at_ns": 2,
-            "client_disconnected": False,
-            "exit_status": 0,
-            "artifacts": [],
-            "detached": True,
-            "output": {
-                "retained": True,
-                "limit_bytes_per_stream": CAPTURE_JOB_OUTPUT_LIMIT_BYTES,
-                "stdout_size_bytes": 128,
-                "stdout_truncated": False,
-                "stderr_size_bytes": 64,
-                "stderr_truncated": True,
+    with pytest.raises(capture_jobs.CaptureJobError, match="version is unsupported"):
+        capture_job_models._capture_job_from_value(
+            {
+                "format_version": 1,
+                "job_id": job_id,
             },
-        },
-        expected_job_id=job_id,
-    )
-
-    assert job.output_retention == "head"
-    assert job.stdout_head_size_bytes == 128
-    assert job.stdout_tail_size_bytes == 0
-    assert job.stdout_omitted_bytes == 0
-    assert job.stdout_omitted_bytes_truncated is False
-    assert job.stderr_head_size_bytes == 64
-    assert job.stderr_tail_size_bytes == 0
-    assert job.stderr_omitted_bytes == 0
-    assert job.stderr_omitted_bytes_truncated is True
-
-
-def test_legacy_head_only_job_does_not_require_tail_files(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("_CONTRAIL_CAPTURE_JOB_ROOT", str(tmp_path / "jobs"))
-    job, root = create_capture_job("runtime record", detached=True)
-    monkeypatch.setenv("_CONTRAIL_CAPTURE_JOB_ID", job.job_id)
-    descriptor = open_current_capture_job_output_sink("stdout")
-    try:
-        assert os.write(descriptor, b"legacy") == 6
-    finally:
-        os.close(descriptor)
-    legacy = replace(
-        job,
-        output_retention="head",
-        stdout_size_bytes=6,
-        stdout_head_size_bytes=6,
-    )
-    capture_jobs._write_capture_job(root, legacy)
-    for tail_file in (root / job.job_id).glob("*.tail.log"):
-        tail_file.unlink()
-
-    loaded = load_capture_job(job.job_id)
-    output = read_capture_job_output(job.job_id)
-
-    assert loaded.output_retention == "head"
-    assert loaded.stdout_size_bytes == 6
-    assert output.stdout == b"legacy"
-    assert output.stdout_tail == b""
+            expected_job_id=job_id,
+        )
 
 
 @pytest.mark.parametrize(
@@ -280,7 +226,7 @@ def test_lost_detached_job_marks_both_retained_streams_incomplete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("_CONTRAIL_CAPTURE_JOB_ROOT", str(tmp_path / "jobs"))
-    monkeypatch.setattr(capture_jobs, "CAPTURE_JOB_STARTUP_GRACE_SECONDS", 0.0)
+    monkeypatch.setattr(capture_job_repository, "CAPTURE_JOB_STARTUP_GRACE_SECONDS", 0.0)
     job, _ = create_capture_job("runtime record", detached=True)
 
     lost = load_capture_job(job.job_id)
@@ -331,7 +277,7 @@ def test_unstoppable_output_drain_becomes_lost_instead_of_claiming_terminal_outp
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("_CONTRAIL_CAPTURE_JOB_ROOT", str(tmp_path / "jobs"))
-    monkeypatch.setattr(capture_jobs, "CAPTURE_JOB_STARTUP_GRACE_SECONDS", 0.0)
+    monkeypatch.setattr(capture_job_repository, "CAPTURE_JOB_STARTUP_GRACE_SECONDS", 0.0)
     job, _ = create_capture_job("runtime record", detached=True)
     monkeypatch.setenv("_CONTRAIL_CAPTURE_JOB_ID", job.job_id)
     monkeypatch.setattr(capture_worker, "_start_detached_output_spool", lambda: None)
@@ -363,9 +309,9 @@ def test_capture_job_rechecks_completion_after_acquiring_transition_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("_CONTRAIL_CAPTURE_JOB_ROOT", str(tmp_path / "jobs"))
-    monkeypatch.setattr(capture_jobs, "CAPTURE_JOB_STARTUP_GRACE_SECONDS", 0.0)
+    monkeypatch.setattr(capture_job_repository, "CAPTURE_JOB_STARTUP_GRACE_SECONDS", 0.0)
     job, root = create_capture_job("runtime record")
-    acquire = capture_jobs._try_acquire_capture_job_lock
+    acquire = capture_job_service._try_acquire_capture_job_lock
 
     def complete_before_acquire(actual_root: Path, job_id: str) -> int | None:
         completed = replace(
@@ -374,15 +320,19 @@ def test_capture_job_rechecks_completion_after_acquiring_transition_lock(
             updated_at_ns=time.time_ns(),
             exit_status=0,
         )
-        capture_jobs._write_capture_job(actual_root, completed)
+        capture_job_repository._write_capture_job(actual_root, completed)
         return acquire(actual_root, job_id)
 
-    monkeypatch.setattr(capture_jobs, "_try_acquire_capture_job_lock", complete_before_acquire)
+    monkeypatch.setattr(
+        capture_job_service,
+        "_try_acquire_capture_job_lock",
+        complete_before_acquire,
+    )
 
     completed = load_capture_job(job.job_id)
 
     assert completed.state == "complete"
-    assert capture_jobs._read_capture_job(root, job.job_id).state == "complete"
+    assert capture_job_repository._read_capture_job(root, job.job_id).state == "complete"
 
 
 def test_capture_job_cancel_uses_the_worker_owned_channel(
@@ -440,7 +390,7 @@ def test_capture_job_quiesces_late_cancellation_before_terminal_commit(
     cancelled: list[capture_jobs.CaptureJob] = []
     cancel_errors: list[BaseException] = []
     finish = capture_worker.finish_current_capture_job
-    request_cancel = capture_jobs._request_capture_job_cancel
+    request_cancel = capture_job_service._request_capture_job_cancel
 
     def complete_module(_module: str, *, run_name: str) -> dict[str, object]:
         assert run_name == "__main__"
@@ -466,7 +416,7 @@ def test_capture_job_quiesces_late_cancellation_before_terminal_commit(
 
     monkeypatch.setattr(capture_worker.runpy, "run_module", complete_module)
     monkeypatch.setattr(capture_worker, "finish_current_capture_job", finish_after_late_cancel)
-    monkeypatch.setattr(capture_jobs, "_request_capture_job_cancel", observe_cancel_request)
+    monkeypatch.setattr(capture_job_service, "_request_capture_job_cancel", observe_cancel_request)
     client = threading.Thread(target=cancel_during_finalization)
     client.start()
 

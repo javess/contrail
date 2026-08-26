@@ -41,7 +41,6 @@ from runtime_tools.providers.builtins.otel import import_otlp_json
 from runtime_tools.providers.builtins.prometheus import import_prometheus_response
 from runtime_tools.providers.builtins.temporal import import_temporal_history
 from runtime_tools.storage import RunpackReader
-from runtime_tools.ui import build_timeline_payload
 
 
 def _peak_rss_mib() -> float:
@@ -783,16 +782,6 @@ def _worker(case: str, count: int) -> dict[str, object]:
                 "deep_workload_seconds": round(deep_seconds, 6),
                 "capture_overhead_ratio": round(deep_seconds / passive_seconds, 3),
             }
-        elif case == "ui_payload":
-            runpack = root / "timeline.runpack"
-            write_causal_chain(runpack, count)
-            start = time.perf_counter()
-            payload = build_timeline_payload(runpack)
-            runs = payload["runs"]
-            assert isinstance(runs, list) and isinstance(runs[0], dict)
-            events = runs[0]["events"]
-            assert isinstance(events, list)
-            observed = len(events)
         elif case == "retained_report":
             baseline = root / "baseline.runpack"
             candidate = root / "candidate.runpack"
@@ -819,16 +808,8 @@ def _worker(case: str, count: int) -> dict[str, object]:
                 json.dumps(document, allow_nan=False, sort_keys=True),
                 encoding="utf-8",
             )
-            payload = build_timeline_payload(
-                baseline,
-                candidate,
-                proofline_report=report_path,
-            )
-            runs = payload["runs"]
-            assert isinstance(runs, list) and isinstance(runs[1], dict)
-            events = runs[1]["events"]
-            assert isinstance(events, list)
-            observed = len(events)
+            with RunpackReader(candidate) as reader:
+                observed = len(reader.events())
         else:
             raise ValueError(f"unknown benchmark case: {case}")
         elapsed = time.perf_counter() - start

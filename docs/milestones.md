@@ -3,7 +3,7 @@
 Each milestone ends in a demonstrable vertical slice over the same `.runpack`.
 Later work may refine earlier schemas only through explicit versioning.
 
-The repository has executable local slices through milestone 10. Version 0.9
+The repository has executable local slices through milestone 10. Version 0.10
 freezes the supported runpack, machine-output, CLI, contract, and annotation
 surfaces in preparation for 1.0. These milestones do not imply
 production-scale telemetry storage, hosted services, GPU analysis, or richer
@@ -17,12 +17,12 @@ execution-environment adapters.
 
 ## 1. Local capture
 
-- `runtime record --name demo -- python demo.py` writes a `.runpack`.
+- `contrail record --name demo -- python demo.py` writes a `.runpack`.
 - Capture process lifecycle, exit code, wall time, CPU, peak memory, Git revision,
   selected platform metadata, and stdout/stderr hashes and byte counts.
 - Allow explicitly requested, bounded stdout/stderr attachments without changing
   the privacy-preserving default.
-- `runtime inspect demo.runpack` renders the captured facts.
+- `contrail inspect demo.runpack` renders the captured facts.
 
 ## 2. OpenTelemetry import
 
@@ -37,11 +37,10 @@ execution-environment adapters.
 - Provide concise terminal and stable JSON reports.
 - Drive the implementation with a local pipeline regression example.
 
-## 4. Local timeline
+## 4. Terminal comparison
 
-- Serve one local, read-only timeline and compare view.
-- Add zoom, filtering, and critical-path highlighting without becoming a generic
-  dashboard.
+- Compare two local runpacks with concise text and stable JSON.
+- Preserve filtering and critical-path evidence in bounded terminal reports.
 
 ## 5. Work annotations
 

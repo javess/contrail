@@ -9,6 +9,74 @@ from runtime_tools.batchscope.report import render_analysis
 from runtime_tools.proofline import verify_contracts
 from runtime_tools.providers.builtins.otel import import_otlp_json
 from runtime_tools.rundiff import compare_runpacks
+from runtime_tools.rundiff.report import render_diff
+
+
+def test_sorting_refactor_preserves_output_and_exposes_the_removed_hotspot(
+    tmp_path: Path,
+) -> None:
+    example = Path(__file__).parents[1] / "examples" / "sorting"
+    before = tmp_path / "sorting-before.runpack"
+    after = tmp_path / "sorting-after.runpack"
+
+    before_exit = record_process(
+        (sys.executable, str(example / "before.py")),
+        before,
+        name="bubble-sort",
+        capture_level="deep",
+    )
+    after_exit = record_process(
+        (sys.executable, str(example / "after.py")),
+        after,
+        name="timsort",
+        capture_level="deep",
+    )
+
+    before_analysis = analyze_runpack(before)
+    after_analysis = analyze_runpack(after)
+    diff = compare_runpacks(before, after)
+    verification = verify_contracts(example / "contract.yaml", before, after)
+
+    assert (before_exit, after_exit) == (0, 0)
+    assert before_analysis.deep_profile is not None
+    assert before_analysis.deep_profile.status == "complete"
+    assert after_analysis.deep_profile is not None
+    assert after_analysis.deep_profile.status == "complete"
+    bubble_sort = next(
+        hotspot
+        for hotspot in before_analysis.python_hotspots
+        if hotspot.name == "__main__.bubble_sort"
+    )
+    timsort = next(
+        hotspot for hotspot in after_analysis.python_hotspots if hotspot.name == "__main__.timsort"
+    )
+    assert bubble_sort.scope == timsort.scope == "application"
+    assert bubble_sort.implementation == timsort.implementation == "python"
+    assert bubble_sort.self_seconds > timsort.self_seconds * 10
+
+    assert diff.outcome == "equivalent"
+    assert diff.output_equivalent is True
+    assert diff.exit_code_equivalent is True
+    assert diff.instrumentation.timing_comparable is True
+    assert diff.wall_time.baseline is not None
+    assert diff.wall_time.candidate is not None
+    assert diff.wall_time.candidate < diff.wall_time.baseline * 0.5
+    assert diff.cpu_time.baseline is not None
+    assert diff.cpu_time.candidate is not None
+    assert diff.cpu_time.candidate < diff.cpu_time.baseline * 0.5
+
+    assert verification.passed is True
+    assert [(result.type, result.status) for result in verification.results] == [
+        ("candidate_exit_success", "pass"),
+        ("exit_code_equivalent", "pass"),
+        ("output_equivalent", "pass"),
+        ("max_runtime_regression", "pass"),
+        ("max_cpu_time_regression", "pass"),
+    ]
+    assert "__main__.bubble_sort" in render_analysis(before_analysis, "text")
+    rendered_diff = render_diff(diff, "text")
+    assert "stdout:      equivalent" in rendered_diff
+    assert "Runtime" in rendered_diff
 
 
 def test_local_pipeline_demonstrates_equivalent_output_and_runtime_regression(

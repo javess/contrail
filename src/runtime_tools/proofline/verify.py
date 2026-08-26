@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from runtime_tools.json_support import output_document
+from runtime_tools.json_support import JsonValueModel, output_document
 from runtime_tools.model import JsonValue
 from runtime_tools.proofline.contracts import Assertion, Contract, ContractError, load_contracts
 from runtime_tools.rundiff.compare import ExecutionDiff, ValueChange, compare_readers
@@ -68,17 +68,11 @@ class ClaimResult:
 
 
 @dataclass(frozen=True, slots=True)
-class VerificationArtifactBindings:
+class VerificationArtifactBindings(JsonValueModel):
     """Exact baseline and candidate artifacts used for one verification."""
 
     baseline: RunpackArtifactIdentity
     candidate: RunpackArtifactIdentity
-
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "baseline": self.baseline.as_json_value(),
-            "candidate": self.candidate.as_json_value(),
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,14 +438,14 @@ def _evaluate(
     if assertion.type == "candidate_exit_success":
         evidence = _evidence("/candidate/exit_code")
         expected = "candidate exits successfully"
-        observed = f"candidate={_exit_status(diff.candidate_exit_code)}"
-        evidence = evidence.with_fact(candidate_exit_code=diff.candidate_exit_code)
-        if diff.candidate_exit_code is None:
+        observed = f"candidate={_exit_status(diff.candidate.exit_code)}"
+        evidence = evidence.with_fact(candidate_exit_code=diff.candidate.exit_code)
+        if diff.candidate.exit_code is None:
             return _result(contract, assertion, "unverifiable", expected, observed, evidence)
         return _result(
             contract,
             assertion,
-            "pass" if diff.candidate_exit_code == 0 else "fail",
+            "pass" if diff.candidate.exit_code == 0 else "fail",
             expected,
             observed,
             evidence,
@@ -460,12 +454,12 @@ def _evaluate(
         evidence = _evidence("/exit_code_equivalent")
         expected = "equivalent exit status"
         observed = (
-            f"baseline={_exit_status(diff.baseline_exit_code)}, "
-            f"candidate={_exit_status(diff.candidate_exit_code)}"
+            f"baseline={_exit_status(diff.baseline.exit_code)}, "
+            f"candidate={_exit_status(diff.candidate.exit_code)}"
         )
         evidence = evidence.with_fact(
-            baseline_exit_code=diff.baseline_exit_code,
-            candidate_exit_code=diff.candidate_exit_code,
+            baseline_exit_code=diff.baseline.exit_code,
+            candidate_exit_code=diff.candidate.exit_code,
             equivalent=diff.exit_code_equivalent,
         )
         if diff.exit_code_equivalent is None:
@@ -504,7 +498,7 @@ def _evaluate(
             diff.wall_time,
             "runtime",
             _evidence("/wall_time"),
-            (diff.baseline_instrumentation_mode, diff.candidate_instrumentation_mode),
+            (diff.instrumentation.baseline_mode, diff.instrumentation.candidate_mode),
         )
     if assertion.type == "max_cpu_time_regression":
         return _max_regression(
@@ -513,7 +507,7 @@ def _evaluate(
             diff.cpu_time,
             "CPU time",
             _evidence("/cpu_time"),
-            (diff.baseline_instrumentation_mode, diff.candidate_instrumentation_mode),
+            (diff.instrumentation.baseline_mode, diff.instrumentation.candidate_mode),
         )
     if assertion.type == "max_peak_memory_regression":
         return _max_regression(
@@ -522,7 +516,7 @@ def _evaluate(
             diff.peak_memory,
             "peak memory",
             _evidence("/peak_memory"),
-            (diff.baseline_instrumentation_mode, diff.candidate_instrumentation_mode),
+            (diff.instrumentation.baseline_mode, diff.instrumentation.candidate_mode),
         )
     if assertion.type == "forbid_new_dependency":
         source = _string(assertion.config, "from", assertion)
@@ -718,14 +712,14 @@ def verify_contracts_readers(
     """Evaluate loaded contracts against the readers that produced ``diff``."""
     baseline_id = baseline_reader.execution().id
     candidate_id = candidate_reader.execution().id
-    if diff.baseline_id != baseline_id or diff.candidate_id != candidate_id:
+    if diff.baseline.id != baseline_id or diff.candidate.id != candidate_id:
         raise ContractError("runtime diff does not describe the supplied runpack readers")
     results = tuple(
         _evaluate(contract, assertion, diff, baseline_reader, candidate_reader)
         for contract in contracts
         for assertion in contract.assertions
     )
-    return VerificationReport(diff.baseline_id, diff.candidate_id, results)
+    return VerificationReport(diff.baseline.id, diff.candidate.id, results)
 
 
 def verify_loaded_contracts_with_artifact_bindings(

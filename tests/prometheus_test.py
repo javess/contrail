@@ -238,90 +238,76 @@ def test_prometheus_response_normalizes_nameless_expression_results(
     assert measurement.attributes == {"job": "api"}
 
 
-def test_prometheus_response_rejects_non_finite_timestamps(tmp_path: Path) -> None:
-    source = tmp_path / "source.runpack"
-    response = tmp_path / "metrics.json"
-    output = tmp_path / "output.runpack"
-    with RunpackWriter(source) as writer:
-        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
-    response.write_text(
-        json.dumps(
-            {
-                "status": "success",
-                "data": {
-                    "result": [
-                        {
-                            "metric": {"__name__": "queue_depth"},
-                            "value": ["Infinity", "1"],
-                        }
-                    ]
-                },
-            }
+@pytest.mark.parametrize(
+    ("bounds", "sample", "message"),
+    (
+        (
+            (0, 1),
+            {"metric": {"__name__": "queue_depth"}, "value": ["Infinity", "1"]},
+            "invalid Prometheus sample timestamp",
         ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(PrometheusImportError, match="invalid Prometheus sample timestamp"):
-        import_prometheus_response(source, response, output)
-
-    assert not output.exists()
-
-
-def test_prometheus_response_rejects_timestamps_outside_the_runpack_range(
+        (
+            (0, 1),
+            {"metric": {"__name__": "queue_depth"}, "value": ["1e1000000000", "1"]},
+            "timestamp exceeds the runpack range",
+        ),
+        (
+            (-1, 1),
+            {"metric": {"__name__": "queue_depth"}, "value": ["-0.0000000001", "1"]},
+            "has sub-nanosecond precision",
+        ),
+        (
+            (0, 2_000_000_000),
+            {"metric": {"__name__": "queue_depth"}, "value": [3, "NaN"]},
+            "sample values must be finite",
+        ),
+        (
+            (0, 2),
+            {
+                "metric": {"__name__": "queue_depth", "pod": ["worker"]},
+                "value": [1, "3"],
+            },
+            "labels must be strings",
+        ),
+        (
+            (0, 2),
+            {"metric": {"__name__": "bad-\ud800"}, "value": [1, "3"]},
+            "labels must be valid UTF-8",
+        ),
+    ),
+    ids=(
+        "non-finite-timestamp",
+        "out-of-range-timestamp",
+        "subnanosecond-timestamp",
+        "non-finite-value",
+        "non-string-label",
+        "invalid-label-unicode",
+    ),
+)
+def test_prometheus_response_rejects_invalid_samples(
     tmp_path: Path,
+    bounds: tuple[int, int],
+    sample: dict[str, object],
+    message: str,
 ) -> None:
     source = tmp_path / "source.runpack"
     response = tmp_path / "metrics.json"
     output = tmp_path / "output.runpack"
     with RunpackWriter(source) as writer:
-        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        writer.add_execution(
+            Execution("run", "run", bounds[0], bounds[1], (), str(tmp_path), 0, None, {})
+        )
     response.write_text(
         json.dumps(
             {
                 "status": "success",
-                "data": {
-                    "result": [
-                        {
-                            "metric": {"__name__": "queue_depth"},
-                            "value": ["1e1000000000", "1"],
-                        }
-                    ]
-                },
+                "data": {"result": [sample]},
             }
         ),
         encoding="utf-8",
     )
 
-    with pytest.raises(PrometheusImportError, match="timestamp exceeds the runpack range"):
-        import_prometheus_response(source, response, output)
-
-    assert not output.exists()
-
-
-def test_prometheus_response_rejects_lossy_subnanosecond_timestamps(tmp_path: Path) -> None:
-    source = tmp_path / "source.runpack"
-    response = tmp_path / "metrics.json"
-    output = tmp_path / "output.runpack"
-    with RunpackWriter(source) as writer:
-        writer.add_execution(Execution("run", "run", -1, 1, (), str(tmp_path), 0, None, {}))
-    response.write_text(
-        json.dumps(
-            {
-                "status": "success",
-                "data": {
-                    "result": [
-                        {
-                            "metric": {"__name__": "queue_depth"},
-                            "value": ["-0.0000000001", "1"],
-                        }
-                    ]
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(PrometheusImportError, match="has sub-nanosecond precision"):
+    with pytest.raises(PrometheusImportError, match=message):
         import_prometheus_response(source, response, output)
 
     assert not output.exists()
@@ -672,39 +658,6 @@ def test_prometheus_response_rolls_back_samples_before_a_malformed_value(
         assert reader.measurements() == ()
 
 
-def test_prometheus_response_rejects_malformed_values_outside_the_run_window(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "source.runpack"
-    response = tmp_path / "metrics.json"
-    output = tmp_path / "output.runpack"
-    with RunpackWriter(source) as writer:
-        writer.add_execution(
-            Execution("run", "run", 0, 2_000_000_000, (), str(tmp_path), 0, None, {})
-        )
-    response.write_text(
-        json.dumps(
-            {
-                "status": "success",
-                "data": {
-                    "result": [
-                        {
-                            "metric": {"__name__": "queue_depth"},
-                            "value": [3, "NaN"],
-                        }
-                    ]
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(PrometheusImportError, match="sample values must be finite"):
-        import_prometheus_response(source, response, output)
-
-    assert not output.exists()
-
-
 def test_prometheus_response_rolls_back_samples_over_the_input_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -843,66 +796,6 @@ def test_prometheus_response_requires_a_closed_execution_window(tmp_path: Path) 
     )
 
     with pytest.raises(PrometheusImportError, match="requires a finished execution window"):
-        import_prometheus_response(source, response, output)
-
-    assert not output.exists()
-
-
-def test_prometheus_response_rejects_non_string_label_values(tmp_path: Path) -> None:
-    source = tmp_path / "source.runpack"
-    response = tmp_path / "metrics.json"
-    output = tmp_path / "output.runpack"
-    with RunpackWriter(source) as writer:
-        writer.add_execution(Execution("run", "run", 0, 2, (), str(tmp_path), 0, None, {}))
-    response.write_text(
-        json.dumps(
-            {
-                "status": "success",
-                "data": {
-                    "result": [
-                        {
-                            "metric": {"__name__": "queue_depth", "pod": ["worker"]},
-                            "value": [1, "3"],
-                        }
-                    ]
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(PrometheusImportError, match="labels must be strings"):
-        import_prometheus_response(source, response, output)
-
-    assert not output.exists()
-
-
-def test_prometheus_response_rejects_invalid_label_unicode_at_the_adapter_boundary(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "source.runpack"
-    response = tmp_path / "metrics.json"
-    output = tmp_path / "output.runpack"
-    with RunpackWriter(source) as writer:
-        writer.add_execution(Execution("run", "run", 0, 2, (), str(tmp_path), 0, None, {}))
-    response.write_text(
-        json.dumps(
-            {
-                "status": "success",
-                "data": {
-                    "result": [
-                        {
-                            "metric": {"__name__": "bad-\ud800"},
-                            "value": [1, "3"],
-                        }
-                    ]
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(PrometheusImportError, match="labels must be valid UTF-8"):
         import_prometheus_response(source, response, output)
 
     assert not output.exists()

@@ -6,29 +6,19 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from runtime_tools.json_support import output_document
-from runtime_tools.model import JsonValue
+from runtime_tools.json_support import JsonDocumentModel
 from runtime_tools.proofline.contracts import load_contracts
 from runtime_tools.proofline.counterexamples import load_parameters
 
 
 @dataclass(frozen=True, slots=True)
-class ValidationReport:
+class ValidationReport(JsonDocumentModel):
+    document_type = "proofline.validation"
+
     contract_count: int
     assertion_count: int
     assertion_types: tuple[str, ...]
     parameter_count: int | None
-
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return output_document(
-            "proofline.validation",
-            {
-                "contract_count": self.contract_count,
-                "assertion_count": self.assertion_count,
-                "assertion_types": list(self.assertion_types),
-                "parameter_count": self.parameter_count,
-            },
-        )
 
 
 def validate_inputs(contract_path: Path, parameters_path: Path | None) -> ValidationReport:

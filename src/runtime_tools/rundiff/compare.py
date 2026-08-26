@@ -7,16 +7,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from runtime_tools.batchscope.analysis import (
+from pydantic import computed_field
+
+from runtime_tools.batchscope.analysis import analyze_reader
+from runtime_tools.batchscope.analysis._boundary_models import (
     HttpCaptureSummary,
     LogicalOperationCaptureSummary,
     NetworkCaptureSummary,
     NetworkSetupCaptureSummary,
+)
+from runtime_tools.batchscope.analysis._profile_models import (
     SemanticCaptureSummary,
-    analyze_reader,
 )
 from runtime_tools.inspect import ExecutionSummary, inspect_reader
-from runtime_tools.json_support import output_document
+from runtime_tools.json_support import JsonDocumentModel, JsonValueModel
 from runtime_tools.model import JsonValue
 from runtime_tools.storage import RunpackError, RunpackReader, resolve_runpack_path
 
@@ -24,26 +28,20 @@ type Outcome = Literal["equivalent", "different", "unknown"]
 
 
 @dataclass(frozen=True, slots=True)
-class ValueChange:
+class ValueChange(JsonValueModel):
     baseline: float | None
     candidate: float | None
     percent: float | None
 
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "baseline": self.baseline,
-            "candidate": self.candidate,
-            "percent": self.percent,
-        }
-
 
 @dataclass(frozen=True, slots=True)
-class EntityCountChange:
+class EntityCountChange(JsonValueModel):
     entity_kind: str
     entity_name: str
     baseline: int
     candidate: int
 
+    @computed_field
     @property
     def change_kind(self) -> Literal["added", "removed", "changed"]:
         if self.baseline == 0:
@@ -52,18 +50,9 @@ class EntityCountChange:
             return "removed"
         return "changed"
 
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "entity_kind": self.entity_kind,
-            "entity_name": self.entity_name,
-            "baseline": self.baseline,
-            "candidate": self.candidate,
-            "change_kind": self.change_kind,
-        }
-
 
 @dataclass(frozen=True, slots=True)
-class OperationCountChange:
+class OperationCountChange(JsonValueModel):
     entity_kind: str
     entity_name: str
     operation_kind: str
@@ -72,20 +61,9 @@ class OperationCountChange:
     candidate: int
     percent: float | None
 
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "entity_kind": self.entity_kind,
-            "entity_name": self.entity_name,
-            "operation_kind": self.operation_kind,
-            "operation_name": self.operation_name,
-            "baseline": self.baseline,
-            "candidate": self.candidate,
-            "percent": self.percent,
-        }
-
 
 @dataclass(frozen=True, slots=True)
-class OperationConcurrencyChange:
+class OperationConcurrencyChange(JsonValueModel):
     entity_kind: str
     entity_name: str
     operation_kind: str
@@ -94,20 +72,9 @@ class OperationConcurrencyChange:
     candidate: int
     percent: float | None
 
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "entity_kind": self.entity_kind,
-            "entity_name": self.entity_name,
-            "operation_kind": self.operation_kind,
-            "operation_name": self.operation_name,
-            "baseline": self.baseline,
-            "candidate": self.candidate,
-            "percent": self.percent,
-        }
-
 
 @dataclass(frozen=True, slots=True)
-class OperationDurationChange:
+class OperationDurationChange(JsonValueModel):
     entity_kind: str
     entity_name: str
     operation_kind: str
@@ -116,20 +83,9 @@ class OperationDurationChange:
     candidate_seconds: float
     percent: float | None
 
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "entity_kind": self.entity_kind,
-            "entity_name": self.entity_name,
-            "operation_kind": self.operation_kind,
-            "operation_name": self.operation_name,
-            "baseline_seconds": self.baseline_seconds,
-            "candidate_seconds": self.candidate_seconds,
-            "percent": self.percent,
-        }
-
 
 @dataclass(frozen=True, slots=True)
-class EdgeCountChange:
+class EdgeCountChange(JsonValueModel):
     source_kind: str
     source_name: str
     target_kind: str
@@ -138,6 +94,7 @@ class EdgeCountChange:
     baseline: int
     candidate: int
 
+    @computed_field
     @property
     def change_kind(self) -> Literal["new", "removed", "changed"]:
         if self.baseline == 0:
@@ -146,25 +103,14 @@ class EdgeCountChange:
             return "removed"
         return "changed"
 
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "source_kind": self.source_kind,
-            "source_name": self.source_name,
-            "target_kind": self.target_kind,
-            "target_name": self.target_name,
-            "relation": self.relation,
-            "baseline": self.baseline,
-            "candidate": self.candidate,
-            "change_kind": self.change_kind,
-        }
-
 
 @dataclass(frozen=True, slots=True)
-class EnvironmentChange:
+class EnvironmentChange(JsonValueModel):
     variable: str
     baseline_present: bool
     candidate_present: bool
 
+    @computed_field
     @property
     def change_kind(self) -> Literal["added", "removed", "changed"]:
         if not self.baseline_present:
@@ -173,21 +119,28 @@ class EnvironmentChange:
             return "removed"
         return "changed"
 
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return {
-            "variable": self.variable,
-            "baseline_present": self.baseline_present,
-            "candidate_present": self.candidate_present,
-            "change_kind": self.change_kind,
-        }
+
+@dataclass(frozen=True, slots=True)
+class ExecutionReference(JsonValueModel):
+    id: str
+    name: str
+    exit_code: int | None
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionDiff:
-    baseline_id: str
-    baseline_name: str
-    candidate_id: str
-    candidate_name: str
+class InstrumentationComparison(JsonValueModel):
+    baseline_mode: str
+    candidate_mode: str
+    timing_comparable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionDiff(JsonDocumentModel):
+    document_type = "rundiff.compare"
+
+    baseline: ExecutionReference
+    candidate: ExecutionReference
+    instrumentation: InstrumentationComparison
     match_level: Literal["exact", "structural", "aggregate"]
     baseline_annotation_error: str | None
     candidate_annotation_error: str | None
@@ -206,8 +159,6 @@ class ExecutionDiff:
     baseline_incomplete_streams: tuple[str, ...]
     candidate_incomplete_streams: tuple[str, ...]
     outcome: Outcome
-    baseline_exit_code: int | None
-    candidate_exit_code: int | None
     exit_code_equivalent: bool | None
     output_equivalent: bool | None
     stderr_equivalent: bool | None
@@ -225,9 +176,6 @@ class ExecutionDiff:
     operation_duration_changes: tuple[OperationDurationChange, ...]
     edge_count_changes: tuple[EdgeCountChange, ...]
     environment_changes: tuple[EnvironmentChange, ...]
-    baseline_instrumentation_mode: str = "passive"
-    candidate_instrumentation_mode: str = "passive"
-    timing_comparable: bool = True
     baseline_http_capture_status: str | None = None
     candidate_http_capture_status: str | None = None
     baseline_dropped_http_request_count: int | None = None
@@ -244,120 +192,6 @@ class ExecutionDiff:
     candidate_logical_operation_capture_status: str | None = None
     baseline_dropped_logical_operation_count: int | None = None
     candidate_dropped_logical_operation_count: int | None = None
-
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return output_document(
-            "rundiff.compare",
-            {
-                "baseline": {
-                    "id": self.baseline_id,
-                    "name": self.baseline_name,
-                    "exit_code": self.baseline_exit_code,
-                },
-                "candidate": {
-                    "id": self.candidate_id,
-                    "name": self.candidate_name,
-                    "exit_code": self.candidate_exit_code,
-                },
-                "match_level": self.match_level,
-                "baseline_annotation_error": self.baseline_annotation_error,
-                "candidate_annotation_error": self.candidate_annotation_error,
-                "baseline_missing_causal_references": self.baseline_missing_causal_references,
-                "candidate_missing_causal_references": self.candidate_missing_causal_references,
-                "baseline_dropped_attribute_count": self.baseline_dropped_attribute_count,
-                "candidate_dropped_attribute_count": self.candidate_dropped_attribute_count,
-                "baseline_semantic_capture_status": self.baseline_semantic_capture_status,
-                "candidate_semantic_capture_status": self.candidate_semantic_capture_status,
-                "baseline_dropped_subprocess_count": self.baseline_dropped_subprocess_count,
-                "candidate_dropped_subprocess_count": self.candidate_dropped_subprocess_count,
-                "baseline_http_capture_status": self.baseline_http_capture_status,
-                "candidate_http_capture_status": self.candidate_http_capture_status,
-                "baseline_dropped_http_request_count": (self.baseline_dropped_http_request_count),
-                "candidate_dropped_http_request_count": (self.candidate_dropped_http_request_count),
-                "baseline_network_capture_status": self.baseline_network_capture_status,
-                "candidate_network_capture_status": self.candidate_network_capture_status,
-                "baseline_dropped_network_connection_count": (
-                    self.baseline_dropped_network_connection_count
-                ),
-                "candidate_dropped_network_connection_count": (
-                    self.candidate_dropped_network_connection_count
-                ),
-                "baseline_network_setup_capture_status": (
-                    self.baseline_network_setup_capture_status
-                ),
-                "candidate_network_setup_capture_status": (
-                    self.candidate_network_setup_capture_status
-                ),
-                "baseline_dropped_network_setup_phase_count": (
-                    self.baseline_dropped_network_setup_phase_count
-                ),
-                "candidate_dropped_network_setup_phase_count": (
-                    self.candidate_dropped_network_setup_phase_count
-                ),
-                "baseline_logical_operation_capture_status": (
-                    self.baseline_logical_operation_capture_status
-                ),
-                "candidate_logical_operation_capture_status": (
-                    self.candidate_logical_operation_capture_status
-                ),
-                "baseline_dropped_logical_operation_count": (
-                    self.baseline_dropped_logical_operation_count
-                ),
-                "candidate_dropped_logical_operation_count": (
-                    self.candidate_dropped_logical_operation_count
-                ),
-                "baseline_stdout_relay_error": self.baseline_stdout_relay_error,
-                "baseline_stderr_relay_error": self.baseline_stderr_relay_error,
-                "candidate_stdout_relay_error": self.candidate_stdout_relay_error,
-                "candidate_stderr_relay_error": self.candidate_stderr_relay_error,
-                "baseline_incomplete_streams": list(self.baseline_incomplete_streams),
-                "candidate_incomplete_streams": list(self.candidate_incomplete_streams),
-                "outcome": self.outcome,
-                "exit_code_equivalent": self.exit_code_equivalent,
-                "output_equivalent": self.output_equivalent,
-                "stderr_equivalent": self.stderr_equivalent,
-                "operation_errors_equivalent": self.operation_errors_equivalent,
-                "wall_time": self.wall_time.as_json_value(),
-                "cpu_time": self.cpu_time.as_json_value(),
-                "critical_path": self.critical_path.as_json_value(),
-                "baseline_critical_path_certainty": self.baseline_critical_path_certainty,
-                "candidate_critical_path_certainty": self.candidate_critical_path_certainty,
-                "peak_memory": self.peak_memory.as_json_value(),
-                "entity_count_changes": [
-                    change.as_json_value() for change in self.entity_count_changes
-                ],
-                "operation_count_changes": [
-                    change.as_json_value() for change in self.operation_count_changes
-                ],
-                "operation_error_count_changes": [
-                    change.as_json_value() for change in self.operation_error_count_changes
-                ],
-                "operation_concurrency_changes": [
-                    change.as_json_value() for change in self.operation_concurrency_changes
-                ],
-                "operation_duration_changes": [
-                    change.as_json_value() for change in self.operation_duration_changes
-                ],
-                "edge_count_changes": [
-                    change.as_json_value() for change in self.edge_count_changes
-                ],
-                "environment_changes": [
-                    change.as_json_value() for change in self.environment_changes
-                ],
-                **(
-                    {
-                        "instrumentation": {
-                            "baseline_mode": self.baseline_instrumentation_mode,
-                            "candidate_mode": self.candidate_instrumentation_mode,
-                            "timing_comparable": self.timing_comparable,
-                        }
-                    }
-                    if self.baseline_instrumentation_mode != "passive"
-                    or self.candidate_instrumentation_mode != "passive"
-                    else {}
-                ),
-            },
-        )
 
 
 def _percent(baseline: float | int | None, candidate: float | int | None) -> float | None:
@@ -842,10 +676,21 @@ def compare_readers(
     else:
         match_level = "aggregate"
     return ExecutionDiff(
-        baseline_id=baseline_summary.id,
-        baseline_name=baseline_summary.name,
-        candidate_id=candidate_summary.id,
-        candidate_name=candidate_summary.name,
+        baseline=ExecutionReference(
+            baseline_summary.id,
+            baseline_summary.name,
+            baseline_summary.exit_code,
+        ),
+        candidate=ExecutionReference(
+            candidate_summary.id,
+            candidate_summary.name,
+            candidate_summary.exit_code,
+        ),
+        instrumentation=InstrumentationComparison(
+            baseline_instrumentation_mode,
+            candidate_instrumentation_mode,
+            baseline_instrumentation_mode == candidate_instrumentation_mode,
+        ),
         match_level=match_level,
         baseline_annotation_error=baseline_summary.annotation_error,
         candidate_annotation_error=candidate_summary.annotation_error,
@@ -885,8 +730,6 @@ def compare_readers(
             stderr_equivalent,
             error_equivalent,
         ),
-        baseline_exit_code=baseline_summary.exit_code,
-        candidate_exit_code=candidate_summary.exit_code,
         exit_code_equivalent=exit_equivalent,
         output_equivalent=output_equivalent,
         stderr_equivalent=stderr_equivalent,
@@ -933,9 +776,6 @@ def compare_readers(
         ),
         edge_count_changes=_edge_changes(baseline_edges, candidate_edges),
         environment_changes=_environment_changes(baseline_environment, candidate_environment),
-        baseline_instrumentation_mode=baseline_instrumentation_mode,
-        candidate_instrumentation_mode=candidate_instrumentation_mode,
-        timing_comparable=(baseline_instrumentation_mode == candidate_instrumentation_mode),
     )
 
 

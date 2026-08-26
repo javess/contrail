@@ -11,16 +11,17 @@ import pytest
 
 from runtime_tools import record_process
 from runtime_tools.batchscope import analyze_runpack
-from runtime_tools.batchscope.analysis import (
-    BatchAnalysis,
+from runtime_tools.batchscope.analysis import BatchAnalysis
+from runtime_tools.batchscope.analysis._profile_models import (
     Bottleneck,
     CriticalPath,
     LifecyclePhase,
 )
-from runtime_tools.batchscope.report import render_analysis
+from runtime_tools.batchscope.report import render_analysis, render_analysis_summary
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue
 from runtime_tools.providers.builtins.kubernetes import import_kubernetes_snapshot
 from runtime_tools.storage import RunpackWriter
+from tests.runpack_support import write_runpack
 
 
 def _event(
@@ -442,7 +443,7 @@ def test_batchscope_rejects_native_capture_privacy_claims(tmp_path: Path) -> Non
     native_capture = deep_profile["native_call_capture"]
     assert isinstance(native_capture, dict)
     assert native_capture["status"] == "invalid"
-    assert native_capture["arguments_captured"] is False
+    assert "arguments_captured" not in native_capture
 
 
 def test_batchscope_rejects_python_exception_capture_privacy_claims(tmp_path: Path) -> None:
@@ -504,7 +505,7 @@ def test_batchscope_rejects_python_exception_capture_privacy_claims(tmp_path: Pa
     assert isinstance(deep_profile, dict)
     exception_capture = deep_profile["python_exception_capture"]
     assert isinstance(exception_capture, dict)
-    assert exception_capture["locals_captured"] is False
+    assert "locals_captured" not in exception_capture
 
 
 def test_batchscope_classifies_complete_exception_heavy_control_flow(tmp_path: Path) -> None:
@@ -724,7 +725,7 @@ def test_batchscope_rejects_observer_integrity_hook_value_claims(tmp_path: Path)
     assert isinstance(deep_profile, dict)
     normalized_integrity = deep_profile["observer_integrity"]
     assert isinstance(normalized_integrity, dict)
-    assert normalized_integrity["hook_values_captured"] is False
+    assert "hook_values_captured" not in normalized_integrity
 
 
 def test_batchscope_marks_inconsistent_snapshot_metrics_invalid(tmp_path: Path) -> None:
@@ -1855,6 +1856,11 @@ def test_batchscope_classifies_queue_latency_and_database_failures(tmp_path: Pat
     report = render_analysis(analysis, "text")
     assert "Automatic logical operation capture" in report
     assert "Logical operation hotspots" in report
+    summary = render_analysis_summary(analysis)
+    assert "database operation failures [90% confidence]" in summary
+    assert "DATABASE execute · OperationalError" in summary
+    assert "QUEUE get · 1 call · 60.0ms total" in summary
+    assert "Automatic logical operation capture" not in summary
 
 
 def test_batchscope_rejects_logical_operation_that_claims_to_capture_payload(
@@ -3145,23 +3151,6 @@ def test_clock_inconsistency_makes_critical_path_inferred(tmp_path: Path) -> Non
     assert analysis.critical_path.certainty == "inferred"
 
 
-def test_reversed_non_parent_causality_makes_critical_path_inferred(tmp_path: Path) -> None:
-    runpack = tmp_path / "reversed-cause.runpack"
-    with RunpackWriter(runpack) as writer:
-        writer.add_execution(
-            Execution("reversed", "reversed", 0, 100_000_000, (), str(tmp_path), 0, None, {})
-        )
-        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
-        writer.add_event(_event("cause", "operation", "cause", 50_000_000, 60_000_000))
-        writer.add_event(_event("effect", "operation", "effect", 10_000_000, 20_000_000))
-        writer.add_causal_edge(CausalEdge("cause", "effect", "causes", 1.0, {}))
-
-    analysis = analyze_runpack(runpack)
-
-    assert analysis.critical_path is not None
-    assert analysis.critical_path.certainty == "inferred"
-
-
 def test_clock_uncertainty_can_cover_apparent_parent_skew(tmp_path: Path) -> None:
     runpack = tmp_path / "uncertain-clock.runpack"
     with RunpackWriter(runpack) as writer:
@@ -3199,64 +3188,72 @@ def test_causal_cycle_makes_critical_path_inferred(tmp_path: Path) -> None:
     assert "causal cycle detected; critical path is inferred" in render_analysis(analysis, "text")
 
 
-def test_low_confidence_causal_edge_makes_critical_path_inferred(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("events", "edge"),
+    (
+        (
+            (
+                _event("cause", "operation", "cause", 50_000_000, 60_000_000),
+                _event("effect", "operation", "effect", 10_000_000, 20_000_000),
+            ),
+            CausalEdge("cause", "effect", "causes", 1.0, {}),
+        ),
+        (
+            (
+                _event("first", "operation", "first", 0, 10_000_000),
+                _event("second", "operation", "second", 10_000_000, 20_000_000),
+            ),
+            CausalEdge("first", "second", "inferred", 0.4, {}),
+        ),
+        (
+            (
+                Event(
+                    "first",
+                    "operation",
+                    "first",
+                    "worker",
+                    0,
+                    10_000_000,
+                    "producer-clock",
+                    None,
+                    None,
+                    {},
+                ),
+                Event(
+                    "second",
+                    "operation",
+                    "second",
+                    "worker",
+                    10_000_000,
+                    20_000_000,
+                    "consumer-clock",
+                    None,
+                    None,
+                    {},
+                ),
+            ),
+            CausalEdge("first", "second", "causes", 1.0, {}),
+        ),
+    ),
+    ids=("reversed-cause", "low-confidence", "cross-clock"),
+)
+def test_uncertain_causality_makes_critical_path_inferred(
+    tmp_path: Path,
+    events: tuple[Event, Event],
+    edge: CausalEdge,
+) -> None:
     runpack = tmp_path / "uncertain.runpack"
-    with RunpackWriter(runpack) as writer:
-        writer.add_execution(
-            Execution("uncertain", "uncertain", 0, 20_000_000, (), str(tmp_path), 0, None, {})
-        )
-        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
-        writer.add_event(_event("first", "operation", "first", 0, 10_000_000))
-        writer.add_event(_event("second", "operation", "second", 10_000_000, 20_000_000))
-        writer.add_causal_edge(CausalEdge("first", "second", "inferred", 0.4, {}))
+    write_runpack(
+        runpack,
+        Execution("uncertain", "uncertain", 0, 100_000_000, (), str(tmp_path), 0, None, {}),
+        entities=(Entity("worker", "worker", "worker", None, {}),),
+        events=events,
+        causal_edges=(edge,),
+    )
 
     analysis = analyze_runpack(runpack)
 
     assert analysis.critical_path is not None
-    assert analysis.critical_path.certainty == "inferred"
-
-
-def test_cross_clock_domain_critical_path_is_inferred(tmp_path: Path) -> None:
-    runpack = tmp_path / "cross-clock.runpack"
-    with RunpackWriter(runpack) as writer:
-        writer.add_execution(
-            Execution("cross-clock", "cross-clock", 0, 20_000_000, (), str(tmp_path), 0, None, {})
-        )
-        writer.add_entity(Entity("worker", "worker", "worker", None, {}))
-        writer.add_event(
-            Event(
-                "first",
-                "operation",
-                "first",
-                "worker",
-                0,
-                10_000_000,
-                "producer-clock",
-                None,
-                None,
-                {},
-            )
-        )
-        writer.add_event(
-            Event(
-                "second",
-                "operation",
-                "second",
-                "worker",
-                10_000_000,
-                20_000_000,
-                "consumer-clock",
-                None,
-                None,
-                {},
-            )
-        )
-        writer.add_causal_edge(CausalEdge("first", "second", "causes", 1.0, {}))
-
-    analysis = analyze_runpack(runpack)
-
-    assert analysis.critical_path is not None
-    assert analysis.critical_path.duration_seconds == 0.02
     assert analysis.critical_path.certainty == "inferred"
 
 

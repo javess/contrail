@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Never, cast
+from typing import cast
 from urllib.parse import quote
 
-from runtime_tools.json_support import reject_duplicate_object
+from runtime_tools.json_support import JsonInputError, load_bounded_json, parse_rfc3339_nanoseconds
 from runtime_tools.model import CausalEdge, Entity, Event, JsonValue
 from runtime_tools.providers.enrichment import (
     EnrichmentError,
@@ -32,13 +29,6 @@ class KubernetesImportResult:
     correlation_count: int
 
 
-_RFC3339_TIMESTAMP = re.compile(
-    r"^(?P<whole>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
-    r"(?:\.(?P<fraction>\d{1,9}))?(?P<zone>Z|[+-]\d{2}:\d{2})$"
-)
-_RFC3339_WITHOUT_ZONE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$")
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
-_MIN_RUNPACK_TIMESTAMP_NS = -(1 << 63)
 _MAX_RUNPACK_TIMESTAMP_NS = (1 << 63) - 1
 _WORKLOAD_KINDS = {"Node", "Deployment", "ReplicaSet", "Job", "Pod"}
 MAX_KUBERNETES_SNAPSHOT_BYTES = 64 * 1024 * 1024
@@ -124,27 +114,10 @@ def _lifecycle_event_id(uid: str) -> str:
 
 
 def _timestamp(value: object) -> int | None:
-    if value is None or value == "":
-        return None
-    if not isinstance(value, str):
-        raise KubernetesImportError("Kubernetes timestamp must be an RFC 3339 string")
-    match = _RFC3339_TIMESTAMP.fullmatch(value)
-    if match is None:
-        if _RFC3339_WITHOUT_ZONE.fullmatch(value):
-            raise KubernetesImportError(f"Kubernetes timestamp requires a timezone: {value}")
-        raise KubernetesImportError(f"invalid Kubernetes timestamp: {value}")
-    zone = "+00:00" if match.group("zone") == "Z" else match.group("zone")
     try:
-        parsed = datetime.fromisoformat(f"{match.group('whole')}{zone}")
+        return parse_rfc3339_nanoseconds(value, label="Kubernetes timestamp", optional=True)
     except ValueError as exc:
-        raise KubernetesImportError(f"invalid Kubernetes timestamp: {value}") from exc
-    delta = parsed.astimezone(UTC) - _EPOCH
-    whole_seconds = delta.days * 86_400 + delta.seconds
-    fraction = match.group("fraction") or ""
-    timestamp_ns = whole_seconds * 1_000_000_000 + int(fraction.ljust(9, "0") or "0")
-    if not _MIN_RUNPACK_TIMESTAMP_NS <= timestamp_ns <= _MAX_RUNPACK_TIMESTAMP_NS:
-        raise KubernetesImportError(f"Kubernetes timestamp exceeds runpack range: {value}")
-    return timestamp_ns
+        raise KubernetesImportError(str(exc)) from exc
 
 
 def _integer(value: object, label: str) -> int:
@@ -181,36 +154,17 @@ def _attributes(item: dict[str, object]) -> dict[str, JsonValue]:
     }
 
 
-def _reject_json_constant(value: str) -> Never:
-    raise ValueError(f"non-finite JSON constant: {value}")
-
-
 def _load(source: Path) -> list[dict[str, object]]:
     try:
-        with source.open("rb") as stream:
-            raw = stream.read(MAX_KUBERNETES_SNAPSHOT_BYTES + 1)
-    except OSError as exc:
-        raise KubernetesImportError(f"could not read Kubernetes snapshot: {source}") from exc
-    if len(raw) > MAX_KUBERNETES_SNAPSHOT_BYTES:
-        raise KubernetesImportError(
-            f"Kubernetes snapshot exceeds the {MAX_KUBERNETES_SNAPSHOT_BYTES}-byte input limit"
+        document, _ = load_bounded_json(
+            source,
+            label="Kubernetes snapshot",
+            syntax_label="Kubernetes",
+            max_bytes=MAX_KUBERNETES_SNAPSHOT_BYTES,
+            include_column=False,
         )
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise KubernetesImportError("Kubernetes snapshot must be UTF-8") from exc
-    try:
-        document = json.loads(
-            text,
-            parse_constant=_reject_json_constant,
-            object_pairs_hook=reject_duplicate_object,
-        )
-    except json.JSONDecodeError as exc:
-        raise KubernetesImportError(f"invalid Kubernetes JSON at line {exc.lineno}") from exc
-    except RecursionError as exc:
-        raise KubernetesImportError("Kubernetes JSON nesting is too deep") from exc
-    except ValueError as exc:
-        raise KubernetesImportError(f"invalid Kubernetes JSON: {exc}") from exc
+    except JsonInputError as exc:
+        raise KubernetesImportError(str(exc)) from exc
     root = _object(document, "Kubernetes snapshot")
     items = _list(root.get("items"), "items")
     if len(items) > MAX_KUBERNETES_ITEMS:

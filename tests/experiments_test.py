@@ -31,6 +31,15 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _git_repository(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Proofline Test")
+    _git(repo, "config", "user.email", "proofline@example.invalid")
+    return repo
+
+
 def test_proofline_bounds_git_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def time_out(*args: object, **kwargs: object) -> None:
         timeout = kwargs["timeout"]
@@ -166,9 +175,9 @@ def test_proofline_run_cli_emits_a_versioned_json_document(
         "verification",
     }
     assert payload["document_type"] == "proofline.experiment"
-    assert payload["format_version"] == "1"
+    assert payload["format_version"] == "2"
     assert payload["verification"]["document_type"] == "proofline.verification"
-    assert payload["verification"]["format_version"] == "1"
+    assert payload["verification"]["format_version"] == "2"
 
 
 def test_proofline_run_cli_forwards_the_selected_workload_python(
@@ -352,11 +361,7 @@ def test_proofline_run_invalid_input_does_not_publish_a_report(
 
 
 def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     workload.write_text("print('baseline')\n", encoding="utf-8")
     _git(repo, "add", "workload.py")
@@ -389,8 +394,8 @@ def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Pat
     assert result.verification.passed is False
     assert result.verification.results[0].observed == "different"
     assert result.diff is not None
-    assert result.diff.baseline_id == result.verification.baseline_id
-    assert result.diff.candidate_id == result.verification.candidate_id
+    assert result.diff.baseline.id == result.verification.baseline_id
+    assert result.diff.candidate.id == result.verification.candidate_id
     assert result.diff.output_equivalent is False
     for runpack in (result.baseline_runpack, result.candidate_runpack):
         with RunpackReader(runpack) as reader:
@@ -406,11 +411,7 @@ def test_proofline_experiment_isolates_refs_and_preserves_runpacks(tmp_path: Pat
 def test_proofline_capture_worker_finishes_both_refs_after_cli_is_killed(
     tmp_path: Path,
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     ready = tmp_path / "baseline-ready"
     workload = repo / "workload.py"
     workload.write_text(
@@ -543,11 +544,7 @@ def test_proofline_capture_worker_finishes_both_refs_after_cli_is_killed(
 def test_proofline_detached_json_run_replays_the_final_document_and_report(
     tmp_path: Path,
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     workload.write_text("print('detached proofline')\n", encoding="utf-8")
     _git(repo, "add", "workload.py")
@@ -646,11 +643,7 @@ def test_proofline_detached_json_run_replays_the_final_document_and_report(
 
 
 def test_proofline_can_run_both_refs_with_a_separate_workload_python(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     workload.write_text(
         "import proofline_workload_dependency_a13c\n"
@@ -734,11 +727,7 @@ def test_proofline_can_run_both_refs_with_a_separate_workload_python(tmp_path: P
 def test_proofline_pwd_reads_each_ref_from_the_isolated_worktree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     workload.write_text(
         "import os\nfrom pathlib import Path\n"
@@ -778,11 +767,7 @@ def test_proofline_pwd_reads_each_ref_from_the_isolated_worktree(
 def test_proofline_experiment_verifies_the_contract_snapshot_loaded_before_workloads(
     tmp_path: Path,
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     contract = repo / "contract.yaml"
     mutated_contract = "name: changed\nassertions:\n  - type: exit_code_equivalent\n"
@@ -825,11 +810,7 @@ def test_proofline_experiment_verifies_the_contract_snapshot_loaded_before_workl
 
 
 def test_proofline_identical_refs_expose_distinct_isolated_worktree_paths(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     workload.write_text(
         "import os\n"
@@ -923,11 +904,7 @@ def test_proofline_identical_refs_expose_distinct_isolated_worktree_paths(tmp_pa
 def test_proofline_isolates_late_annotations_from_a_detached_baseline_child(
     tmp_path: Path,
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     detached_child = (
         "import os, sys, time\n"
@@ -1025,11 +1002,7 @@ def test_proofline_isolates_late_annotations_from_a_detached_baseline_child(
 def test_proofline_separate_roots_prevent_transient_cross_arm_contamination(
     tmp_path: Path,
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     version = repo / "version.txt"
     detached_child = (
@@ -1126,11 +1099,7 @@ def test_proofline_rejects_candidate_worktree_mutations(
     tmp_path: Path,
     mutation: str,
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     workload.write_text("print('baseline')\n", encoding="utf-8")
     tracked = repo / "tracked.txt"
@@ -1171,11 +1140,7 @@ def test_proofline_preserves_primary_error_when_worktree_cleanup_also_fails(
 ) -> None:
     outside = tmp_path / "outside.py"
     outside.write_text("print('outside')\n", encoding="utf-8")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     (repo / "workload.py").symlink_to(outside)
     _git(repo, "add", "workload.py")
     _git(repo, "commit", "-m", "symlink workload")
@@ -1285,11 +1250,7 @@ def test_proofline_rejects_invalid_workload_python_before_other_inputs_or_side_e
 def test_proofline_rejects_option_like_git_refs_before_creating_outputs(
     tmp_path: Path,
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     workload.write_text("print('workload')\n", encoding="utf-8")
     _git(repo, "add", "workload.py")
@@ -1403,11 +1364,7 @@ def test_proofline_bounds_workload_invocations_before_loading_contracts(
 def test_proofline_validates_contracts_before_creating_worktrees_or_outputs(
     tmp_path: Path,
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Proofline Test")
-    _git(repo, "config", "user.email", "proofline@example.invalid")
+    repo = _git_repository(tmp_path)
     workload = repo / "workload.py"
     workload.write_text("raise RuntimeError('must not execute')\n", encoding="utf-8")
     _git(repo, "add", "workload.py")

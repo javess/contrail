@@ -1,40 +1,38 @@
 # Machine-readable output
 
 Contrail's JSON is the automation surface. Human terminal layout may change.
+Typer and Rich format help, diagnostics, and tables only; JSON and JSONL are
+written directly to stdout without markup, color, wrapping, or highlighting.
 
 Every JSON document has:
 
 ```json
 {
   "document_type": "batchscope.inspect",
-  "format_version": "1"
+  "format_version": "2"
 }
 ```
 
 Consumers should dispatch on `document_type`, reject unsupported format
-versions, and ignore unknown fields. Format version `1` permits additive
-fields but not removal, renaming, retyping, or incompatible semantic changes.
-
-The authoritative schema is packaged at
-`runtime_tools/schemas/contrail-output-v1.schema.json` in wheels and source
-distributions. Deterministic examples live in `tests/fixtures/golden/`.
+versions, and ignore unknown fields. Format version `2` serializes typed
+dataclasses through Pydantic. Individual model schemas are generated with
+`JsonValueModel.json_schema()`; Contrail no longer carries a second,
+hand-maintained aggregate schema.
 
 ## Document types
 
 | Command | `document_type` |
 |---|---|
-| `runtime inspect --format json` | `runtime.inspect` |
-| `runtime query --format json` | `runtime.query` |
-| `runtime job status/wait/cancel --format json` | `runtime.capture_job` |
-| `runtime job list --format json` | `runtime.capture_jobs` |
-| `rundiff compare --format json` | `rundiff.compare` |
-| `batchscope inspect --format json` | `batchscope.inspect` |
-| `proofline verify --format json` | `proofline.verification` |
-| `proofline run --format json` | `proofline.experiment` |
-| `proofline search --format json` | `proofline.search` |
-| `proofline validate --format json` | `proofline.validation` |
-
-The matching `contrail` aliases emit the same documents and exit statuses.
+| `contrail inspect --format json` | `runtime.inspect` |
+| `contrail query --format json` | `runtime.query` |
+| `contrail job status/wait/cancel --format json` | `runtime.capture_job` |
+| `contrail job list --format json` | `runtime.capture_jobs` |
+| `contrail compare --format json` | `rundiff.compare` |
+| `contrail analyze --format json` | `batchscope.inspect` |
+| `contrail verify --format json` | `proofline.verification` |
+| `contrail run --format json` | `proofline.experiment` |
+| `contrail search --format json` | `proofline.search` |
+| `contrail validate --format json` | `proofline.validation` |
 
 ## Exit status and streams
 
@@ -148,9 +146,9 @@ Explained reports retain:
 - JSON-pointer paths and selectors into the embedded RunDiff document;
 - byte size and SHA-256 bindings for both runpacks.
 
-The local UI re-hashes the supplied artifacts, recomputes RunDiff, and replays
-the assertions before labelling a report artifact-bound. This detects stale or
-substituted evidence; it is not authentication if an attacker can replace both
+Proofline calculates these bindings from the exact artifacts it verifies.
+Consumers that pair an archived report with runpacks should independently
+check them. Hash binding is not authentication if an attacker can replace both
 report and runpacks.
 
 See [compatibility](compatibility.md) for change rules and [contracts](contracts.md)

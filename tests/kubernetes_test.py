@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import uuid
 from collections.abc import Callable
 from itertools import permutations
 from pathlib import Path
@@ -21,14 +20,8 @@ from runtime_tools.providers.builtins.kubernetes import enrichment as kubernetes
 from runtime_tools.providers.builtins.otel import import_otlp_json
 from runtime_tools.providers.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.storage import RunpackReader, RunpackWriter
-
-
-def _trace_id(label: str) -> str:
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-trace:{label}").hex
-
-
-def _span_id(label: str) -> str:
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-span:{label}").hex[:16]
+from tests.telemetry_support import span_id as _span_id
+from tests.telemetry_support import trace_id as _trace_id
 
 
 def _metadata(name: str, uid: str, **extra: object) -> dict[str, object]:

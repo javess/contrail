@@ -1,65 +1,26 @@
-"""Public, dependency-free contracts for evidence providers."""
+"""Small command boundary shared by Contrail's built-in evidence integrations."""
 
 from __future__ import annotations
 
-import argparse
-import re
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, runtime_checkable
-
-PROVIDER_ENTRY_POINT_GROUP = "contrail.providers"
-PROVIDER_ENABLE_ENV = "CONTRAIL_ENABLE_PROVIDERS"
-PROVIDER_DISABLE_ENV = "CONTRAIL_DISABLE_PROVIDERS"
-
-_KEY_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$")
-_COMMAND_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
-
-type ProviderSource = Literal["built-in", "entry-point"]
-type ConfigureProviderCommand = Callable[[argparse.ArgumentParser], None]
-type ExecuteProviderCommand = Callable[[argparse.Namespace], "ProviderResult"]
 
 
 class ProviderError(ValueError):
-    """Base class for safe provider configuration and execution failures."""
+    """Base class for safe provider failures."""
 
 
 class ProviderConfigurationError(ProviderError):
-    """Raised when provider discovery or selection is invalid."""
-
-
-class ProviderLoadError(ProviderError):
-    """Raised when an explicitly selected provider cannot be loaded."""
+    """Raised when built-in command registration is inconsistent."""
 
 
 class ProviderExecutionError(ProviderError):
-    """Raised when a provider command cannot safely complete."""
-
-
-def validate_provider_key(value: str, *, label: str = "provider key") -> str:
-    """Return a canonical provider key or raise a safe configuration error."""
-
-    if not _KEY_PATTERN.fullmatch(value):
-        raise ProviderConfigurationError(
-            f"{label} must use 1-64 lowercase letters, digits, dots, hyphens, or underscores"
-        )
-    return value
-
-
-def validate_command_name(value: str) -> str:
-    """Return a canonical CLI command name or raise a safe configuration error."""
-
-    if not _COMMAND_PATTERN.fullmatch(value):
-        raise ProviderConfigurationError(
-            "provider command must use 1-64 lowercase letters, digits, or hyphens"
-        )
-    return value
+    """Raised when a built-in provider command cannot complete safely."""
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderResult:
-    """Bounded presentation result returned by one provider command."""
+    """Presentation result returned by one built-in command."""
 
     summary: str | None = None
     exit_status: int = 0
@@ -82,67 +43,32 @@ class ProviderResult:
 
 @dataclass(frozen=True, slots=True)
 class ProviderCommand:
-    """One provider-owned command registered with the shared CLI."""
+    """Display metadata for one command bundled into the shared CLI."""
 
     name: str
     help: str
-    configure: ConfigureProviderCommand
-    execute: ExecuteProviderCommand
 
     def __post_init__(self) -> None:
-        validate_command_name(self.name)
+        if (
+            not self.name
+            or not self.name.isascii()
+            or not all(
+                character.islower() or character.isdigit() or character == "-"
+                for character in self.name
+            )
+        ):
+            raise ProviderConfigurationError("provider command name is invalid")
         if not self.help or len(self.help) > 256:
             raise ProviderConfigurationError("provider command help must contain 1-256 characters")
-        if not callable(self.configure) or not callable(self.execute):
-            raise ProviderConfigurationError("provider command callbacks must be callable")
-
-
-@runtime_checkable
-class Provider(Protocol):
-    """Structural contract implemented by built-in and third-party providers."""
-
-    @property
-    def key(self) -> str: ...
-
-    @property
-    def display_name(self) -> str: ...
-
-    @property
-    def commands(self) -> tuple[ProviderCommand, ...]: ...
-
-    @property
-    def enabled_by_default(self) -> bool: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderSpec:
-    """Default immutable implementation of the provider protocol."""
-
-    key: str
-    display_name: str
-    commands: tuple[ProviderCommand, ...]
-    enabled_by_default: bool = True
-
-    def __post_init__(self) -> None:
-        validate_provider_key(self.key)
-        if not self.display_name or len(self.display_name) > 128:
-            raise ProviderConfigurationError("provider display name must contain 1-128 characters")
-        if not self.commands:
-            raise ProviderConfigurationError("provider must expose at least one command")
-        command_names = tuple(command.name for command in self.commands)
-        if len(set(command_names)) != len(command_names):
-            raise ProviderConfigurationError(
-                f"provider command is registered more than once: {self.key}"
-            )
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderInventory:
-    """Discovery metadata that can be rendered without loading disabled code."""
+    """Display metadata for one bundled integration."""
 
     key: str
     display_name: str
-    source: ProviderSource
-    enabled: bool
     commands: tuple[str, ...]
+    source: str = "built-in"
+    enabled: bool = True
     distribution: str | None = None

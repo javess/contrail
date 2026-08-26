@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -16,18 +15,12 @@ from runtime_tools.providers.builtins.otel import (
     OtelLogImportResult,
     import_otlp_logs,
 )
-from runtime_tools.providers.builtins.otel import importer as otel
+from runtime_tools.providers.builtins.otel.importer import _logs as otel_logs
 from runtime_tools.providers.enrichment import enrich_copy as real_enrich_copy
 from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
-
-
-def _trace_id(label: str) -> str:
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-trace:{label}").hex
-
-
-def _span_id(label: str) -> str:
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-span:{label}").hex[:16]
+from tests.telemetry_support import span_id as _span_id
+from tests.telemetry_support import trace_id as _trace_id
 
 
 def _base_runpack(path: Path, working_directory: Path) -> None:
@@ -225,7 +218,7 @@ def test_otlp_logs_reject_records_over_the_input_limit(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(otel, "MAX_OTLP_LOG_RECORDS", 1)
+    monkeypatch.setattr(otel_logs, "MAX_OTLP_LOG_RECORDS", 1)
 
     with pytest.raises(OtelImportError, match="exceeds the 1-log-record input limit"):
         import_otlp_logs(source, logs, output)
@@ -1030,7 +1023,7 @@ def test_otlp_logs_plan_against_the_copied_source_snapshot(
         replacement.replace(source_path)
         return real_enrich_copy(source_path, output_path, operation)
 
-    monkeypatch.setattr(otel, "enrich_copy", replace_then_enrich)
+    monkeypatch.setattr(otel_logs, "enrich_copy", replace_then_enrich)
 
     result = import_otlp_logs(source, logs, output)
 

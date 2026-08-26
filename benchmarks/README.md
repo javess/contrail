@@ -11,8 +11,8 @@ uv run python benchmarks/release.py --profile release --json
 ```
 
 The PR profile catches accidental algorithmic regressions quickly. The release
-profile covers the largest interactive UI payload and representative six-figure
-adapter inputs. It also records the same local connection-heavy workload under
+profile covers terminal analyses, retained reports, and representative
+six-figure adapter inputs. It also records the same local connection-heavy workload under
 passive and Sample capture, requires every connection to survive normalization,
 requires every corresponding DNS phase to survive its independent bound, and
 gates the observed workload-duration ratio with a deliberately broad

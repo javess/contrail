@@ -193,7 +193,7 @@ def test_counterexample_result_has_stable_json_shape(tmp_path: Path) -> None:
     experiment = payload["experiment"]
     assert isinstance(experiment, dict)
     assert experiment["document_type"] == "proofline.experiment"
-    assert experiment["format_version"] == "1"
+    assert experiment["format_version"] == "2"
     assert experiment["candidate_exit_code"] == 1
     verification = experiment["verification"]
     assert isinstance(verification, dict)
@@ -251,7 +251,7 @@ def test_counterexample_search_cli_supports_json_output(
         "max_examples",
     }
     assert payload["document_type"] == "proofline.search"
-    assert payload["format_version"] == "1"
+    assert payload["format_version"] == "2"
     assert payload["max_examples"] == 7
     assert len(calls) == 1
     output_dir = calls[0].pop("output_dir")
@@ -304,10 +304,11 @@ def test_counterexample_search_cli_reports_exhausted_shrink_budget(
     assert "minimiz" not in report.lower()
 
 
-def test_counterexample_search_rejects_duplicate_parameter_flags(tmp_path: Path) -> None:
-    parameters = tmp_path / "parameters.yaml"
-    parameters.write_text(
-        """
+@pytest.mark.parametrize(
+    ("document", "message"),
+    (
+        (
+            """
 parameters:
   first:
     type: integer
@@ -319,11 +320,30 @@ parameters:
     min: 0
     max: 1
     flag: --value
-""".strip(),
-        encoding="utf-8",
-    )
+""",
+            "parameter flags must be unique: --value",
+        ),
+        (
+            """
+parameters:
+  value:
+    type: integer
+    min: 0
+    min: 2
+    max: 3
+""",
+            "found duplicate key 'min'",
+        ),
+    ),
+    ids=("duplicate-flag", "duplicate-key"),
+)
+def test_counterexample_search_rejects_ambiguous_parameters(
+    tmp_path: Path, document: str, message: str
+) -> None:
+    parameters = tmp_path / "parameters.yaml"
+    parameters.write_text(document.strip(), encoding="utf-8")
 
-    with pytest.raises(ContractError, match="parameter flags must be unique: --value"):
+    with pytest.raises(ContractError, match=message):
         search_counterexample(
             tmp_path / "contract.yaml",
             parameters,
@@ -374,31 +394,6 @@ def test_counterexample_search_normalizes_repository_resolution_failures(
             workload=Path("workload.py"),
             output_dir=tmp_path / "output",
             cwd=repository,
-        )
-
-
-def test_counterexample_search_rejects_duplicate_parameter_keys(tmp_path: Path) -> None:
-    parameters = tmp_path / "parameters.yaml"
-    parameters.write_text(
-        """
-parameters:
-  value:
-    type: integer
-    min: 0
-    min: 2
-    max: 3
-""".strip(),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ContractError, match="found duplicate key 'min'"):
-        search_counterexample(
-            tmp_path / "contract.yaml",
-            parameters,
-            baseline_ref="main",
-            candidate_ref="candidate",
-            workload=Path("workload.py"),
-            output_dir=tmp_path / "output",
         )
 
 

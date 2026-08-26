@@ -1,6 +1,6 @@
 # Proofline execution
 
-`proofline run` turns a source change into a traceable runtime experiment. It
+`contrail run` turns a source change into a traceable runtime experiment. It
 captures a repository-relative workload at two Git refs, evaluates the same
 behavioral contract used in CI, and preserves both artifact snapshots for the
 failure investigation. It never checks either ref out over the developer's
@@ -41,7 +41,7 @@ write generated files, caches, temporary data, and other outputs to paths outsid
 the isolated worktree.
 The result directory is never reused or overwritten. Baseline and candidate
 runpacks remain available for RunDiff, BatchScope, causal inspection, bounded
-queries, and the local timeline.
+queries, and terminal reports.
 
 ## From a failed contract to its cause
 
@@ -49,7 +49,7 @@ Add `--report PATH` when the contract result should retain the complete RunDiff
 and exact identities of the baseline and candidate snapshots it evaluated:
 
 ```bash
-proofline run proofline.yaml \
+contrail run proofline.yaml \
   --baseline-ref main \
   --candidate-ref HEAD \
   --workload path/to/workload.py \
@@ -64,11 +64,10 @@ the report prints these copy-paste next steps; they do not execute the workload
 again:
 
 ```bash
-batchscope inspect proofline-results/candidate.runpack
-runtime inspect proofline-results/candidate.runpack --tree
-runtime serve proofline-results/baseline.runpack \
-  --compare proofline-results/candidate.runpack \
-  --proofline-report proofline-report.json
+contrail analyze proofline-results/candidate.runpack
+contrail inspect proofline-results/candidate.runpack --tree
+contrail compare proofline-results/baseline.runpack \
+  proofline-results/candidate.runpack
 ```
 
 `--report` implies explanation. Proofline reserves a private mode-0600 sibling
@@ -82,27 +81,22 @@ preserves the existing text and JSON output. With
 was captured without explanation, use the preserved snapshots directly:
 
 ```bash
-proofline verify proofline.yaml \
+contrail verify proofline.yaml \
   --baseline proofline-results/baseline.runpack \
   --candidate proofline-results/candidate.runpack \
   --report proofline-report.json
 ```
 
-For an archived report, pass
-`--proofline-report REPORT.json` instead of `--contract`. The UI verifies the
-report's embedded diff and execution identities against the supplied runpacks,
-then replays each embedded assertion and requires the complete claim result to
-match before exposing its findings. The UI labels that result replay-verified.
-Older assertion-less version-1 reports cannot reconstruct their original
-policy; their selectors, limits, and statuses are explicitly shown as
-report-authored but runtime-consistent, and pass results are not hidden.
+Archived reports are standalone versioned JSON documents. Their artifact
+bindings identify the exact runpack bytes used for verification; keep all three
+files together and use the runpacks for subsequent terminal analysis.
 
 By default the runner uses Proofline's current Python interpreter. Pass
 `--python PATH` to execute the workload in a separate, already-provisioned
 environment while keeping that environment constant across both refs:
 
 ```bash
-proofline run contracts.yaml \
+contrail run contracts.yaml \
   --baseline-ref main \
   --candidate-ref HEAD \
   --workload benchmarks/retry.py \
@@ -120,7 +114,7 @@ different interpreters for its baseline and candidate.
 Workload arguments can be repeated:
 
 ```bash
-proofline run contracts.yaml \
+contrail run contracts.yaml \
   --baseline-ref main \
   --candidate-ref HEAD \
   --workload benchmarks/retry.py \
@@ -130,7 +124,7 @@ proofline run contracts.yaml \
 
 ## Counterexample search
 
-`proofline search` uses bounded Hypothesis strategies and shrinking. The first
+`contrail search` uses bounded Hypothesis strategies and shrinking. The first
 slice supports integer parameters with explicit bounds:
 
 ```yaml
@@ -164,7 +158,7 @@ search reports an error. An unverifiable claim caused by missing evidence is
 not shrunk or reported as a violation.
 
 ```bash
-proofline search contracts.yaml \
+contrail search contracts.yaml \
   --parameters parameters.yaml \
   --baseline-ref main \
   --candidate-ref HEAD \

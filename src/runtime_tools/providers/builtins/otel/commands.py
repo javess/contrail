@@ -2,68 +2,55 @@
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 from runtime_tools.providers.contracts import (
     ProviderCommand,
     ProviderExecutionError,
     ProviderResult,
-    ProviderSpec,
 )
 from runtime_tools.terminal import terminal_text
 
 
-def _configure_trace(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("source", type=Path)
-    parser.add_argument("--name", help="logical execution name")
-    parser.add_argument("--output", type=Path, help="output .runpack path")
-    parser.add_argument(
-        "--include-raw",
-        action="store_true",
-        help="store the source OTLP JSON in the runpack",
-    )
-
-
-def _execute_trace(arguments: argparse.Namespace) -> ProviderResult:
+def import_trace(
+    source: Path,
+    *,
+    name: str | None = None,
+    output: Path | None = None,
+    include_raw: bool = False,
+) -> ProviderResult:
     from runtime_tools.providers.builtins.otel.importer import (
         OtelImportError,
         import_otlp_json,
     )
     from runtime_tools.storage import RunpackError
 
-    source: Path = arguments.source
-    output: Path = arguments.output or source.with_suffix(".runpack")
+    destination = output or source.with_suffix(".runpack")
     try:
         result = import_otlp_json(
             source,
-            output,
-            name=arguments.name or source.stem,
-            include_raw=arguments.include_raw,
+            destination,
+            name=name or source.stem,
+            include_raw=include_raw,
         )
     except (OtelImportError, RunpackError) as exc:
         raise ProviderExecutionError(str(exc)) from exc
     return ProviderResult(
         summary=(
             f"imported {result.event_count} spans and {result.edge_count} causal edges into "
-            f"{terminal_text(output)}"
+            f"{terminal_text(destination)}"
         ),
-        artifacts=(output,),
+        artifacts=(destination,),
     )
 
 
-def _configure_logs(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("runpack", type=Path)
-    parser.add_argument("source", type=Path)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument(
-        "--include-raw",
-        action="store_true",
-        help="store the source OTLP logs JSON in the runpack",
-    )
-
-
-def _execute_logs(arguments: argparse.Namespace) -> ProviderResult:
+def enrich_logs(
+    runpack: Path,
+    source: Path,
+    *,
+    output: Path,
+    include_raw: bool = False,
+) -> ProviderResult:
     from runtime_tools.providers.builtins.otel.importer import (
         OtelImportError,
         import_otlp_logs,
@@ -71,13 +58,12 @@ def _execute_logs(arguments: argparse.Namespace) -> ProviderResult:
     from runtime_tools.providers.enrichment import EnrichmentError
     from runtime_tools.storage import RunpackError
 
-    output: Path = arguments.output
     try:
         result = import_otlp_logs(
-            arguments.runpack,
-            arguments.source,
+            runpack,
+            source,
             output,
-            include_raw=arguments.include_raw,
+            include_raw=include_raw,
         )
     except (EnrichmentError, OtelImportError, RunpackError) as exc:
         raise ProviderExecutionError(str(exc)) from exc
@@ -93,21 +79,13 @@ def _execute_logs(arguments: argparse.Namespace) -> ProviderResult:
     )
 
 
-PROVIDER = ProviderSpec(
-    key="otel",
-    display_name="OpenTelemetry",
-    commands=(
-        ProviderCommand(
-            name="import-otel",
-            help="import an OTLP/JSON trace export",
-            configure=_configure_trace,
-            execute=_execute_trace,
-        ),
-        ProviderCommand(
-            name="enrich-otel-logs",
-            help="add bounded OTLP/JSON log records",
-            configure=_configure_logs,
-            execute=_execute_logs,
-        ),
+COMMANDS = (
+    ProviderCommand(
+        name="import-otel",
+        help="import an OTLP/JSON trace export",
+    ),
+    ProviderCommand(
+        name="enrich-otel-logs",
+        help="add bounded OTLP/JSON log records",
     ),
 )

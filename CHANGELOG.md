@@ -1,9 +1,17 @@
 # Changelog
 
-## 0.9.0
+## 0.10.0
 
-Contrail 0.9 is the active beta line ahead of 1.0. It keeps one canonical
+Contrail 0.10 is the active beta line ahead of 1.0. It keeps one canonical
 latest-version Python layout while versioning portable artifacts and JSON.
+
+### Added
+
+- A dependency-free sorting walkthrough captures a deliberately quadratic
+  bubble sort and its built-in Timsort replacement. BatchScope identifies the
+  exact removed hotspot, RunDiff shows equivalent output and the measured
+  wall/CPU improvement, and Proofline turns the refactor into five passing
+  claims.
 
 ### Fixed
 
@@ -14,13 +22,33 @@ latest-version Python layout while versioning portable artifacts and JSON.
 
 ### Changed
 
-- Evidence integrations now use a typed, lazy provider registry under
+- The terminal interface now uses one typed Typer command tree and a shared
+  Rich presentation boundary for grouped help, usage errors, tables, and
+  diagnostics. Machine JSON/JSONL and relayed workload streams remain
+  unformatted contract surfaces.
+- Oversized implementation modules are replaced by cohesive packages for
+  runpack storage, process capture, capture jobs, Python profiling, semantic
+  adapters, BatchScope analysis/reporting, and OTLP import. Mutable semantic
+  observer state now has one owner, BatchScope orchestration has an analyzer
+  service, and production modules are capped at 1,000 lines by the architecture
+  check. Private module paths and capture-job state version 1 are intentionally
+  not retained, and runpack readers/writers now accept only the current schema
+  `1.1` instead of carrying beta schema-minor migrations. Proofline
+  counterexample search now uses a small deterministic
+  integer search/shrinker, so Hypothesis is a development-only fuzz-test
+  dependency instead of part of every installed runtime.
+- Contrail is terminal-only during consolidation. The `contrail serve` and
+  component command aliases, `runtime_tools.ui` package, static browser assets,
+  and UI-specific tests are removed. Use `compare`, `analyze`, `inspect`,
+  `verify --explain`, `report`, and `query` through the single `contrail`
+  executable. Runpack schema 1.1 remains current; structured JSON is now format
+  2 and is serialized directly from typed dataclasses through Pydantic.
+
+- Evidence integrations now use a small, fixed registry under
   `runtime_tools.providers`. Built-in OpenTelemetry, Kubernetes, Prometheus,
-  and Temporal providers have one canonical modular package layout; external
-  distributions can contribute disabled-by-default commands through the
-  `contrail.providers` entry-point group. Provider selection, collisions,
-  failures, packaging, and installed-wheel behavior are validated without
-  adding dependencies or importing disabled providers.
+  and Temporal providers have one canonical modular package layout. Third-party
+  entry-point discovery, selection environment variables, and the public
+  plug-in protocol are removed.
 - The README and public documentation now lead with the demo, visual evidence,
   capture workflow, provider extension path, and concise task-oriented guides.
   Detailed contracts, safety limits, privacy boundaries, and qualification
@@ -42,8 +70,8 @@ latest-version Python layout while versioning portable artifacts and JSON.
   carry the new `server.request` evidence.
 
 - `--capture-level passive|process|sample|deep` now provides one progressive
-  zero-code capture ladder across `contrail record`, `rundiff record`,
-  `proofline run`, and `proofline search`. Sampling and deep presets also
+  zero-code capture ladder across `contrail record`, `contrail run`, and
+  `contrail search`. Sampling and deep presets also
   enable process-tree evidence for both comparison arms; deep is explicitly
   identified as expensive every-call instrumentation. Existing lower-level
   observer flags remain compatible when no preset is selected.
@@ -133,10 +161,10 @@ latest-version Python layout while versioning portable artifacts and JSON.
   retained prefix and flush new retained stdout/stderr bytes until terminal job
   state. The observer reads by local stream offsets, does not expand the fixed
   retention bound, and can be interrupted without cancelling the capture.
-- Detached output now divides the existing 1 MiB per-stream budget between a
-  512 KiB append-only head and 512 KiB rolling tail. Late errors survive noisy
-  starts, replay reports the omitted middle exactly when known, live follow
-  appends stable tails at completion, and legacy head-only jobs remain readable.
+- Detached output divides the existing 1 MiB per-stream budget between a 512
+  KiB append-only head and 512 KiB rolling tail. Late errors survive noisy
+  starts, replay reports the omitted middle exactly when known, and live follow
+  appends stable tails at completion.
 - Sample and Deep capture now automatically retain bounded Python subprocess
   boundaries without workload code changes. Sanitized executable names,
   timing, PIDs, and exit or launch outcomes feed BatchScope, RunDiff, and
@@ -249,20 +277,17 @@ latest-version Python layout while versioning portable artifacts and JSON.
 - Local POSIX capture on supported Linux and macOS Python versions.
 - Bounded exported-JSON adapters for OTLP traces/logs, Kubernetes snapshots,
   Prometheus responses, and Temporal workflow history.
-- Local read-only timeline UI.
 - RunDiff, BatchScope, and Proofline over the same normalized artifact.
-- Claim-to-evidence navigation from a local contract or a retained explained
-  Proofline report, with policy replay and exact SHA-256/byte-size runpack
-  bindings for newly generated explained JSON.
+- Explained Proofline reports with exact SHA-256/byte-size runpack bindings.
 - A selectable, validated workload Python for Proofline experiments and
   counterexample search, held constant across both Git refs and every replay.
 - Atomic, no-overwrite `verify/run --report PATH` publication so failed gates
   retain complete artifact-bound evidence without shell-redirection truncation.
 - Pre-materialization runpack field, record, and aggregate limits shared by the
-  public reader, analyses, contract verification, and timeline.
+  public reader, analyses, and contract verification.
 - A source-independent demo that creates and validates a complete failed-gate
   evidence bundle plus an adaptable workload/contract template without Git, a
   repository checkout, or network access.
 
-Text presentation, the browser-internal payload, arbitrary query JSONL rows,
-and undocumented Python internals are not frozen for 1.0.
+Text presentation, arbitrary query JSONL rows, and undocumented Python
+internals are not frozen for 1.0.

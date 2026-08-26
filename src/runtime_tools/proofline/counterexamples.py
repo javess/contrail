@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from random import Random
 from typing import cast
 
 import yaml
-from hypothesis import find, settings
-from hypothesis.errors import NoSuchExample
-from hypothesis.strategies import SearchStrategy, fixed_dictionaries, integers
 
 from runtime_tools.artifacts import artifact_exists
 from runtime_tools.model import JsonValue
@@ -125,13 +124,74 @@ def load_parameters(path: Path) -> tuple[IntegerParameter, ...]:
     return tuple(result)
 
 
-def _strategy(parameters: tuple[IntegerParameter, ...]) -> SearchStrategy[dict[str, int]]:
-    return fixed_dictionaries(
-        {
-            parameter.name: integers(min_value=parameter.minimum, max_value=parameter.maximum)
-            for parameter in parameters
-        }
-    )
+def _candidate_values(
+    parameters: tuple[IntegerParameter, ...],
+    budget: int,
+) -> tuple[dict[str, int], ...]:
+    """Build a deterministic, dependency-free bounded search sequence."""
+
+    simple = {
+        parameter.name: min(parameter.maximum, max(parameter.minimum, 0))
+        for parameter in parameters
+    }
+    candidates = [
+        simple,
+        {parameter.name: parameter.maximum for parameter in parameters},
+        {parameter.name: parameter.minimum for parameter in parameters},
+    ]
+    for parameter in parameters:
+        for value in (parameter.minimum, parameter.maximum):
+            candidate = dict(simple)
+            candidate[parameter.name] = value
+            candidates.append(candidate)
+    random = Random(0)
+    for _ in range(budget * 4):
+        candidates.append(
+            {
+                parameter.name: random.randint(parameter.minimum, parameter.maximum)
+                for parameter in parameters
+            }
+        )
+    unique: list[dict[str, int]] = []
+    seen: set[tuple[tuple[str, int], ...]] = set()
+    for candidate in candidates:
+        key = tuple(sorted(candidate.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+        if len(unique) >= budget:
+            break
+    return tuple(unique)
+
+
+def _shrink_values(
+    parameters: tuple[IntegerParameter, ...],
+    values: dict[str, int],
+    violates: Callable[[dict[str, int]], bool],
+) -> dict[str, int]:
+    """Shrink each integer toward zero while retaining the violation."""
+
+    result = dict(values)
+    for parameter in parameters:
+        target = min(parameter.maximum, max(parameter.minimum, 0))
+        candidate = dict(result)
+        candidate[parameter.name] = target
+        if violates(candidate):
+            result = candidate
+            continue
+        nonviolating = target
+        violating = result[parameter.name]
+        while abs(violating - nonviolating) > 1:
+            midpoint = nonviolating + (violating - nonviolating) // 2
+            candidate = dict(result)
+            candidate[parameter.name] = midpoint
+            if violates(candidate):
+                result = candidate
+                violating = midpoint
+            else:
+                nonviolating = midpoint
+    return result
 
 
 def _arguments(parameters: tuple[IntegerParameter, ...], values: dict[str, int]) -> tuple[str, ...]:
@@ -214,19 +274,17 @@ def search_counterexample(
             cache[key] = result
             return result
 
-    try:
-        values = find(
-            _strategy(parameters),
-            violates,
-            settings=settings(
-                max_examples=max_examples,
-                deadline=None,
-                database=None,
-                derandomize=True,
-            ),
-        )
-    except NoSuchExample:
+    values = next(
+        (
+            candidate
+            for candidate in _candidate_values(parameters, max_examples)
+            if violates(candidate)
+        ),
+        None,
+    )
+    if values is None:
         return None
+    values = _shrink_values(parameters, values, violates)
     experiment = _run_experiment(
         contracts,
         baseline_ref=baseline_ref,

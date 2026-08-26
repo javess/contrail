@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from runtime_tools.json_support import output_document
+from runtime_tools.json_support import JsonDocumentModel
 from runtime_tools.model import JsonValue
 from runtime_tools.storage import RunpackError, validated_runpack_connection
 from runtime_tools.terminal import terminal_text
@@ -53,20 +53,12 @@ def _authorize_read(
 
 
 @dataclass(frozen=True, slots=True)
-class QueryResult:
+class QueryResult(JsonDocumentModel):
+    document_type = "runtime.query"
+
     columns: tuple[str, ...]
     rows: tuple[tuple[JsonValue, ...], ...]
     truncated: bool
-
-    def as_json_value(self) -> dict[str, JsonValue]:
-        return output_document(
-            "runtime.query",
-            {
-                "columns": list(self.columns),
-                "rows": [list(row) for row in self.rows],
-                "truncated": self.truncated,
-            },
-        )
 
 
 def _value(value: object) -> JsonValue:

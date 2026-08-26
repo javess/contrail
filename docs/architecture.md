@@ -40,13 +40,20 @@ foundation → providers/adapters → analyses → presentation
 | Layer | Owns | May import |
 |---|---|---|
 | foundation | model, storage, artifacts, serialization, terminal safety | foundation |
-| providers/adapters | process capture, annotations, profiling, provider contracts and implementations | foundation, providers/adapters |
+| providers/adapters | process capture, annotations, profiling, and built-in integrations | foundation, providers/adapters |
 | analyses | inspection, query, BatchScope, RunDiff, Proofline | foundation, providers/adapters, analyses |
-| presentation | CLIs, reports, capture workers, demo, local UI | every layer |
+| presentation | CLIs, reports, capture workers, demo | every layer |
 
 Package internals import concrete modules, never the `runtime_tools` facade.
-`tools/check_architecture.py` classifies every module, rejects reverse imports,
-and rejects cycles.
+`tools/check_architecture.py` classifies every module, rejects reverse imports
+and cycles, and enforces a 1,000-line production-module ceiling.
+
+Large concerns use narrow package façades. Storage is owned by reader, writer,
+validation, and snapshot modules; capture separates orchestration, process I/O,
+metadata, and recovery; profiling separates sessions, parsing, evidence
+families, ranking, and loading; BatchScope separates contracts from lifecycle,
+profile, boundary, resource, and hotspot analyses. These are ownership
+boundaries, not compatibility wrappers.
 
 ## Provider architecture
 
@@ -55,10 +62,9 @@ Host-side evidence integrations live under one canonical tree:
 ```text
 runtime_tools/providers/
   contracts.py          typed public protocol and immutable specs
-  registry.py           selection, validation, entry-point discovery
+  registry.py           fixed built-in command catalog
   enrichment.py         shared atomic runpack enrichment
   builtins/
-    catalog.py          lazy built-in declarations
     otel/
     kubernetes/
     prometheus/
@@ -66,16 +72,10 @@ runtime_tools/providers/
 ```
 
 Each built-in package separates normalization from `commands.py`. The CLI asks
-the registry for commands and does not import or dispatch providers by name.
-
-External distributions publish a `contrail.providers` entry point containing a
-`Provider` object. Entry-point metadata is discoverable without importing
-provider code. Built-ins default on; third-party providers default off and load
-only when their key appears in `CONTRAIL_ENABLE_PROVIDERS`. Duplicate keys,
-duplicate commands, malformed metadata, and conflicts with core commands fail
+one deterministic registry for the bundled commands. Command collisions fail
 before argument parsing.
 
-This plug-in boundary is intentionally host-side. Providers translate input
+This integration boundary is intentionally host-side. Providers translate input
 into the existing model; they do not define private record schemas or inject
 arbitrary code into captured workloads. See [provider development](providers.md).
 
@@ -103,8 +103,10 @@ Crash checkpoints remain partial evidence. Process limits, snapshot kinds,
 transport statistics, selection bounds, and observer-integrity facts are stored
 so analyses can distinguish absence from completeness.
 
-The semantic observer is standard-library-only and copied beside the profile
-bootstrap. Optional adapters activate lazily when supported modules appear;
+The semantic observer is a standard-library-only package copied beside the
+profile bootstrap. One state object owns its bounded records while focused
+subprocess, HTTP, network, asyncio, and logical-operation modules install the
+adapters. Optional adapters activate lazily when supported modules appear;
 Contrail does not import or depend on those clients. Deep’s existing profile
 hook recognizes supported WSGI/Uvicorn server cycles without replacing the
 application or protocol object.
@@ -141,13 +143,15 @@ facts. Unavailable evidence produces an unverifiable result rather than a pass.
 
 ## Presentation boundary
 
-The branded `contrail` command delegates to focused command modules. Structured
-documents have versioned `document_type` and `format_version` fields. Human
-reports and the local UI render those same facts.
+The branded `contrail` command composes focused Typer command modules into one
+flat command tree. Command functions receive typed paths, enums, and options;
+they delegate behavior to the analysis and adapter layers rather than parsing
+arguments themselves. Rich owns help, usage errors, tables, status, and other
+human-only presentation through one console boundary.
 
-The UI is a loopback-only static application backed by immutable runpack
-snapshots. It can display an artifact-bound Proofline report alongside
-BatchScope, RunDiff, and event lanes without mutating evidence.
+Structured documents have versioned `document_type` and `format_version`
+fields. JSON and JSONL bypass Rich and are written directly to stdout, while
+human reports render the same structured facts in the terminal.
 
 ## Scale and trust
 
@@ -157,7 +161,7 @@ hard limits. Exact limits belong in [support](support.md),
 [machine output](machine-output.md), and [performance](performance.md), not in
 the module graph.
 
-Workload code, imported telemetry, runpacks, YAML, JSON, SQLite, provider entry
-points, and browser-facing values cross distinct trust boundaries. Validation
+Workload code, imported telemetry, runpacks, YAML, JSON, SQLite, and provider
+entry points cross distinct trust boundaries. Validation
 belongs at those boundaries; internal domain values remain precisely typed.
 See the [threat model](threat-model.md).

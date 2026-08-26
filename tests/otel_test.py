@@ -8,20 +8,15 @@ import pytest
 
 from runtime_tools.inspect import inspect_runpack, render_causal_tree, render_summary
 from runtime_tools.providers.builtins.otel import OtelImportError, import_otlp_json
-from runtime_tools.providers.builtins.otel import importer as otel
+from runtime_tools.providers.builtins.otel.importer import _common as otel_common
+from runtime_tools.providers.builtins.otel.importer import _trace as otel_trace
 from runtime_tools.storage import RunpackError, RunpackReader
+from tests.telemetry_support import span_id as _span_id
+from tests.telemetry_support import trace_id as _trace_id
 
 
 def _attribute(key: str, value: str) -> dict[str, object]:
     return {"key": key, "value": {"stringValue": value}}
-
-
-def _trace_id(label: str) -> str:
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-trace:{label}").hex
-
-
-def _span_id(label: str) -> str:
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-span:{label}").hex[:16]
 
 
 def test_otlp_json_import_normalizes_services_spans_and_parent_edges(tmp_path: Path) -> None:
@@ -345,7 +340,7 @@ def test_otlp_json_import_rejects_spans_over_the_input_limit(
         json.dumps({"resourceSpans": [{"scopeSpans": [{"spans": spans}]}]}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(otel, "MAX_OTLP_SPANS", 1)
+    monkeypatch.setattr(otel_trace, "MAX_OTLP_SPANS", 1)
 
     with pytest.raises(OtelImportError, match="exceeds the 1-span input limit"):
         import_otlp_json(source, output, name="too-many-spans")
@@ -392,7 +387,7 @@ def test_otlp_json_import_rejects_links_over_the_input_limit(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(otel, "MAX_OTLP_LINKS", 1)
+    monkeypatch.setattr(otel_trace, "MAX_OTLP_LINKS", 1)
 
     with pytest.raises(OtelImportError, match="exceeds the 1-span-link input limit"):
         import_otlp_json(source, output, name="too-many-links")
@@ -805,9 +800,9 @@ def test_otlp_json_import_normalizes_numeric_span_status_codes(
 
 
 def test_otlp_span_kind_accepts_integral_json_numbers_without_truncation() -> None:
-    assert otel._span_kind(2.0) == "server.request"
+    assert otel_common._span_kind(2.0) == "server.request"
     with pytest.raises(OtelImportError, match="unsupported OTLP span kind"):
-        otel._span_kind(2.5)
+        otel_common._span_kind(2.5)
 
 
 def test_otlp_json_import_rejects_invalid_dropped_link_counts(tmp_path: Path) -> None:
@@ -954,8 +949,16 @@ def test_otlp_json_import_can_preserve_raw_source_explicitly(tmp_path: Path) -> 
     assert attachments[0].content == raw
 
 
-def test_otlp_json_import_keeps_execution_open_when_any_span_is_incomplete(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "partial_span",
+    (
+        {"startTimeUnixNano": "3"},
+        {"endTimeUnixNano": "4"},
+    ),
+    ids=("missing-end", "missing-start"),
+)
+def test_otlp_json_import_keeps_execution_open_for_incomplete_spans(
+    tmp_path: Path, partial_span: dict[str, str]
 ) -> None:
     source = tmp_path / "partial.json"
     output = tmp_path / "partial.runpack"
@@ -975,8 +978,8 @@ def test_otlp_json_import_keeps_execution_open_when_any_span_is_incomplete(
                                     },
                                     {
                                         "traceId": _trace_id("trace"),
-                                        "spanId": _span_id("open"),
-                                        "startTimeUnixNano": "3",
+                                        "spanId": _span_id("partial"),
+                                        **partial_span,
                                     },
                                 ]
                             }
@@ -989,47 +992,6 @@ def test_otlp_json_import_keeps_execution_open_when_any_span_is_incomplete(
     )
 
     import_otlp_json(source, output, name="partial")
-
-    summary = inspect_runpack(output)
-    assert summary.finished_at_ns is None
-    assert summary.wall_time_seconds is None
-
-
-def test_otlp_json_import_keeps_execution_open_when_a_span_start_is_missing(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "partial-start.json"
-    output = tmp_path / "partial-start.runpack"
-    source.write_text(
-        json.dumps(
-            {
-                "resourceSpans": [
-                    {
-                        "scopeSpans": [
-                            {
-                                "spans": [
-                                    {
-                                        "traceId": _trace_id("trace"),
-                                        "spanId": _span_id("complete"),
-                                        "startTimeUnixNano": "2",
-                                        "endTimeUnixNano": "3",
-                                    },
-                                    {
-                                        "traceId": _trace_id("trace"),
-                                        "spanId": _span_id("partial"),
-                                        "endTimeUnixNano": "4",
-                                    },
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    import_otlp_json(source, output, name="partial-start")
 
     summary = inspect_runpack(output)
     assert summary.finished_at_ns is None
@@ -1478,24 +1440,23 @@ def test_otlp_json_import_rejects_invalid_hex_span_identifiers(
     assert not output.exists()
 
 
-def test_otlp_json_import_rejects_non_standard_json_constants(tmp_path: Path) -> None:
-    source = tmp_path / "non-standard.json"
-    output = tmp_path / "non-standard.runpack"
-    source.write_text('{"resourceSpans":[],"invalid":NaN}', encoding="utf-8")
+@pytest.mark.parametrize(
+    ("document", "message"),
+    (
+        ('{"resourceSpans":[],"invalid":NaN}', "non-finite JSON constant: NaN"),
+        ('{"resourceSpans":[],"resourceSpans":[]}', "duplicate JSON key: resourceSpans"),
+    ),
+    ids=("non-finite", "duplicate-key"),
+)
+def test_otlp_json_import_rejects_invalid_json_documents(
+    tmp_path: Path, document: str, message: str
+) -> None:
+    source = tmp_path / "invalid.json"
+    output = tmp_path / "invalid.runpack"
+    source.write_text(document, encoding="utf-8")
 
-    with pytest.raises(OtelImportError, match="non-finite JSON constant: NaN"):
-        import_otlp_json(source, output, name="non-standard")
-
-    assert not output.exists()
-
-
-def test_otlp_json_import_rejects_duplicate_json_keys(tmp_path: Path) -> None:
-    source = tmp_path / "duplicate-keys.json"
-    output = tmp_path / "duplicate-keys.runpack"
-    source.write_text('{"resourceSpans":[],"resourceSpans":[]}', encoding="utf-8")
-
-    with pytest.raises(OtelImportError, match="duplicate JSON key: resourceSpans"):
-        import_otlp_json(source, output, name="duplicate-keys")
+    with pytest.raises(OtelImportError, match=message):
+        import_otlp_json(source, output, name="invalid")
 
     assert not output.exists()
 
@@ -1507,7 +1468,7 @@ def test_otlp_json_import_rejects_oversized_sources_before_decoding(
     source = tmp_path / "oversized.json"
     output = tmp_path / "oversized.runpack"
     source.write_bytes(b"{" + b" " * 32 + b"}")
-    monkeypatch.setattr(otel, "MAX_OTLP_DOCUMENT_BYTES", 32)
+    monkeypatch.setattr(otel_common, "MAX_OTLP_DOCUMENT_BYTES", 32)
 
     with pytest.raises(OtelImportError, match="OTLP JSON exceeds the 32-byte input limit"):
         import_otlp_json(source, output, name="oversized")

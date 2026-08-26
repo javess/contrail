@@ -1,33 +1,42 @@
-"""Proofline command-line interface."""
+"""Typed Proofline validation, verification, and search commands."""
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import shlex
 import signal
-import sys
 import threading
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from typing import Annotated
 
-from runtime_tools._version import __version__
+import typer
+
+from runtime_tools._cli_support import (
+    CaptureLevel,
+    OutputFormat,
+    capture_warning,
+    command_context,
+    fail,
+    finish,
+    run_cli,
+)
 from runtime_tools.artifacts import (
     ArtifactError,
     AtomicArtifactPublication,
     prepare_atomic_artifact,
 )
-from runtime_tools.capture import (
-    CAPTURE_LEVELS,
-    CaptureError,
-)
+from runtime_tools.capture import CaptureError
 from runtime_tools.capture_jobs import record_current_capture_job_artifacts
 from runtime_tools.capture_worker import capture_worker_client_event, run_capture_worker
+from runtime_tools.console import print_json, print_text
 from runtime_tools.json_support import output_document
 from runtime_tools.proofline import (
     ContractError,
     ExperimentError,
+    ExperimentResult,
     run_experiment,
     search_counterexample,
     validate_inputs,
@@ -38,6 +47,7 @@ from runtime_tools.proofline.report import render_verification
 from runtime_tools.proofline.validation import render_validation
 from runtime_tools.proofline.verify import (
     VerificationArtifactBindings,
+    VerificationReport,
     verify_contracts_with_artifact_bindings,
     verify_contracts_with_diff,
 )
@@ -45,6 +55,442 @@ from runtime_tools.rundiff.compare import ExecutionDiff
 from runtime_tools.rundiff.report import render_diff
 from runtime_tools.storage import RunpackError
 from runtime_tools.terminal import broken_pipe_safe, terminal_text
+
+app = typer.Typer(
+    name="proofline",
+    help="Validate and enforce behavioral contracts over runtime evidence.",
+    no_args_is_help=True,
+    add_completion=False,
+    rich_markup_mode="rich",
+    pretty_exceptions_enable=False,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class VerifySource:
+    baseline: Path
+    candidate: Path
+
+
+@dataclass(frozen=True, slots=True)
+class RunSource:
+    baseline_ref: str
+    candidate_ref: str
+    workload: Path
+    workload_args: tuple[str, ...]
+    output_dir: Path
+    python_executable: Path | None
+    capture_level: str | None
+    capture_worker_client: threading.Event | None
+
+
+type VerificationSource = VerifySource | RunSource
+
+
+@app.command("validate", help="Validate contract and optional parameter inputs.")
+def validate_command(
+    context: typer.Context,
+    contract: Annotated[Path, typer.Argument()],
+    parameters: Annotated[Path | None, typer.Option("--parameters")] = None,
+    output_format: Annotated[OutputFormat, typer.Option("--format")] = OutputFormat.text,
+) -> None:
+    application = command_context(context)
+    try:
+        rendered = render_validation(validate_inputs(contract, parameters), output_format.value)
+        if output_format is OutputFormat.json:
+            print_json(rendered + "\n")
+        else:
+            print_text(rendered)
+    except (ArtifactError, ContractError, ExperimentError, RunpackError) as exc:
+        fail(exc, label=application.error_label)
+        finish(2)
+
+
+@app.command("verify", help="Evaluate contracts over two runpacks.")
+def verify_command(
+    context: typer.Context,
+    contract: Annotated[Path, typer.Argument()],
+    baseline: Annotated[Path, typer.Option("--baseline")],
+    candidate: Annotated[Path, typer.Option("--candidate")],
+    output_format: Annotated[OutputFormat, typer.Option("--format")] = OutputFormat.text,
+    explain: Annotated[
+        bool,
+        typer.Option("--explain", help="Include the runtime diff and deeper inspection commands"),
+    ] = False,
+    report: Annotated[
+        Path | None,
+        typer.Option(
+            "--report",
+            metavar="PATH",
+            help="Atomically retain the artifact-bound explained JSON report",
+        ),
+    ] = None,
+) -> None:
+    application = command_context(context)
+    try:
+        finish(
+            _verification(
+                context,
+                contract,
+                VerifySource(baseline, candidate),
+                output_format=output_format,
+                explain=explain,
+                report_destination=report,
+            )
+        )
+    except (ArtifactError, CaptureError, ContractError, ExperimentError, RunpackError) as exc:
+        fail(exc, label=application.error_label)
+        finish(2)
+
+
+@app.command("run", help="Capture and verify a workload at two Git refs.")
+def run_command(
+    context: typer.Context,
+    contract: Annotated[Path, typer.Argument()],
+    baseline_ref: Annotated[str, typer.Option("--baseline-ref")],
+    candidate_ref: Annotated[str, typer.Option("--candidate-ref")],
+    workload: Annotated[Path, typer.Option("--workload")],
+    python_executable: Annotated[Path | None, typer.Option("--python")] = None,
+    output_dir: Annotated[Path | None, typer.Option("--output-dir")] = None,
+    detach: Annotated[bool, typer.Option("--detach")] = False,
+    capture_level: Annotated[CaptureLevel | None, typer.Option("--capture-level")] = None,
+    output_format: Annotated[OutputFormat, typer.Option("--format")] = OutputFormat.text,
+    explain: Annotated[
+        bool,
+        typer.Option("--explain", help="Include the runtime diff and deeper inspection commands"),
+    ] = False,
+    report: Annotated[
+        Path | None,
+        typer.Option(
+            "--report",
+            metavar="PATH",
+            help="Atomically retain the artifact-bound explained JSON report",
+        ),
+    ] = None,
+    workload_arg: Annotated[
+        list[str] | None,
+        typer.Option("--workload-arg", help="Repeat for multiple workload arguments"),
+    ] = None,
+) -> None:
+    application = command_context(context)
+    try:
+        launched, capture_worker_client = _capture_client(
+            context,
+            detach=detach,
+            output_format=output_format,
+        )
+        if launched:
+            return
+        level = capture_level.value if capture_level is not None else None
+        source = RunSource(
+            baseline_ref=baseline_ref,
+            candidate_ref=candidate_ref,
+            workload=workload,
+            workload_args=tuple(workload_arg or ()),
+            output_dir=output_dir or default_output_directory(),
+            python_executable=python_executable,
+            capture_level=level,
+            capture_worker_client=capture_worker_client,
+        )
+        finish(
+            _verification(
+                context,
+                contract,
+                source,
+                output_format=output_format,
+                explain=explain,
+                report_destination=report,
+            )
+        )
+    except KeyboardInterrupt:
+        finish(128 + signal.SIGINT)
+    except (ArtifactError, CaptureError, ContractError, ExperimentError, RunpackError) as exc:
+        fail(exc, label=application.error_label)
+        finish(2)
+
+
+@app.command("search", help="Find a contract counterexample within a bounded search.")
+def search_command(
+    context: typer.Context,
+    contract: Annotated[Path, typer.Argument()],
+    parameters: Annotated[Path, typer.Option("--parameters")],
+    baseline_ref: Annotated[str, typer.Option("--baseline-ref")],
+    candidate_ref: Annotated[str, typer.Option("--candidate-ref")],
+    workload: Annotated[Path, typer.Option("--workload")],
+    python_executable: Annotated[Path | None, typer.Option("--python")] = None,
+    output_dir: Annotated[Path | None, typer.Option("--output-dir")] = None,
+    detach: Annotated[bool, typer.Option("--detach")] = False,
+    capture_level: Annotated[CaptureLevel | None, typer.Option("--capture-level")] = None,
+    output_format: Annotated[OutputFormat, typer.Option("--format")] = OutputFormat.text,
+    max_examples: Annotated[
+        int, typer.Option("--max-examples", help="Search bound (hard limit: 1000)")
+    ] = 25,
+) -> None:
+    application = command_context(context)
+    try:
+        launched, capture_worker_client = _capture_client(
+            context,
+            detach=detach,
+            output_format=output_format,
+        )
+        if launched:
+            return
+        level = capture_level.value if capture_level is not None else None
+        capture_warning(level, paired=True, error_label=application.error_label)
+        search = search_counterexample
+        if capture_worker_client is not None:
+            search = partial(search, _capture_client_disconnected=capture_worker_client)
+        counterexample = search(
+            contract,
+            parameters,
+            baseline_ref=baseline_ref,
+            candidate_ref=candidate_ref,
+            workload=workload,
+            output_dir=output_dir or default_output_directory(),
+            max_examples=max_examples,
+            python_executable=python_executable,
+            capture_level=level,
+        )
+        if counterexample is None:
+            if output_format is OutputFormat.json:
+                print_json(
+                    json.dumps(
+                        output_document(
+                            "proofline.search",
+                            {"counterexample": None, "max_examples": max_examples},
+                        ),
+                        allow_nan=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
+            else:
+                print_text(f"No counterexample found in {max_examples} examples.")
+            return
+        record_current_capture_job_artifacts(
+            (
+                counterexample.experiment.baseline_runpack,
+                counterexample.experiment.candidate_runpack,
+            )
+        )
+        if output_format is OutputFormat.json:
+            print_json(
+                json.dumps(
+                    output_document(
+                        "proofline.search",
+                        {
+                            "counterexample": counterexample.as_json_value(),
+                            "max_examples": max_examples,
+                        },
+                    ),
+                    allow_nan=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            finish(1)
+            return
+        print_text("COUNTEREXAMPLE", style="bold red")
+        print_text()
+        for name, value in sorted(counterexample.parameters.items()):
+            print_text(f"{terminal_text(name)}={value}")
+        print_text()
+        print_text(
+            f"shrink_budget_exhausted: {str(counterexample.shrink_budget_exhausted).lower()}"
+        )
+        print_text()
+        print_text(render_verification(counterexample.experiment.verification, "text"))
+        print_text()
+        print_text(f"baseline artifact:  {counterexample.experiment.baseline_runpack}")
+        print_text(f"candidate artifact: {counterexample.experiment.candidate_runpack}")
+        finish(1)
+    except KeyboardInterrupt:
+        finish(128 + signal.SIGINT)
+    except (ArtifactError, CaptureError, ContractError, ExperimentError, RunpackError) as exc:
+        fail(exc, label=application.error_label)
+        finish(2)
+
+
+def _capture_client(
+    context: typer.Context,
+    *,
+    detach: bool,
+    output_format: OutputFormat,
+) -> tuple[bool, threading.Event | None]:
+    application = command_context(context)
+    if not application.launch_capture_worker:
+        return False, None
+    client = capture_worker_client_event()
+    if client is not None:
+        return False, client
+    status = run_capture_worker(
+        application.arguments,
+        module=application.module,
+        detached=detach,
+        detached_format=output_format.value,
+    )
+    finish(status)
+    return True, None
+
+
+def _verification(
+    context: typer.Context,
+    contract: Path,
+    source: VerificationSource,
+    *,
+    output_format: OutputFormat,
+    explain: bool,
+    report_destination: Path | None,
+) -> int:
+    application = command_context(context)
+    publication: AtomicArtifactPublication | None = None
+    try:
+        if report_destination is not None:
+            publication = prepare_atomic_artifact(report_destination, label="report")
+        include_explanation = explain or publication is not None
+        diff: ExecutionDiff | None = None
+        bindings: VerificationArtifactBindings | None = None
+        experiment: ExperimentResult | None = None
+        if isinstance(source, RunSource):
+            capture_warning(
+                source.capture_level,
+                paired=True,
+                error_label=application.error_label,
+            )
+            execute = run_experiment
+            if source.capture_worker_client is not None:
+                execute = partial(
+                    execute,
+                    _capture_client_disconnected=source.capture_worker_client,
+                )
+            experiment = execute(
+                contract,
+                baseline_ref=source.baseline_ref,
+                candidate_ref=source.candidate_ref,
+                workload=source.workload,
+                workload_args=source.workload_args,
+                output_dir=source.output_dir,
+                python_executable=source.python_executable,
+                capture_level=source.capture_level,
+                bind_artifacts=include_explanation
+                and (output_format is OutputFormat.json or publication is not None),
+            )
+            record_current_capture_job_artifacts(
+                (experiment.baseline_runpack, experiment.candidate_runpack)
+            )
+            verification = experiment.verification
+            if include_explanation:
+                if experiment.diff is None:
+                    raise ExperimentError("runtime diff is unavailable for this experiment")
+                diff = experiment.diff
+                if publication is not None and experiment.artifact_bindings is None:
+                    raise ExperimentError("artifact bindings are unavailable for this experiment")
+        else:
+            verification, diff, bindings = _verify_source(
+                contract,
+                source,
+                include_explanation=include_explanation,
+                bind_artifacts=output_format is OutputFormat.json or publication is not None,
+            )
+
+        serialized = None
+        if output_format is OutputFormat.json or publication is not None:
+            serialized = _verification_json(
+                verification,
+                diff,
+                experiment=experiment,
+                bindings=bindings,
+                include_explanation=include_explanation,
+            )
+        if publication is not None:
+            assert serialized is not None
+            publication.publish(serialized.encode("utf-8"))
+            if experiment is not None:
+                assert report_destination is not None
+                record_current_capture_job_artifacts(
+                    (
+                        experiment.baseline_runpack,
+                        experiment.candidate_runpack,
+                        report_destination,
+                    )
+                )
+
+        if output_format is OutputFormat.json:
+            assert serialized is not None
+            print_json(serialized)
+        else:
+            print_text(
+                render_verification(
+                    verification,
+                    "text",
+                    include_evidence=include_explanation,
+                )
+            )
+            if diff is not None:
+                candidate = (
+                    experiment.candidate_runpack
+                    if experiment is not None
+                    else source.candidate
+                    if isinstance(source, VerifySource)
+                    else Path("candidate.runpack")
+                )
+                print_text()
+                print_text(
+                    _render_explanation(
+                        diff,
+                        candidate,
+                        branded_commands=application.branded_commands,
+                    )
+                )
+        if experiment is not None and output_format is OutputFormat.text:
+            print_text()
+            print_text(f"baseline artifact:  {experiment.baseline_runpack}")
+            print_text(f"candidate artifact: {experiment.candidate_runpack}")
+        return 0 if verification.passed else 1
+    finally:
+        if publication is not None:
+            publication.close()
+
+
+def _verify_source(
+    contract: Path,
+    source: VerifySource,
+    *,
+    include_explanation: bool,
+    bind_artifacts: bool,
+) -> tuple[VerificationReport, ExecutionDiff | None, VerificationArtifactBindings | None]:
+    if not include_explanation:
+        return verify_contracts(contract, source.baseline, source.candidate), None, None
+    if bind_artifacts:
+        report, diff, bindings = verify_contracts_with_artifact_bindings(
+            contract, source.baseline, source.candidate
+        )
+        return report, diff, bindings
+    report, diff = verify_contracts_with_diff(contract, source.baseline, source.candidate)
+    return report, diff, None
+
+
+def _verification_json(
+    report: VerificationReport,
+    diff: ExecutionDiff | None,
+    *,
+    experiment: ExperimentResult | None,
+    bindings: VerificationArtifactBindings | None,
+    include_explanation: bool,
+) -> str:
+    payload = (
+        experiment.as_json_value(include_evidence=include_explanation)
+        if experiment is not None
+        else report.as_json_value(
+            include_evidence=include_explanation,
+            artifact_bindings=bindings,
+        )
+    )
+    if diff is not None:
+        payload["diff"] = diff.as_json_value()
+    return json.dumps(payload, allow_nan=False, indent=2, sort_keys=True) + "\n"
 
 
 def _shell_path(path: Path) -> str:
@@ -66,22 +512,13 @@ def _shell_path(path: Path) -> str:
 
 def _render_explanation(
     diff: ExecutionDiff,
-    baseline: Path,
     candidate: Path,
-    contract: Path,
     *,
     branded_commands: bool = False,
-    proofline_report: Path | None = None,
 ) -> str:
-    baseline_argument = _shell_path(baseline)
     candidate_argument = _shell_path(candidate)
     analyze_command = "contrail analyze" if branded_commands else "batchscope inspect"
     inspect_command = "contrail inspect" if branded_commands else "runtime inspect"
-    serve_command = "contrail serve" if branded_commands else "runtime serve"
-    if proofline_report is None:
-        evidence_argument = f"--contract {_shell_path(contract)}"
-    else:
-        evidence_argument = f"--proofline-report {_shell_path(proofline_report)}"
     return "\n".join(
         (
             render_diff(diff, "text"),
@@ -89,8 +526,6 @@ def _render_explanation(
             "Next steps:",
             f"{analyze_command} {candidate_argument}",
             f"{inspect_command} {candidate_argument} --tree",
-            f"{serve_command} {baseline_argument} --compare {candidate_argument} "
-            f"{evidence_argument}",
         )
     )
 
@@ -99,355 +534,17 @@ def _render_explanation(
 def main(
     argv: list[str] | None = None,
     *,
-    prog: str = "proofline",
-    error_label: str = "proofline",
-    branded_commands: bool = False,
     _launch_capture_worker: bool | None = None,
 ) -> int:
-    arguments = list(sys.argv[1:] if argv is None else argv)
-    launch_capture_worker = (
-        argv is None if _launch_capture_worker is None else _launch_capture_worker
+    return run_cli(
+        app,
+        argv,
+        prog="proofline",
+        module="runtime_tools.proofline.cli",
+        error_label="proofline",
+        branded_commands=False,
+        launch_capture_worker=_launch_capture_worker,
     )
-    parser = argparse.ArgumentParser(prog=prog)
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    subparsers = parser.add_subparsers(dest="subcommand", required=True)
-
-    validate = subparsers.add_parser(
-        "validate", help="validate contract and optional parameter inputs without execution"
-    )
-    validate.add_argument("contract", type=Path)
-    validate.add_argument("--parameters", type=Path)
-    validate.add_argument("--format", choices=("text", "json"), default="text")
-
-    verify = subparsers.add_parser("verify", help="evaluate contracts over two runpacks")
-    verify.add_argument("contract", type=Path)
-    verify.add_argument("--baseline", type=Path, required=True)
-    verify.add_argument("--candidate", type=Path, required=True)
-    verify.add_argument("--format", choices=("text", "json"), default="text")
-    verify.add_argument(
-        "--explain",
-        action="store_true",
-        help="include the runtime diff and commands for deeper inspection",
-    )
-    verify.add_argument(
-        "--report",
-        type=Path,
-        metavar="PATH",
-        help="atomically retain the artifact-bound explained JSON report (implies --explain)",
-    )
-
-    run = subparsers.add_parser("run", help="capture and verify a workload at two Git refs")
-    run.add_argument("contract", type=Path)
-    run.add_argument("--baseline-ref", required=True)
-    run.add_argument("--candidate-ref", required=True)
-    run.add_argument("--workload", type=Path, required=True)
-    run.add_argument(
-        "--python",
-        dest="python_executable",
-        type=Path,
-        help="Python executable used for both workload refs (default: current Python)",
-    )
-    run.add_argument("--output-dir", type=Path)
-    run.add_argument(
-        "--detach",
-        action="store_true",
-        help=(
-            "run in the background and privately retain bounded stdout/stderr (may contain secrets)"
-        ),
-    )
-    run.add_argument(
-        "--capture-level",
-        choices=CAPTURE_LEVELS,
-        help="use the same passive, process, sample, or expensive deep preset for both refs",
-    )
-    run.add_argument("--format", choices=("text", "json"), default="text")
-    run.add_argument(
-        "--explain",
-        action="store_true",
-        help="include the runtime diff and commands for deeper inspection",
-    )
-    run.add_argument(
-        "--report",
-        type=Path,
-        metavar="PATH",
-        help="atomically retain the artifact-bound explained JSON report (implies --explain)",
-    )
-    run.add_argument(
-        "--workload-arg",
-        action="append",
-        default=[],
-        help="argument passed to the workload; repeat for multiple arguments",
-    )
-
-    search = subparsers.add_parser(
-        "search", help="find a contract counterexample within a bounded search"
-    )
-    search.add_argument("contract", type=Path)
-    search.add_argument("--parameters", type=Path, required=True)
-    search.add_argument("--baseline-ref", required=True)
-    search.add_argument("--candidate-ref", required=True)
-    search.add_argument("--workload", type=Path, required=True)
-    search.add_argument(
-        "--python",
-        dest="python_executable",
-        type=Path,
-        help="Python executable used for every search workload (default: current Python)",
-    )
-    search.add_argument("--output-dir", type=Path)
-    search.add_argument(
-        "--detach",
-        action="store_true",
-        help=(
-            "run in the background and privately retain bounded stdout/stderr (may contain secrets)"
-        ),
-    )
-    search.add_argument(
-        "--capture-level",
-        choices=CAPTURE_LEVELS,
-        help="use the same passive, process, sample, or expensive deep preset for every run",
-    )
-    search.add_argument("--format", choices=("text", "json"), default="text")
-    search.add_argument(
-        "--max-examples", type=int, default=25, help="search bound (hard limit: 1000)"
-    )
-    args = parser.parse_args(arguments)
-    capture_worker_client: threading.Event | None = None
-    if launch_capture_worker and args.subcommand in {"run", "search"}:
-        try:
-            capture_worker_client = capture_worker_client_event()
-            if capture_worker_client is None:
-                module = (
-                    "runtime_tools.contrail_cli"
-                    if branded_commands
-                    else "runtime_tools.proofline.cli"
-                )
-                return run_capture_worker(
-                    tuple(arguments),
-                    module=module,
-                    detached=args.detach,
-                    detached_format=args.format,
-                )
-        except CaptureError as exc:
-            print(f"{error_label}: {terminal_text(exc)}", file=sys.stderr)
-            return 2
-    diff: ExecutionDiff | None = None
-    artifact_bindings: VerificationArtifactBindings | None = None
-    report_publication: AtomicArtifactPublication | None = None
-    try:
-        report_destination = getattr(args, "report", None)
-        if report_destination is not None:
-            report_publication = prepare_atomic_artifact(report_destination, label="report")
-        include_explanation = bool(getattr(args, "explain", False) or report_publication)
-        capture_level = getattr(args, "capture_level", None)
-        if capture_level == "deep":
-            print(
-                f"{error_label}: warning: deep capture observes every Python and native C call "
-                "plus "
-                "Python exception propagation "
-                "in both "
-                "arms; it is expensive, intrusive, and can materially perturb timings",
-                file=sys.stderr,
-            )
-        elif capture_level == "sample":
-            print(
-                f"{error_label}: note: sampling estimates Python hotspots in both arms and "
-                "may perturb timings",
-                file=sys.stderr,
-            )
-        if args.subcommand == "validate":
-            validation = validate_inputs(args.contract, args.parameters)
-            print(render_validation(validation, args.format))
-            return 0
-        if args.subcommand == "search":
-            search = search_counterexample
-            if capture_worker_client is not None:
-                search = partial(
-                    search,
-                    _capture_client_disconnected=capture_worker_client,
-                )
-            counterexample = search(
-                args.contract,
-                args.parameters,
-                baseline_ref=args.baseline_ref,
-                candidate_ref=args.candidate_ref,
-                workload=args.workload,
-                output_dir=args.output_dir or default_output_directory(),
-                max_examples=args.max_examples,
-                python_executable=args.python_executable,
-                capture_level=args.capture_level,
-            )
-            if counterexample is None:
-                if args.format == "json":
-                    print(
-                        json.dumps(
-                            output_document(
-                                "proofline.search",
-                                {
-                                    "counterexample": None,
-                                    "max_examples": args.max_examples,
-                                },
-                            ),
-                            allow_nan=False,
-                            indent=2,
-                            sort_keys=True,
-                        )
-                    )
-                else:
-                    print(f"No counterexample found in {args.max_examples} examples.")
-                return 0
-            record_current_capture_job_artifacts(
-                (
-                    counterexample.experiment.baseline_runpack,
-                    counterexample.experiment.candidate_runpack,
-                )
-            )
-            if args.format == "json":
-                print(
-                    json.dumps(
-                        output_document(
-                            "proofline.search",
-                            {
-                                "counterexample": counterexample.as_json_value(),
-                                "max_examples": args.max_examples,
-                            },
-                        ),
-                        allow_nan=False,
-                        indent=2,
-                        sort_keys=True,
-                    )
-                )
-                return 1
-            print("COUNTEREXAMPLE")
-            print()
-            for name, value in sorted(counterexample.parameters.items()):
-                print(f"{terminal_text(name)}={value}")
-            print()
-            print(f"shrink_budget_exhausted: {str(counterexample.shrink_budget_exhausted).lower()}")
-            print()
-            print(render_verification(counterexample.experiment.verification, "text"))
-            print()
-            print(
-                f"baseline artifact:  {terminal_text(counterexample.experiment.baseline_runpack)}"
-            )
-            print(
-                f"candidate artifact: {terminal_text(counterexample.experiment.candidate_runpack)}"
-            )
-            return 1
-        if args.subcommand == "run":
-            execute_experiment = run_experiment
-            if capture_worker_client is not None:
-                execute_experiment = partial(
-                    execute_experiment,
-                    _capture_client_disconnected=capture_worker_client,
-                )
-            experiment = execute_experiment(
-                args.contract,
-                baseline_ref=args.baseline_ref,
-                candidate_ref=args.candidate_ref,
-                workload=args.workload,
-                workload_args=tuple(args.workload_arg),
-                output_dir=args.output_dir or default_output_directory(),
-                python_executable=args.python_executable,
-                capture_level=args.capture_level,
-                bind_artifacts=include_explanation
-                and (args.format == "json" or report_publication is not None),
-            )
-            record_current_capture_job_artifacts(
-                (experiment.baseline_runpack, experiment.candidate_runpack)
-            )
-            report = experiment.verification
-            if include_explanation:
-                if experiment.diff is None:
-                    raise ExperimentError("runtime diff is unavailable for this experiment")
-                diff = experiment.diff
-                if report_publication is not None and experiment.artifact_bindings is None:
-                    raise ExperimentError("artifact bindings are unavailable for this experiment")
-        else:
-            experiment = None
-            if include_explanation:
-                if args.format == "json" or report_publication is not None:
-                    report, diff, artifact_bindings = verify_contracts_with_artifact_bindings(
-                        args.contract,
-                        args.baseline,
-                        args.candidate,
-                    )
-                else:
-                    report, diff = verify_contracts_with_diff(
-                        args.contract, args.baseline, args.candidate
-                    )
-            else:
-                report = verify_contracts(args.contract, args.baseline, args.candidate)
-
-        payload = None
-        serialized_payload = None
-        if args.format == "json" or report_publication is not None:
-            if experiment is not None:
-                payload = experiment.as_json_value(include_evidence=include_explanation)
-            else:
-                payload = report.as_json_value(
-                    include_evidence=include_explanation,
-                    artifact_bindings=artifact_bindings,
-                )
-            if diff is not None:
-                payload["diff"] = diff.as_json_value()
-            serialized_payload = (
-                json.dumps(
-                    payload,
-                    allow_nan=False,
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n"
-            )
-        if report_publication is not None:
-            assert serialized_payload is not None
-            report_publication.publish(serialized_payload.encode("utf-8"))
-            if experiment is not None:
-                assert report_destination is not None
-                record_current_capture_job_artifacts(
-                    (
-                        experiment.baseline_runpack,
-                        experiment.candidate_runpack,
-                        report_destination,
-                    )
-                )
-
-        if args.format == "json":
-            assert serialized_payload is not None
-            print(serialized_payload, end="")
-        else:
-            print(render_verification(report, "text", include_evidence=include_explanation))
-            if diff is not None:
-                baseline = experiment.baseline_runpack if experiment is not None else args.baseline
-                candidate = (
-                    experiment.candidate_runpack if experiment is not None else args.candidate
-                )
-                print()
-                print(
-                    _render_explanation(
-                        diff,
-                        baseline,
-                        candidate,
-                        args.contract,
-                        branded_commands=branded_commands,
-                        proofline_report=report_destination,
-                    )
-                )
-        if experiment is not None and args.format == "text":
-            print()
-            print(f"baseline artifact:  {terminal_text(experiment.baseline_runpack)}")
-            print(f"candidate artifact: {terminal_text(experiment.candidate_runpack)}")
-        return 0 if report.passed else 1
-    except KeyboardInterrupt:
-        if capture_worker_client is not None:
-            return 128 + signal.SIGINT
-        raise
-    except (ArtifactError, CaptureError, ContractError, ExperimentError, RunpackError) as exc:
-        print(f"{error_label}: {terminal_text(exc)}", file=sys.stderr)
-        return 2
-    finally:
-        if report_publication is not None:
-            report_publication.close()
 
 
 if __name__ == "__main__":

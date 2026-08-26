@@ -4,7 +4,7 @@ Version 1 runpacks are SQLite databases with a documented normalized schema.
 The query command opens artifacts in read-only mode and caps returned rows:
 
 ```bash
-runtime query run.runpack \
+contrail query run.runpack \
   'SELECT name, kind, started_at_ns FROM events ORDER BY started_at_ns' \
   --format table
 ```
@@ -27,7 +27,7 @@ objects rather than non-standard JSON. Because JSONL contains only result rows,
 the CLI writes a truncation warning to stderr when its row limit is reached:
 
 ```bash
-runtime query run.runpack \
+contrail query run.runpack \
   "SELECT timestamp_ns, value FROM measurements WHERE name = 'queue_depth'" \
   --format json
 ```

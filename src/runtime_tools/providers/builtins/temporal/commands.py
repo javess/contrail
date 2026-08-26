@@ -2,32 +2,23 @@
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 from runtime_tools.providers.contracts import (
     ProviderCommand,
     ProviderExecutionError,
     ProviderResult,
-    ProviderSpec,
 )
 from runtime_tools.terminal import terminal_text
 
 
-def _configure(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("runpack", type=Path)
-    parser.add_argument("history", type=Path)
-    parser.add_argument("--output", type=Path, required=True)
-
-
-def _execute(arguments: argparse.Namespace) -> ProviderResult:
+def enrich_temporal(runpack: Path, history: Path, *, output: Path) -> ProviderResult:
     from runtime_tools.providers.builtins.temporal.enrichment import import_temporal_history
     from runtime_tools.providers.enrichment import EnrichmentError
     from runtime_tools.storage import RunpackError
 
-    output: Path = arguments.output
     try:
-        result = import_temporal_history(arguments.runpack, arguments.history, output)
+        result = import_temporal_history(runpack, history, output)
     except (EnrichmentError, RunpackError) as exc:
         raise ProviderExecutionError(str(exc)) from exc
     return ProviderResult(
@@ -40,15 +31,9 @@ def _execute(arguments: argparse.Namespace) -> ProviderResult:
     )
 
 
-PROVIDER = ProviderSpec(
-    key="temporal",
-    display_name="Temporal",
-    commands=(
-        ProviderCommand(
-            name="enrich-temporal-history",
-            help="add bounded Temporal workflow history",
-            configure=_configure,
-            execute=_execute,
-        ),
+COMMANDS = (
+    ProviderCommand(
+        name="enrich-temporal-history",
+        help="add bounded Temporal workflow history",
     ),
 )

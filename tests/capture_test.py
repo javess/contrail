@@ -20,6 +20,12 @@ from typing import Any, cast
 
 import pytest
 
+import runtime_tools.capture._metadata as capture_metadata
+import runtime_tools.capture._process as capture_process
+import runtime_tools.capture._record as capture_record
+import runtime_tools.storage._reader as storage_reader
+import runtime_tools.storage._validation as storage_validation
+import runtime_tools.storage._writer as storage_writer
 from runtime_tools import (
     CaptureError,
     __version__,
@@ -121,7 +127,7 @@ def test_record_process_anchors_execution_finish_to_monotonic_elapsed_time(
     wall_times = iter((100, 50))
     monotonic_times = iter((10, 20))
     monkeypatch.setattr(
-        capture,
+        capture_record,
         "time",
         SimpleNamespace(
             time_ns=lambda: next(wall_times),
@@ -145,7 +151,7 @@ def test_record_process_excludes_prelaunch_setup_from_execution_runtime(
     clock = {"now": 100}
     revision = "a" * 40
     monkeypatch.setattr(
-        capture,
+        capture_record,
         "time",
         SimpleNamespace(
             time_ns=lambda: clock["now"],
@@ -157,7 +163,7 @@ def test_record_process_excludes_prelaunch_setup_from_execution_runtime(
         clock["now"] += 2_000_000_000
         return revision
 
-    monkeypatch.setattr(capture, "_git_revision", delayed_revision)
+    monkeypatch.setattr(capture_record, "_git_revision", delayed_revision)
 
     record_process((sys.executable, "-c", "pass"), output, name="setup-boundary")
 
@@ -330,7 +336,7 @@ def test_capture_hashes_surrogate_escaped_environment_bytes(
     value = "value-\udcff"
     monkeypatch.setenv("PYTHONHASHSEED", value)
 
-    metadata = capture._initial_metadata()
+    metadata = capture_metadata._initial_metadata()
 
     environment = metadata["environment"]
     assert isinstance(environment, dict)
@@ -474,10 +480,10 @@ def test_output_drain_recognizes_eof_at_the_post_exit_boundary(
     stream.write_bytes(b"complete")
     process_done = threading.Event()
     process_done.set()
-    monkeypatch.setattr(capture, "MAX_POST_EXIT_DRAIN_BYTES", 8)
+    monkeypatch.setattr(capture_process, "MAX_POST_EXIT_DRAIN_BYTES", 8)
 
     with stream.open("rb") as source:
-        digest = capture._pump(source, None, None, process_done)
+        digest = capture_process._pump(source, None, None, process_done)
 
     assert digest.byte_count == 8
     assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
@@ -501,10 +507,10 @@ def test_output_drain_retries_interrupted_reads(
             raise InterruptedError
         return real_read(descriptor, size)
 
-    monkeypatch.setattr("runtime_tools.capture.os.read", interrupted_once)
+    monkeypatch.setattr(capture_process.os, "read", interrupted_once)
 
     with stream.open("rb") as source:
-        digest = capture._pump(source, None, None, process_done)
+        digest = capture_process._pump(source, None, None, process_done)
 
     assert digest.byte_count == 8
     assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
@@ -525,10 +531,10 @@ def test_output_drain_retries_interrupted_select(monkeypatch: pytest.MonkeyPatch
             raise InterruptedError
         return real_select(*args)
 
-    monkeypatch.setattr("runtime_tools.capture.select.select", interrupted_once)
+    monkeypatch.setattr(capture_process.select, "select", interrupted_once)
 
     with os.fdopen(read_descriptor, "rb") as source:
-        digest = capture._pump(source, None, None, process_done)
+        digest = capture_process._pump(source, None, None, process_done)
 
     assert digest.byte_count == 8
     assert digest.sha256 == hashlib.sha256(b"complete").hexdigest()
@@ -554,9 +560,9 @@ def test_process_cleanup_reaps_a_leader_after_its_group_vanishes(
 
     monkeypatch.setattr(os, "killpg", vanished_group)
 
-    capture._terminate_and_reap(cast(subprocess.Popen[bytes], VanishedProcess()))
+    capture_process._terminate_and_reap(cast(subprocess.Popen[bytes], VanishedProcess()))
 
-    assert waits == [capture.PROCESS_TERMINATION_TIMEOUT_SECONDS]
+    assert waits == [capture_process.PROCESS_TERMINATION_TIMEOUT_SECONDS]
 
 
 def test_process_cleanup_escalates_a_surviving_group(
@@ -574,9 +580,9 @@ def test_process_cleanup_escalates_a_surviving_group(
         signals.append(signal_number)
 
     monkeypatch.setattr(os, "killpg", surviving_group)
-    monkeypatch.setattr(capture, "PROCESS_TERMINATION_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(capture_process, "PROCESS_TERMINATION_TIMEOUT_SECONDS", 0.0)
 
-    capture._terminate_and_reap(cast(subprocess.Popen[bytes], SurvivingProcess()))
+    capture_process._terminate_and_reap(cast(subprocess.Popen[bytes], SurvivingProcess()))
 
     assert signals == [signal.SIGTERM, 0, 0, signal.SIGKILL]
 
@@ -597,9 +603,9 @@ def test_process_cleanup_remains_bounded_when_group_signals_are_denied(
         raise PermissionError
 
     monkeypatch.setattr(os, "killpg", deny_signal)
-    monkeypatch.setattr(capture, "PROCESS_TERMINATION_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(capture_process, "PROCESS_TERMINATION_TIMEOUT_SECONDS", 0.0)
 
-    capture._terminate_and_reap(cast(subprocess.Popen[bytes], UnsignalableProcess()))
+    capture_process._terminate_and_reap(cast(subprocess.Popen[bytes], UnsignalableProcess()))
 
     assert waits == [0.0, 0.0]
 
@@ -615,7 +621,7 @@ def test_capture_normalizes_child_status_collection_failures(
     monkeypatch.setattr(os, "wait4", fail_wait)
 
     with pytest.raises(CaptureError, match="could not collect captured process status"):
-        capture._wait_with_usage(cast(subprocess.Popen[bytes], process))
+        capture_process._wait_with_usage(cast(subprocess.Popen[bytes], process))
 
 
 def test_capture_ignores_optional_git_revision_os_errors(
@@ -627,7 +633,7 @@ def test_capture_ignores_optional_git_revision_os_errors(
 
     monkeypatch.setattr(subprocess, "run", fail_git)
 
-    assert capture._git_revision(tmp_path) is None
+    assert capture_process._git_revision(tmp_path) is None
 
 
 @pytest.mark.parametrize("revision", ("not-a-revision", "a" * 39, "g" * 40, "a" * 65))
@@ -642,7 +648,7 @@ def test_capture_ignores_malformed_optional_git_revisions(
         lambda *args, **kwargs: SimpleNamespace(stdout=f"{revision}\n"),
     )
 
-    assert capture._git_revision(tmp_path) is None
+    assert capture_process._git_revision(tmp_path) is None
 
 
 def test_capture_ignores_undecodable_optional_git_revisions(
@@ -654,7 +660,7 @@ def test_capture_ignores_undecodable_optional_git_revisions(
 
     monkeypatch.setattr(subprocess, "run", fail_git)
 
-    assert capture._git_revision(tmp_path) is None
+    assert capture_process._git_revision(tmp_path) is None
 
 
 @pytest.mark.parametrize("length", (40, 64))
@@ -669,7 +675,7 @@ def test_capture_normalizes_valid_optional_git_revisions(
         lambda *args, **kwargs: SimpleNamespace(stdout=f"{'A' * length}\n"),
     )
 
-    assert capture._git_revision(tmp_path) == "a" * length
+    assert capture_process._git_revision(tmp_path) == "a" * length
 
 
 def test_record_process_refuses_to_overwrite_an_artifact(tmp_path: Path) -> None:
@@ -861,7 +867,7 @@ def test_record_process_retains_a_recoverable_checkpoint_after_publication_failu
     def fail_publication(temporary: Path, destination: Path) -> None:
         raise OSError("hard links unavailable")
 
-    monkeypatch.setattr(capture, "publish_without_overwrite", fail_publication)
+    monkeypatch.setattr(capture_record, "publish_without_overwrite", fail_publication)
 
     with pytest.raises(CaptureError, match="could not publish runpack.*hard links unavailable"):
         record_process((sys.executable, "-c", "pass"), output, name="unpublished")
@@ -899,7 +905,7 @@ def test_record_process_bounds_annotation_diagnostics_without_losing_core_eviden
     def fail_annotations(path: Path, *, entity_id: str) -> None:
         raise AnnotationError("x" * 10_000)
 
-    monkeypatch.setattr(capture, "load_annotations", fail_annotations)
+    monkeypatch.setattr(capture_record, "load_annotations", fail_annotations)
 
     exit_code = record_process(
         (sys.executable, "-c", "pass"),
@@ -933,7 +939,7 @@ def test_record_process_terminates_child_when_capture_is_interrupted(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(subprocess, "Popen", tracked_popen)
-    monkeypatch.setattr(capture, "_wait_with_usage", interrupt_wait)
+    monkeypatch.setattr(capture_record, "_wait_with_usage", interrupt_wait)
 
     with pytest.raises(KeyboardInterrupt):
         record_process(
@@ -958,7 +964,7 @@ def test_sample_capture_recovers_after_post_exit_controller_kill(
         checkpoint_ready.write_text("ready", encoding="utf-8")
         time.sleep(30)
 
-    monkeypatch.setattr(capture, "_assemble_profile_checkpoint", block_after_checkpoint)
+    monkeypatch.setattr(capture_record, "_assemble_profile_checkpoint", block_after_checkpoint)
     controller_pid = os.fork()
     if controller_pid == 0:
         try:
@@ -1063,8 +1069,8 @@ def test_record_process_terminates_descendants_when_capture_is_interrupted(
         "time.sleep(30)"
     )
     monkeypatch.setattr(subprocess, "Popen", tracked_popen)
-    monkeypatch.setattr(capture, "_wait_with_usage", interrupt_after_grandchild_starts)
-    monkeypatch.setattr(capture, "PROCESS_TERMINATION_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(capture_record, "_wait_with_usage", interrupt_after_grandchild_starts)
+    monkeypatch.setattr(capture_process, "PROCESS_TERMINATION_TIMEOUT_SECONDS", 0.05)
 
     try:
         with pytest.raises(KeyboardInterrupt):
@@ -1090,7 +1096,7 @@ def test_record_process_terminates_child_when_output_pump_submission_fails(
     children: list[subprocess.Popen[bytes]] = []
     real_popen = subprocess.Popen
     real_submit = ThreadPoolExecutor.submit
-    real_terminate = capture._terminate_and_reap
+    real_terminate = capture_record._terminate_and_reap
     submissions = 0
     cleanup_calls = 0
 
@@ -1113,7 +1119,7 @@ def test_record_process_terminates_child_when_output_pump_submission_fails(
 
     monkeypatch.setattr(subprocess, "Popen", tracked_popen)
     monkeypatch.setattr(ThreadPoolExecutor, "submit", fail_second_submit)
-    monkeypatch.setattr(capture, "_terminate_and_reap", tracked_cleanup)
+    monkeypatch.setattr(capture_record, "_terminate_and_reap", tracked_cleanup)
 
     with pytest.raises(RuntimeError, match="simulated thread submission failure"):
         record_process(
@@ -1144,7 +1150,7 @@ def test_record_process_terminates_child_when_an_output_pump_fails(
         raise OSError("simulated output read failure")
 
     monkeypatch.setattr(subprocess, "Popen", tracked_popen)
-    monkeypatch.setattr(capture, "_pump", fail_pump)
+    monkeypatch.setattr(capture_record, "_pump", fail_pump)
     started = time.monotonic()
 
     with pytest.raises(OSError, match="simulated output read failure"):
@@ -1210,7 +1216,7 @@ def test_reader_closes_connection_when_validation_is_interrupted(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(sqlite3, "connect", tracked_connect)
-    monkeypatch.setattr(storage, "_validate_connection", interrupt_validation)
+    monkeypatch.setattr(storage_reader, "_validate_connection", interrupt_validation)
 
     with pytest.raises(KeyboardInterrupt):
         RunpackReader(output)
@@ -1305,7 +1311,7 @@ def test_existing_writer_closes_connection_when_validation_is_interrupted(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(sqlite3, "connect", tracked_connect)
-    monkeypatch.setattr(storage, "_validate_connection", interrupt_validation)
+    monkeypatch.setattr(storage_writer, "_validate_connection", interrupt_validation)
 
     with pytest.raises(KeyboardInterrupt):
         RunpackWriter.open_existing(output)
@@ -1324,43 +1330,14 @@ def test_reader_rejects_unknown_schema_major(tmp_path: Path) -> None:
         RunpackReader(output)
 
 
-def test_reader_accepts_additive_schema_minor_versions(tmp_path: Path) -> None:
+def test_reader_rejects_a_different_schema_minor(tmp_path: Path) -> None:
     output = tmp_path / "future-minor.runpack"
     record_process((sys.executable, "-c", "pass"), output, name="future-minor")
     with sqlite3.connect(output) as connection:
         connection.execute("UPDATE manifest SET value = '1.7' WHERE key = 'schema_version'")
 
-    assert inspect_runpack(output).name == "future-minor"
-
-
-def test_reader_accepts_schema_one_without_optional_attachments(tmp_path: Path) -> None:
-    output = tmp_path / "schema-one.runpack"
-    record_process((sys.executable, "-c", "pass"), output, name="schema-one")
-    with sqlite3.connect(output) as connection:
-        connection.execute("DROP TABLE attachments")
-        connection.execute("UPDATE manifest SET value = '1' WHERE key = 'schema_version'")
-
-    summary = inspect_runpack(output)
-
-    assert summary.name == "schema-one"
-    assert summary.record_counts["attachments"] == 0
-
-
-def test_writer_adds_optional_attachments_to_legacy_runpacks(tmp_path: Path) -> None:
-    output = tmp_path / "legacy-attachment.runpack"
-    with RunpackWriter(output) as writer:
-        writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
-    with sqlite3.connect(output) as connection:
-        connection.execute("DROP TABLE attachments")
-        connection.execute("UPDATE manifest SET value = '1.0' WHERE key = 'schema_version'")
-
-    with RunpackWriter.open_existing(output) as writer:
-        writer.add_attachments(
-            (Attachment("raw", "raw", "evidence", "text/plain", b"evidence", {}),)
-        )
-
-    with RunpackReader(output) as reader:
-        assert reader.attachments()[0].content == b"evidence"
+    with pytest.raises(UnsupportedSchemaError, match="supported schema: 1.1"):
+        RunpackReader(output)
 
 
 def test_reader_rejects_runpacks_missing_required_columns(tmp_path: Path) -> None:
@@ -1409,17 +1386,30 @@ def test_reader_rejects_wal_mode_runpacks_that_depend_on_sidecar_files(tmp_path:
         RunpackReader(output)
 
 
-def test_reader_rejects_runpacks_without_required_identity_constraints(
+@pytest.mark.parametrize(
+    ("id_definition", "message"),
+    (
+        ("INTEGER", "measurements does not enforce required primary key: id"),
+        (
+            "INTEGER PRIMARY KEY",
+            r"measurements does not enforce required relationship: entity_id -> entities.id",
+        ),
+    ),
+    ids=("primary-key", "foreign-key"),
+)
+def test_reader_rejects_runpacks_without_required_measurement_constraints(
     tmp_path: Path,
+    id_definition: str,
+    message: str,
 ) -> None:
-    output = tmp_path / "missing-primary-key.runpack"
-    record_process((sys.executable, "-c", "pass"), output, name="missing-primary-key")
+    output = tmp_path / "missing-constraint.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="missing-constraint")
     with sqlite3.connect(output) as connection:
         connection.execute("ALTER TABLE measurements RENAME TO original_measurements")
         connection.execute(
-            """
+            f"""
             CREATE TABLE measurements (
-                id INTEGER,
+                id {id_definition},
                 name TEXT NOT NULL,
                 value REAL NOT NULL,
                 unit TEXT NOT NULL,
@@ -1432,10 +1422,7 @@ def test_reader_rejects_runpacks_without_required_identity_constraints(
         connection.execute("INSERT INTO measurements SELECT * FROM original_measurements")
         connection.execute("DROP TABLE original_measurements")
 
-    with pytest.raises(
-        RunpackError,
-        match="measurements does not enforce required primary key: id",
-    ):
+    with pytest.raises(RunpackError, match=message):
         RunpackReader(output)
 
 
@@ -1476,11 +1463,11 @@ def test_reader_requires_the_integer_measurement_primary_key_shape(tmp_path: Pat
 
 def test_reader_rejects_case_insensitive_identity_primary_keys(tmp_path: Path) -> None:
     output = tmp_path / "nocase-identity.runpack"
-    schema = storage._SCHEMA.replace(
+    schema = storage_validation._SCHEMA.replace(
         "CREATE TABLE entities (\n    id TEXT PRIMARY KEY,",
         "CREATE TABLE entities (\n    id TEXT PRIMARY KEY COLLATE NOCASE,",
     )
-    assert schema != storage._SCHEMA
+    assert schema != storage_validation._SCHEMA
     with sqlite3.connect(output) as connection:
         connection.executescript(schema)
         connection.execute(f"PRAGMA application_id = {storage.APPLICATION_ID}")
@@ -1512,36 +1499,6 @@ def test_reader_rejects_case_insensitive_identity_primary_keys(tmp_path: Path) -
         RunpackReader(output)
 
 
-def test_reader_rejects_runpacks_without_required_relationship_constraints(
-    tmp_path: Path,
-) -> None:
-    output = tmp_path / "missing-foreign-key.runpack"
-    record_process((sys.executable, "-c", "pass"), output, name="missing-foreign-key")
-    with sqlite3.connect(output) as connection:
-        connection.execute("ALTER TABLE measurements RENAME TO original_measurements")
-        connection.execute(
-            """
-            CREATE TABLE measurements (
-                id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                value REAL NOT NULL,
-                unit TEXT NOT NULL,
-                timestamp_ns INTEGER,
-                entity_id TEXT,
-                attributes_json TEXT NOT NULL
-            )
-            """
-        )
-        connection.execute("INSERT INTO measurements SELECT * FROM original_measurements")
-        connection.execute("DROP TABLE original_measurements")
-
-    with pytest.raises(
-        RunpackError,
-        match=r"measurements does not enforce required relationship: entity_id -> entities.id",
-    ):
-        RunpackReader(output)
-
-
 def test_reader_rejects_sqlite_files_without_runpack_identity(tmp_path: Path) -> None:
     output = tmp_path / "not-a-runpack.runpack"
     with sqlite3.connect(output) as connection:
@@ -1568,36 +1525,22 @@ def test_reader_rejects_dangling_runpack_relationships(tmp_path: Path) -> None:
         RunpackReader(output)
 
 
-def test_reader_reports_malformed_embedded_json_as_runpack_error(tmp_path: Path) -> None:
-    output = tmp_path / "malformed.runpack"
-    record_process((sys.executable, "-c", "pass"), output, name="malformed")
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    (
+        ("{", "invalid JSON object"),
+        ('{"output":{},"output":{"forged":true}}', "invalid JSON object in runpack"),
+        ('{"value": 1e999}', "non-finite number"),
+    ),
+    ids=("malformed", "duplicate-key", "non-finite"),
+)
+def test_reader_rejects_invalid_embedded_json(tmp_path: Path, payload: str, message: str) -> None:
+    output = tmp_path / "invalid-json.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="invalid-json")
     with sqlite3.connect(output) as connection:
-        connection.execute("UPDATE executions SET metadata_json = '{'")
+        connection.execute("UPDATE executions SET metadata_json = ?", (payload,))
 
-    with pytest.raises(RunpackError, match="invalid JSON object"):
-        inspect_runpack(output)
-
-
-def test_reader_rejects_duplicate_embedded_json_keys(tmp_path: Path) -> None:
-    output = tmp_path / "duplicate-json-keys.runpack"
-    record_process((sys.executable, "-c", "pass"), output, name="duplicate-json-keys")
-    with sqlite3.connect(output) as connection:
-        connection.execute(
-            "UPDATE executions SET metadata_json = ?",
-            ('{"output":{},"output":{"forged":true}}',),
-        )
-
-    with pytest.raises(RunpackError, match="invalid JSON object in runpack"):
-        inspect_runpack(output)
-
-
-def test_reader_rejects_non_finite_embedded_json_numbers(tmp_path: Path) -> None:
-    output = tmp_path / "non-finite.runpack"
-    record_process((sys.executable, "-c", "pass"), output, name="non-finite")
-    with sqlite3.connect(output) as connection:
-        connection.execute("UPDATE executions SET metadata_json = ?", ('{"value": 1e999}',))
-
-    with pytest.raises(RunpackError, match="non-finite number"):
+    with pytest.raises(RunpackError, match=message):
         inspect_runpack(output)
 
 
@@ -1815,23 +1758,29 @@ def test_reader_normalizes_deeply_nested_execution_command_json(tmp_path: Path) 
         inspect_runpack(output)
 
 
-def test_reader_rejects_reversed_execution_intervals(tmp_path: Path) -> None:
-    output = tmp_path / "reversed.runpack"
-    record_process((sys.executable, "-c", "pass"), output, name="reversed")
+@pytest.mark.parametrize(
+    ("statement", "message"),
+    (
+        (
+            "UPDATE executions SET finished_at_ns = started_at_ns - 1",
+            "execution cannot finish before it starts",
+        ),
+        (
+            "UPDATE executions SET exit_code = 'invalid'",
+            "execution exit code must be an integer or null",
+        ),
+    ),
+    ids=("reversed-interval", "invalid-exit-code"),
+)
+def test_reader_rejects_invalid_execution_fields(
+    tmp_path: Path, statement: str, message: str
+) -> None:
+    output = tmp_path / "invalid-execution.runpack"
+    record_process((sys.executable, "-c", "pass"), output, name="invalid-execution")
     with sqlite3.connect(output) as connection:
-        connection.execute("UPDATE executions SET finished_at_ns = started_at_ns - 1")
+        connection.execute(statement)
 
-    with pytest.raises(RunpackError, match="execution cannot finish before it starts"):
-        inspect_runpack(output)
-
-
-def test_reader_rejects_invalid_execution_exit_codes(tmp_path: Path) -> None:
-    output = tmp_path / "invalid-exit-code.runpack"
-    record_process((sys.executable, "-c", "pass"), output, name="invalid-exit-code")
-    with sqlite3.connect(output) as connection:
-        connection.execute("UPDATE executions SET exit_code = 'invalid'")
-
-    with pytest.raises(RunpackError, match="execution exit code must be an integer or null"):
+    with pytest.raises(RunpackError, match=message):
         inspect_runpack(output)
 
 
@@ -1917,7 +1866,7 @@ def test_writer_rejects_oversized_attachment_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "oversized-attachment-write.runpack"
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
     with RunpackWriter(output) as writer:
         with pytest.raises(RunpackError, match="attachment content exceeds"):
             writer.add_attachments(
@@ -1938,7 +1887,7 @@ def test_reader_rejects_oversized_attachment_content(
             "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?)",
             ("large", "raw", "large", "application/octet-stream", b"x" * 9, "{}"),
         )
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
 
     with pytest.raises(RunpackError, match="attachment content exceeds"):
         RunpackReader(output)
@@ -1949,7 +1898,7 @@ def test_writer_rejects_oversized_aggregate_attachment_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output = tmp_path / "oversized-attachments-write.runpack"
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+    monkeypatch.setattr(storage_writer, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
     with RunpackWriter(output) as writer:
         with pytest.raises(RunpackError, match="aggregate runpack limit"):
             writer.add_attachments(
@@ -1968,7 +1917,7 @@ def test_writer_stops_consuming_attachments_at_the_aggregate_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output = tmp_path / "bounded-attachments-write.runpack"
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+    monkeypatch.setattr(storage_writer, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
 
     def attachments() -> Iterator[Attachment]:
         yield Attachment("first", "raw", "first", "text/plain", b"abc", {})
@@ -1997,7 +1946,7 @@ def test_reader_rejects_oversized_aggregate_attachment_content(
                 ("second", "raw", "second", "text/plain", b"def", "{}"),
             ),
         )
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
 
     with pytest.raises(RunpackError, match="aggregate runpack limit"):
         RunpackReader(output)
@@ -2014,8 +1963,8 @@ def test_reader_counts_malformed_text_attachment_sizes_as_bytes(
             "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?)",
             ("text", "raw", "text", "text/plain", "€€", "{}"),
         )
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 10)
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_ATTACHMENT_BYTES", 10)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
 
     with pytest.raises(RunpackError, match="aggregate runpack limit"):
         RunpackReader(output)
@@ -2032,8 +1981,8 @@ def test_writer_counts_existing_text_attachment_sizes_as_bytes(
             "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?)",
             ("text", "raw", "text", "text/plain", "€€", "{}"),
         )
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 10)
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_ATTACHMENT_BYTES", 10)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 5)
 
     with pytest.raises(RunpackError, match="aggregate runpack limit"):
         RunpackWriter.open_existing(output)
@@ -2254,11 +2203,31 @@ def test_reader_rejects_impossible_execution_commands(
         inspect_runpack(output)
 
 
-def test_writer_rejects_empty_execution_identity_before_writing(tmp_path: Path) -> None:
-    output = tmp_path / "empty-execution-id.runpack"
+@pytest.mark.parametrize(
+    ("execution", "message"),
+    (
+        (
+            Execution("", "run", 0, 1, (), "/work", 0, None, {}),
+            "execution id must be a non-empty string",
+        ),
+        (
+            Execution("run", "run", 10, 9, (), "/work", 0, None, {}),
+            "execution cannot finish before it starts",
+        ),
+        (
+            Execution("run", "run", 0, 1, (), "/work", True, None, {}),
+            "execution exit code must be an integer or null",
+        ),
+    ),
+    ids=("empty-id", "reversed-interval", "boolean-exit-code"),
+)
+def test_writer_rejects_invalid_executions_before_writing(
+    tmp_path: Path, execution: Execution, message: str
+) -> None:
+    output = tmp_path / "invalid-execution.runpack"
     with RunpackWriter(output) as writer:
-        with pytest.raises(RunpackError, match="execution id must be a non-empty string"):
-            writer.add_execution(Execution("", "run", 0, 1, (), str(tmp_path), 0, None, {}))
+        with pytest.raises(RunpackError, match=message):
+            writer.add_execution(execution)
 
     with RunpackReader(output) as reader:
         with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
@@ -2303,28 +2272,6 @@ def test_bulk_measurement_write_rolls_back_non_finite_values(tmp_path: Path) -> 
 
     with RunpackReader(output) as reader:
         assert reader.measurements() == ()
-
-
-def test_writer_rejects_reversed_execution_intervals(tmp_path: Path) -> None:
-    output = tmp_path / "reversed-execution.runpack"
-    with RunpackWriter(output) as writer:
-        with pytest.raises(RunpackError, match="execution cannot finish before it starts"):
-            writer.add_execution(Execution("run", "run", 10, 9, (), str(tmp_path), 0, None, {}))
-
-    with RunpackReader(output) as reader:
-        with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
-            reader.execution()
-
-
-def test_writer_rejects_boolean_execution_exit_codes(tmp_path: Path) -> None:
-    output = tmp_path / "boolean-exit-code.runpack"
-    with RunpackWriter(output) as writer:
-        with pytest.raises(RunpackError, match="execution exit code must be an integer or null"):
-            writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), True, None, {}))
-
-    with RunpackReader(output) as reader:
-        with pytest.raises(RunpackError, match="expected exactly one execution, found 0"):
-            reader.execution()
 
 
 def test_writer_rejects_a_second_execution(tmp_path: Path) -> None:
@@ -2589,7 +2536,7 @@ def test_concurrent_writers_cannot_both_finish_the_same_execution(
         writer.add_execution(Execution("run", "run", 0, None, (), str(tmp_path), None, None, {}))
 
     finish_barrier = threading.Barrier(2)
-    execution_interval = storage._execution_interval
+    execution_interval = storage_writer._execution_interval
 
     def synchronize_after_open_check(
         started_at_ns: object,
@@ -2635,7 +2582,7 @@ def test_concurrent_writers_cannot_both_finish_the_same_execution(
         return "success", label
 
     with monkeypatch.context() as context:
-        context.setattr(storage, "_execution_interval", synchronize_after_open_check)
+        context.setattr(storage_writer, "_execution_interval", synchronize_after_open_check)
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = (
                 executor.submit(finish, "first", 1, 0),

@@ -91,16 +91,14 @@ On failure, download the artifact and inspect it locally:
 ```bash
 uv run contrail analyze proofline-results/candidate.runpack
 uv run contrail inspect proofline-results/candidate.runpack --tree
-uv run contrail serve proofline-results/baseline.runpack \
-  --compare proofline-results/candidate.runpack \
-  --proofline-report proofline-report.json
+uv run contrail compare proofline-results/baseline.runpack \
+  proofline-results/candidate.runpack
 ```
 
-The UI re-hashes both runpacks, recomputes RunDiff, and replays each assertion
-before labelling the report artifact-bound. Hash binding detects stale or
-substituted files; it is not authentication if an actor can rewrite the entire
-bundle. Use a trusted artifact channel, signing, or attestation for stronger
-provenance.
+The retained report records the size and SHA-256 of both runpacks. Hash binding
+detects stale or substituted files when checked; it is not authentication if
+an actor can rewrite the entire bundle. Use a trusted artifact channel,
+signing, or attestation for stronger provenance.
 
 ## Repository quality gate
 
@@ -126,19 +124,18 @@ uv export --locked --no-dev --no-emit-project --no-hashes \
   --output-file release-constraints.txt
 uv run python tools/release_smoke.py \
   --constraints release-constraints.txt \
-  dist/contrail_runtime_tools-0.9.0-py3-none-any.whl
+  dist/contrail_runtime_tools-0.10.0-py3-none-any.whl
 ```
 
-The smoke test runs outside the checkout. It exercises the branded and
-component CLIs, capture against a separate workload environment, the demo,
-structured output, runpack reader, local UI assets, lazy optional adapters, and
-an installed external provider that remains unloaded until enabled.
+The smoke test runs outside the checkout. It installs only the `contrail`
+executable, captures against a separate workload environment, inspects the
+result, and compares the runpack with itself through format-2 JSON.
 
 For archive-path and metadata validation:
 
 ```bash
-CONTRAIL_RELEASE_WHEEL=/absolute/path/to/contrail_runtime_tools-0.9.0-py3-none-any.whl \
-CONTRAIL_RELEASE_SDIST=/absolute/path/to/contrail_runtime_tools-0.9.0.tar.gz \
+CONTRAIL_RELEASE_WHEEL=/absolute/path/to/contrail_runtime_tools-0.10.0-py3-none-any.whl \
+CONTRAIL_RELEASE_SDIST=/absolute/path/to/contrail_runtime_tools-0.10.0.tar.gz \
 uv run pytest -q tests/package_metadata_test.py
 ```
 
@@ -154,7 +151,7 @@ runs installed-wheel smoke, and publishes only the qualified files plus
 Before tagging, check identity:
 
 ```bash
-uv run python tools/release_check.py --ref-type tag --ref-name v0.9.0
+uv run python tools/release_check.py --ref-type tag --ref-name v0.10.0
 ```
 
 The first changelog release heading, project version, and `v<version>` tag must

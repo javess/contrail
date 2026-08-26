@@ -60,13 +60,13 @@ hide a dependency or explicit failure.
 An assertion with missing required evidence is `UNVERIFIABLE` and makes the
 verification fail. Invalid or unsupported contracts are errors rather than
 silently skipped claims. Unknown contract or assertion fields are also errors,
-so misspelled thresholds cannot be ignored. `proofline verify` exits 0 for a
+so misspelled thresholds cannot be ignored. `contrail verify` exits 0 for a
 full pass, 1 for a failed or unverifiable claim, and 2 for invalid input.
 
 ## Trace a claim to runtime evidence
 
-`proofline verify --format json --explain` and
-`proofline run --format json --explain` attach portable structured policy and
+`contrail verify --format json --explain` and
+`contrail run --format json --explain` attach portable structured policy and
 evidence to every result. Each item records the canonical resolved assertion,
 the exact values used for the verdict, and related detail in the same-snapshot
 RunDiff included in the document:
@@ -94,21 +94,17 @@ The option implies explanation, publishes a complete private file for both pass
 and contract-failure outcomes, refuses to overwrite any existing entry, and
 leaves no report when input validation or execution exits 2.
 
-Open the same contract beside its two artifacts to move directly from a failed
-claim to candidate evidence:
+Move from a failed claim to candidate evidence with terminal commands:
 
 ```bash
-runtime serve baseline.runpack --compare candidate.runpack \
-  --contract proofline.yaml
+contrail verify proofline.yaml --baseline baseline.runpack \
+  --candidate candidate.runpack --explain
+contrail analyze candidate.runpack
+contrail inspect candidate.runpack --tree
 ```
 
-Operation and dependency findings focus bounded event selections resolved by
-the Python evaluator. Resource, outcome, and output findings focus the candidate
-summary because attributing them to an arbitrary interval would overstate the
-evidence. Use `--proofline-report REPORT.json` to inspect the exact explained
-report retained by CI instead of re-evaluating a possibly changed contract.
-For current reports, that mode parses the embedded assertions, evaluates them
-against the supplied runpacks, and requires the complete result to match before
-labelling it replay-verified. Assertion-less version-1 reports stay on the
-explicitly degraded report-authored-policy/runtime-consistent path, including
-pass results and selector-based claims.
+Operation and dependency claims retain bounded selectors resolved by the
+Python evaluator. Resource, outcome, and output claims point to candidate
+summary facts because attributing them to an arbitrary interval would
+overstate the evidence. Use `--report REPORT.json` to retain the exact explained
+result produced in CI.

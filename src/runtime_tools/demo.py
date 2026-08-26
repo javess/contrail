@@ -22,7 +22,6 @@ from runtime_tools.proofline.verify import (
 )
 from runtime_tools.storage import RunpackError
 from runtime_tools.terminal import terminal_text
-from runtime_tools.ui import TimelineError, build_timeline_payload
 
 type DemoStatus = Literal["ready"]
 
@@ -167,79 +166,6 @@ def _write_report(
         raise DemoError(f"could not write demo Proofline report: {terminal_text(exc)}") from exc
 
 
-def _object(value: JsonValue | None, label: str) -> dict[str, JsonValue]:
-    if not isinstance(value, dict):
-        raise DemoError(f"generated demo {label} is not an object")
-    return value
-
-
-def _list(value: JsonValue | None, label: str) -> list[JsonValue]:
-    if not isinstance(value, list):
-        raise DemoError(f"generated demo {label} is not a list")
-    return value
-
-
-def _prove_interactive_evidence(payload: dict[str, JsonValue]) -> None:
-    proofline = _object(payload.get("proofline"), "Proofline evidence")
-    if proofline.get("source") != "report":
-        raise DemoError("generated demo did not validate its retained Proofline report")
-    findings = _list(proofline.get("findings"), "Proofline findings")
-    if any(
-        _object(finding, "Proofline finding").get("report_assurance")
-        != "artifact_bound_policy_replayed"
-        for finding in findings
-    ):
-        raise DemoError("generated demo report is not bound to the retained runpacks")
-    selections = _object(proofline.get("selections"), "Proofline selections")
-    by_type: dict[str, dict[str, JsonValue]] = {}
-    for raw_finding in findings:
-        finding = _object(raw_finding, "Proofline finding")
-        assertion_type = finding.get("type")
-        if isinstance(assertion_type, str):
-            by_type[assertion_type] = finding
-
-    expected = {
-        "forbid_new_dependency": {
-            "fact": {"baseline": 0, "candidate": 1},
-            "relationship": "dependency",
-            "matched_event_count": 1,
-        },
-        "max_operation_count": {
-            "fact": {
-                "baseline": _BASELINE_WRITES,
-                "candidate": _CANDIDATE_WRITES,
-                "limit": float(_BASELINE_WRITES),
-            },
-            "relationship": "operation",
-            "matched_event_count": _CANDIDATE_WRITES,
-        },
-    }
-    for assertion_type, proof in expected.items():
-        expected_finding = by_type.get(assertion_type)
-        if expected_finding is None or expected_finding.get("status") != "fail":
-            raise DemoError(f"generated demo did not produce the expected {assertion_type} failure")
-        evidence = _list(expected_finding.get("evidence"), f"{assertion_type} evidence")
-        if (
-            not evidence
-            or _object(evidence[0], f"{assertion_type} evidence").get("fact") != proof["fact"]
-        ):
-            raise DemoError(f"generated demo {assertion_type} facts are not deterministic")
-        selection_id = expected_finding.get("selection_id")
-        selection = selections.get(selection_id) if isinstance(selection_id, str) else None
-        selection_value = _object(selection, f"{assertion_type} selection")
-        if (
-            selection_value.get("relationship") != proof["relationship"]
-            or selection_value.get("matched_event_count") != proof["matched_event_count"]
-            or selection_value.get("truncated") is not False
-        ):
-            raise DemoError(f"generated demo {assertion_type} event mapping is incomplete")
-        selected_ids = _list(
-            selection_value.get("candidate_event_ids"), f"{assertion_type} event ids"
-        )
-        if len(selected_ids) != proof["matched_event_count"]:
-            raise DemoError(f"generated demo {assertion_type} event mapping is incomplete")
-
-
 def _validate_verification(report: VerificationReport) -> None:
     statuses = {result.type: result.status for result in report.results}
     if set(statuses) != {
@@ -314,12 +240,6 @@ def run_demo(output_dir: Path) -> DemoResult:
                 diff.as_json_value(),
                 artifact_bindings,
             )
-            payload = build_timeline_payload(
-                baseline_runpack,
-                candidate_runpack,
-                proofline_report=temporary_report,
-            )
-            _prove_interactive_evidence(payload)
             publish_without_overwrite(temporary_report, proofline_report)
         finally:
             remove_best_effort(temporary_report)
@@ -327,7 +247,7 @@ def run_demo(output_dir: Path) -> DemoResult:
         raise DemoError(
             f"{terminal_text(exc)}; partial demo retained at {terminal_text(output_dir)}"
         ) from exc
-    except (CaptureError, ContractError, RunpackError, TimelineError, OSError, ValueError) as exc:
+    except (CaptureError, ContractError, RunpackError, OSError, ValueError) as exc:
         raise DemoError(
             f"could not generate demo: {terminal_text(exc)}; "
             f"partial demo retained at {terminal_text(output_dir)}"

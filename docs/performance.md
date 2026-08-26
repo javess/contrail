@@ -103,7 +103,7 @@ shape fits on the minimum supported host. Release qualification assumes at
 least two CPU cores and 4 GiB available memory.
 
 The PR profile covers representative OTLP, Prometheus, Kubernetes, Temporal,
-profile-merge, capture, BatchScope, UI, and retained-report shapes. The release
+profile-merge, capture, BatchScope, and retained-report shapes. The release
 profile raises imported data to 25,000–100,000 records and analysis/report
 cases to 50,000 events. Current hard per-case ceilings range from 15–40 seconds
 and 1.5–2.5 GiB RSS for those large cases.

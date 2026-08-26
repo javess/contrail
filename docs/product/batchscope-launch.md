@@ -188,7 +188,7 @@ Record a 20–25 second terminal session:
    new `metadata-db` dependency.
 3. Run the printed `contrail analyze` command; stop on `result-aggregation` and
    `20 / 100 work items remaining`.
-4. End on the local `contrail serve` command without opening a fake browser UI.
+4. End on the local `contrail report` and `contrail inspect --tree` commands.
 
 Record at a fixed terminal size with no shell theme noise. Use the same asset in
 the README and hero; provide an accessible static terminal transcript beside it.

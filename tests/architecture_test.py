@@ -71,3 +71,15 @@ def test_relative_import_from_package_is_classified(tmp_path: Path) -> None:
         "runtime_tools.batchscope (analysis) imports runtime_tools.cli (presentation)"
         in result.stderr
     )
+
+
+def test_oversized_production_module_is_rejected(tmp_path: Path) -> None:
+    package = tmp_path / "runtime_tools"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "model.py").write_text("pass\n" * 1_001, encoding="utf-8")
+
+    result = _check(package)
+
+    assert result.returncode == 1
+    assert "runtime_tools.model has 1001 lines" in result.stderr

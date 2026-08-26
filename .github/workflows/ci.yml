@@ -157,11 +157,11 @@ jobs:
           version: "0.12.3"
       - run: uv sync --locked
       - name: Validate the example contract
-        run: uv run proofline validate examples/local/contracts.yaml --format json
+        run: uv run contrail validate examples/local/contracts.yaml --format json
       - name: Evaluate the pull request runtime contract
         id: proofline_gate
         run: >-
-          uv run proofline run examples/local/contracts.yaml
+          uv run contrail run examples/local/contracts.yaml
           --baseline-ref "${{ github.event.pull_request.base.sha }}"
           --candidate-ref "${{ github.event.pull_request.head.sha }}"
           --workload examples/local/pipeline.py
@@ -178,7 +178,7 @@ jobs:
             echo
             if [[ -f proofline-results/baseline.runpack && -f proofline-results/candidate.runpack ]]; then
               {
-                uv run proofline verify examples/local/contracts.yaml \
+                uv run contrail verify examples/local/contracts.yaml \
                   --baseline proofline-results/baseline.runpack \
                   --candidate proofline-results/candidate.runpack \
                   --explain 2>&1 || true

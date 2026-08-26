@@ -11,14 +11,14 @@
   `runpack`, `semantics`, `storage`, `terminal`, and `yaml_support`.
 - Adapters are `annotations`, `capture`, `deep_profile`,
   `process_observer`, `providers`, `runtime`, and the private Python profiling
-  and semantic-capture bootstraps. Provider contracts, discovery, and
-  implementations live under `providers`; analyses consume normalized evidence.
+  and semantic-capture bootstraps. Fixed provider commands and implementations
+  live under `providers`; analyses consume normalized evidence.
 - Analyses are `inspect`, `query`, `batchscope`, `rundiff`, and `proofline`.
 - Presentation is the package facade, command modules, `capture_jobs`,
-  `capture_worker`, `demo`, and `ui`.
+  `capture_worker`, and `demo`.
 - A layer may depend on itself or a layer to its left. The architecture check
-  must remain cycle-free. Split modules around cohesive responsibilities, not
-  an arbitrary line limit.
+  must remain cycle-free. Production modules have a hard 1,000-line ceiling;
+  split earlier around cohesive responsibilities.
 
 ## Python and types
 
@@ -42,8 +42,8 @@
   in `project.dependencies`; development tools go in `dependency-groups.dev`.
 - Prefer the standard library, then an existing dependency. A new dependency
   requires explicit user approval and focused compatibility evidence.
-- Preserve the `src` layout, wheel type marker, packaged schemas, UI assets,
-  entry points, and release-archive checks.
+- Preserve the `src` layout, wheel type marker, sole `contrail` entry point,
+  Pydantic-generated output contracts, and release-archive checks.
 
 ## Behavior and tests
 

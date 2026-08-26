@@ -456,12 +456,12 @@ print("result")
     )
 
 
-def test_record_process_preserves_core_capture_for_non_finite_annotation_json(
-    tmp_path: Path,
-) -> None:
-    workload = tmp_path / "non-finite.py"
-    workload.write_text(
-        """
+@pytest.mark.parametrize(
+    ("name", "workload_source", "expected_error"),
+    (
+        (
+            "non-finite",
+            """
 import os
 from pathlib import Path
 
@@ -470,16 +470,54 @@ Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_text(
     '"timestamp_ns":1,"attributes":{"value":NaN}}'
 )
 print("result")
-""".strip(),
-        encoding="utf-8",
-    )
-    output = tmp_path / "non-finite.runpack"
+""",
+            "invalid annotation JSON on line 1: non-finite constant NaN",
+        ),
+        (
+            "non-utf8",
+            """
+import os
+from pathlib import Path
 
-    exit_code = record_process((sys.executable, str(workload)), output, name="non-finite")
+Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_bytes(b"\\xff")
+print("result")
+""",
+            "captured annotations must be UTF-8",
+        ),
+        (
+            "reversed",
+            """
+import json
+import os
+from pathlib import Path
+
+records = [
+    {"record": "event_start", "id": "bad", "kind": "stage", "name": "bad", "timestamp_ns": 10},
+    {"record": "event_end", "id": "bad", "timestamp_ns": 9},
+]
+Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_text(
+    "".join(json.dumps(record) + "\\n" for record in records)
+)
+""",
+            "annotation event bad ends before it starts",
+        ),
+    ),
+)
+def test_record_process_preserves_core_capture_for_invalid_annotations(
+    tmp_path: Path,
+    name: str,
+    workload_source: str,
+    expected_error: str,
+) -> None:
+    workload = tmp_path / f"{name}.py"
+    workload.write_text(workload_source.strip(), encoding="utf-8")
+    output = tmp_path / f"{name}.runpack"
+
+    exit_code = record_process((sys.executable, str(workload)), output, name=name)
 
     summary = inspect_runpack(output)
     assert exit_code == 0
-    assert summary.annotation_error == "invalid annotation JSON on line 1: non-finite constant NaN"
+    assert summary.annotation_error == expected_error
     assert summary.record_counts["events"] == 1
 
 
@@ -493,30 +531,6 @@ def test_annotation_loader_rejects_duplicate_json_keys(tmp_path: Path) -> None:
 
     with pytest.raises(AnnotationError, match="duplicate JSON key: id"):
         load_annotations(annotations, entity_id="process")
-
-
-def test_record_process_preserves_core_capture_for_non_utf8_annotations(
-    tmp_path: Path,
-) -> None:
-    workload = tmp_path / "non-utf8.py"
-    workload.write_text(
-        """
-import os
-from pathlib import Path
-
-Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_bytes(b"\\xff")
-print("result")
-""".strip(),
-        encoding="utf-8",
-    )
-    output = tmp_path / "non-utf8.runpack"
-
-    exit_code = record_process((sys.executable, str(workload)), output, name="non-utf8")
-
-    summary = inspect_runpack(output)
-    assert exit_code == 0
-    assert summary.annotation_error == "captured annotations must be UTF-8"
-    assert summary.record_counts["events"] == 1
 
 
 def test_annotation_loader_rejects_escaped_invalid_unicode(tmp_path: Path) -> None:
@@ -560,36 +574,6 @@ print("result")
     assert exit_code == 0
     assert summary.annotation_error is not None
     assert summary.annotation_error.startswith("runpack JSON exceeds the 4194304-byte field limit")
-    assert summary.record_counts["events"] == 1
-
-
-def test_record_process_preserves_core_capture_for_reversed_annotation_intervals(
-    tmp_path: Path,
-) -> None:
-    workload = tmp_path / "reversed.py"
-    workload.write_text(
-        """
-import json
-import os
-from pathlib import Path
-
-records = [
-    {"record": "event_start", "id": "bad", "kind": "stage", "name": "bad", "timestamp_ns": 10},
-    {"record": "event_end", "id": "bad", "timestamp_ns": 9},
-]
-Path(os.environ["CONTRAIL_ANNOTATIONS_FILE"]).write_text(
-    "".join(json.dumps(record) + "\\n" for record in records)
-)
-""".strip(),
-        encoding="utf-8",
-    )
-    output = tmp_path / "reversed.runpack"
-
-    exit_code = record_process((sys.executable, str(workload)), output, name="reversed")
-
-    summary = inspect_runpack(output)
-    assert exit_code == 0
-    assert summary.annotation_error == "annotation event bad ends before it starts"
     assert summary.record_counts["events"] == 1
 
 

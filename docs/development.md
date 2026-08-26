@@ -35,9 +35,9 @@ Internal modules follow four layers:
 | Layer | Responsibilities | May import |
 |---|---|---|
 | Foundation | model, storage, artifact safety, serialization, shared support | foundation |
-| Providers/adapters | capture, annotations, profiling, provider contracts and integrations | foundation, providers/adapters |
+| Providers/adapters | capture, annotations, profiling, and built-in integrations | foundation, providers/adapters |
 | Analyses | inspection, queries, RunDiff, BatchScope, Proofline | foundation, adapters, analyses |
-| Presentation | public facade, CLIs, reports, demo, local UI | every layer |
+| Presentation | public facade, CLIs, reports, demo | every layer |
 
 Import concrete internal modules. The `runtime_tools` package root is the
 external facade, so package internals must not import it. Run the executable
@@ -48,9 +48,14 @@ uv run python tools/check_architecture.py
 ```
 
 Provider implementations live under `runtime_tools/providers`; add host-side
-integrations through the [provider contract](providers.md), not a new CLI
-branch. The exact layer classification is in `.agent/rules.md` and the design
+integrations to the [fixed built-in catalog](providers.md), not a new CLI
+branch or plug-in protocol. The exact layer classification is in `.agent/rules.md` and the design
 rationale is in [the architecture](architecture.md).
+
+CLI entry points are typed Typer commands composed by `contrail_cli.py`.
+Human-only output goes through the shared Rich console helpers; versioned JSON,
+JSONL, and workload byte streams must bypass Rich. Keep command functions thin
+and put capture, analysis, and provider behavior in their owning lower layer.
 
 ## Preserve strict types and runtime validation
 

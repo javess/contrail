@@ -11,17 +11,19 @@ import dis
 import importlib
 import json
 import os
-import socket
-import struct
 import sys
 import threading
 import time
-from types import CodeType, FrameType
+from types import FrameType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from . import _profile_bootstrap_support as _profile_support
     from . import _semantic_capture_bootstrap as _semantic_capture
 else:
+    _profile_support = importlib.import_module(
+        f"{__package__}._profile_bootstrap_support" if __package__ else "_profile_bootstrap_support"
+    )
     _semantic_capture = importlib.import_module(
         f"{__package__}._semantic_capture_bootstrap"
         if __package__
@@ -41,16 +43,9 @@ _MAX_NATIVE_EDGES = 10_000
 _MAX_STACK_DEPTH = 4_096
 _MAX_TEXT_CHARACTERS = 1_024
 _MAX_REPORT_BYTES = 16 * 1024 * 1024
-_SNAPSHOT_PROTOCOL_MAGIC = b"CTRP0002"
-_SNAPSHOT_HEADER = struct.Struct("!8sQQQQ")
-_SNAPSHOT_KIND_REGISTRATION = 1
-_SNAPSHOT_KIND_CHECKPOINT = 2
-_SNAPSHOT_KIND_FINAL = 3
-_SNAPSHOT_SOCKET_TIMEOUT_SECONDS = 0.1
-_FINAL_SNAPSHOT_SOCKET_TIMEOUT_SECONDS = 1.0
-_PUBLICATION_METRICS_VERSION = 1
+_PUBLICATION_METRICS_VERSION = _profile_support.PUBLICATION_METRICS_VERSION
 _OBSERVER_INTEGRITY_VERSION = 1
-_MAX_PUBLICATION_FALLBACK_BYTES = 256
+_MAX_PUBLICATION_FALLBACK_BYTES = _profile_support.MAX_PUBLICATION_FALLBACK_BYTES
 _SEMANTIC_OBSERVER_MODULE = "_semantic_capture_bootstrap"
 _CALLER_WRAPPER_MODULES = frozenset({"subprocess", "asyncio.subprocess", "asyncio.base_subprocess"})
 _THREAD_PROFILE_HOOK_SETTERS = frozenset({"setprofile", "setprofile_all_threads"})
@@ -88,7 +83,6 @@ _aggregates: dict[_FunctionKey, list[int]] = {}
 _native_aggregates: dict[_FunctionKey, list[int]] = {}
 _call_edges: dict[tuple[_FunctionKey, _FunctionKey], list[int]] = {}
 _native_call_edges: dict[tuple[_FunctionKey, _FunctionKey], list[int]] = {}
-_code_keys: dict[CodeType, _FunctionKey] = {}
 _tracked_function_keys: set[_FunctionKey] = set()
 _tracked_native_function_keys: set[_FunctionKey] = set()
 _stacks: dict[int, list[_StackEntry]] = {}
@@ -111,64 +105,23 @@ _observer_active = False
 _started_at_ns = time.time_ns()
 _stop_event = threading.Event()
 _checkpoint_thread: threading.Thread | None = None
-_runtime_prefixes = tuple(
-    dict.fromkeys(
-        os.path.realpath(prefix)
-        for prefix in (
-            sys.base_prefix,
-            sys.prefix,
-            *(
-                entry
-                for entry in sys.path
-                if isinstance(entry, str)
-                and entry
-                and any(
-                    component in {"site-packages", "dist-packages"}
-                    for component in os.path.normpath(entry).split(os.sep)
-                )
-            ),
-        )
-        if isinstance(prefix, str) and prefix
-    )
+_function_catalog = _profile_support.FunctionCatalog(_MAX_FUNCTIONS, _MAX_TEXT_CHARACTERS)
+_bounded_text = _function_catalog.bounded_text
+_function_key = _function_catalog.key
+_publisher = _profile_support.ReportPublisher(
+    _DIRECTORY_ENV,
+    _SOCKET_ENV,
+    _MAX_REPORT_BYTES,
+    _semantic_capture._begin_network_suppression,
+    _semantic_capture._end_network_suppression,
 )
 
 
-def _bounded_text(value: object, fallback: str) -> str:
-    text = value if isinstance(value, str) and value else fallback
-    return text.encode("utf-8", "backslashreplace").decode("utf-8")[:_MAX_TEXT_CHARACTERS]
-
-
-def _scope(filename: str) -> str:
-    if filename.startswith("<frozen "):
-        return "runtime"
-    if filename.startswith("<"):
-        return "application"
-    resolved = os.path.realpath(filename)
-    for prefix in _runtime_prefixes:
-        try:
-            if os.path.commonpath((resolved, prefix)) == prefix:
-                return "library"
-        except ValueError:
-            continue
-    return "application"
-
-
-def _function_key(frame: FrameType) -> _FunctionKey:
-    code = frame.f_code
-    existing = _code_keys.get(code)
-    if existing is not None:
-        return existing
-    filename = _bounded_text(code.co_filename, "<unknown>")
-    key = (
-        _bounded_text(frame.f_globals.get("__name__"), "<unknown>"),
-        _bounded_text(code.co_qualname, code.co_name or "<unknown>"),
-        filename,
-        max(0, code.co_firstlineno),
-        _scope(filename),
+def _is_semantic_observer(frame: FrameType) -> bool:
+    module = frame.f_globals.get("__name__")
+    return isinstance(module, str) and (
+        module == _SEMANTIC_OBSERVER_MODULE or module.startswith(f"{_SEMANTIC_OBSERVER_MODULE}.")
     )
-    if len(_code_keys) < _MAX_FUNCTIONS:
-        _code_keys[code] = key
-    return key
 
 
 def _native_function_key(value: object) -> _FunctionKey:
@@ -388,9 +341,7 @@ def _profile(frame: FrameType, event: str, argument: object) -> None:
                         _observe_asgi_send(frame)
             tracked_key: _FunctionKey | None
             native = event == "c_call"
-            if (stack and stack[-1][0] is _IGNORED_OBSERVER_KEY) or frame.f_globals.get(
-                "__name__"
-            ) == _SEMANTIC_OBSERVER_MODULE:
+            if (stack and stack[-1][0] is _IGNORED_OBSERVER_KEY) or _is_semantic_observer(frame):
                 tracked_key = _IGNORED_OBSERVER_KEY
                 native = False
             else:
@@ -485,7 +436,7 @@ def _trace(frame: FrameType, event: str, argument: object) -> object:
         frame.f_trace_opcodes = False
         if event != "exception":
             return _trace
-        if frame.f_globals.get("__name__") == _SEMANTIC_OBSERVER_MODULE:
+        if _is_semantic_observer(frame):
             return _trace
         control_flow = _is_builtin_iterator_control_flow(argument)
         key = _function_key(frame)
@@ -539,7 +490,7 @@ def _reset_after_fork() -> None:
     _native_aggregates.clear()
     _call_edges.clear()
     _native_call_edges.clear()
-    _code_keys.clear()
+    _function_catalog.clear()
     _tracked_function_keys.clear()
     _tracked_native_function_keys.clear()
     _stacks.clear()
@@ -678,105 +629,8 @@ def _encoded_report(snapshot_kind: str, *, registration_only: bool = False) -> b
     return encoded
 
 
-def _fallback_report(
-    encoded: bytes,
-    *,
-    socket_attempted: bool,
-    socket_failure_ns: int,
-    snapshot_kind: int,
-) -> bytes:
-    kind = {
-        _SNAPSHOT_KIND_REGISTRATION: "registration",
-        _SNAPSHOT_KIND_CHECKPOINT: "checkpoint",
-        _SNAPSHOT_KIND_FINAL: "final",
-    }[snapshot_kind]
-    fallback = json.dumps(
-        {
-            "socket_attempted": socket_attempted,
-            "socket_failure_ns": socket_failure_ns,
-            "snapshot_kind": kind,
-        },
-        ensure_ascii=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    if not encoded.endswith(b"}"):
-        raise ValueError("profile report must be a JSON object")
-    result = encoded[:-1] + b',"publication_fallback":' + fallback + b"}"
-    if len(result) > _MAX_REPORT_BYTES:
-        raise ValueError("profile fallback report exceeds its byte limit")
-    return result
-
-
-def _send_to_collector(
-    encoded: bytes,
-    serialization_ns: int,
-    snapshot_kind: int,
-) -> bool:
-    socket_path = os.environ.get(_SOCKET_ENV)
-    if not socket_path or not os.path.isabs(socket_path):
-        return False
-    suppression_token = _semantic_capture._begin_network_suppression()
-    try:
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-                connection.settimeout(
-                    _FINAL_SNAPSHOT_SOCKET_TIMEOUT_SECONDS
-                    if snapshot_kind == _SNAPSHOT_KIND_FINAL
-                    else _SNAPSHOT_SOCKET_TIMEOUT_SECONDS
-                )
-                connection.connect(socket_path)
-                connection.sendall(
-                    _SNAPSHOT_HEADER.pack(
-                        _SNAPSHOT_PROTOCOL_MAGIC,
-                        os.getpid(),
-                        len(encoded),
-                        serialization_ns,
-                        snapshot_kind,
-                    )
-                )
-                connection.sendall(encoded)
-            return True
-        except OSError:
-            return False
-    finally:
-        _semantic_capture._end_network_suppression(suppression_token)
-
-
-def _write_file(encoded: bytes) -> bool:
-    directory = os.environ.get(_DIRECTORY_ENV)
-    if not directory or not os.path.isabs(directory):
-        return False
-    temporary = os.path.join(directory, f".profile-{os.getpid()}.tmp")
-    destination = os.path.join(directory, f"profile-{os.getpid()}.json")
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        view = memoryview(encoded)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                return False
-            view = view[written:]
-        os.close(descriptor)
-        descriptor = None
-        os.replace(temporary, destination)
-        return True
-    except OSError:
-        return False
-    finally:
-        if descriptor is not None:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
+def _send_to_collector(encoded: bytes, serialization_ns: int, snapshot_kind: int) -> bool:
+    return _publisher.send_to_collector(encoded, serialization_ns, snapshot_kind)
 
 
 def _publish_report(snapshot_kind: str, *, registration_only: bool = False) -> None:
@@ -785,27 +639,11 @@ def _publish_report(snapshot_kind: str, *, registration_only: bool = False) -> N
         started_at_ns = time.perf_counter_ns()
         encoded = _encoded_report(snapshot_kind, registration_only=registration_only)
         serialization_ns = max(0, time.perf_counter_ns() - started_at_ns)
-        transport_kind = (
-            _SNAPSHOT_KIND_REGISTRATION
-            if registration_only
-            else (
-                _SNAPSHOT_KIND_CHECKPOINT if snapshot_kind == "checkpoint" else _SNAPSHOT_KIND_FINAL
-            )
-        )
-        socket_path = os.environ.get(_SOCKET_ENV)
-        socket_attempted = bool(socket_path and os.path.isabs(socket_path))
-        socket_started_at_ns = time.perf_counter_ns()
-        sent = _send_to_collector(encoded, serialization_ns, transport_kind)
-        socket_failure_ns = (
-            max(0, time.perf_counter_ns() - socket_started_at_ns) if socket_attempted else 0
-        )
-        if not sent and not _write_file(
-            _fallback_report(
-                encoded,
-                socket_attempted=socket_attempted,
-                socket_failure_ns=socket_failure_ns,
-                snapshot_kind=transport_kind,
-            )
+        if not _publisher.publish(
+            encoded,
+            serialization_ns,
+            snapshot_kind,
+            registration_only=registration_only,
         ):
             _callback_error_count += 1
     except BaseException:

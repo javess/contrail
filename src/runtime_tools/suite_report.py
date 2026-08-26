@@ -87,10 +87,10 @@ def render_suite_report(report: SuiteReport) -> str:
         "\n".join(
             (
                 "CONTRAIL SUITE REPORT",
-                f"baseline:  {terminal_text(report.diff.baseline_name)} "
-                f"({terminal_text(report.diff.baseline_id[:8])})",
-                f"candidate: {terminal_text(report.diff.candidate_name)} "
-                f"({terminal_text(report.diff.candidate_id[:8])})",
+                f"baseline:  {terminal_text(report.diff.baseline.name)} "
+                f"({terminal_text(report.diff.baseline.id[:8])})",
+                f"candidate: {terminal_text(report.diff.candidate.name)} "
+                f"({terminal_text(report.diff.candidate.id[:8])})",
             )
         ),
         _render_executive_summary(report),

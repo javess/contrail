@@ -2,34 +2,25 @@
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 from runtime_tools.providers.contracts import (
     ProviderCommand,
     ProviderExecutionError,
     ProviderResult,
-    ProviderSpec,
 )
 from runtime_tools.terminal import terminal_text
 
 
-def _configure(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("runpack", type=Path)
-    parser.add_argument("response", type=Path)
-    parser.add_argument("--output", type=Path, required=True)
-
-
-def _execute(arguments: argparse.Namespace) -> ProviderResult:
+def enrich_prometheus(runpack: Path, response: Path, *, output: Path) -> ProviderResult:
     from runtime_tools.providers.builtins.prometheus.enrichment import (
         import_prometheus_response,
     )
     from runtime_tools.providers.enrichment import EnrichmentError
     from runtime_tools.storage import RunpackError
 
-    output: Path = arguments.output
     try:
-        result = import_prometheus_response(arguments.runpack, arguments.response, output)
+        result = import_prometheus_response(runpack, response, output)
     except (EnrichmentError, RunpackError) as exc:
         raise ProviderExecutionError(str(exc)) from exc
     return ProviderResult(
@@ -42,15 +33,9 @@ def _execute(arguments: argparse.Namespace) -> ProviderResult:
     )
 
 
-PROVIDER = ProviderSpec(
-    key="prometheus",
-    display_name="Prometheus",
-    commands=(
-        ProviderCommand(
-            name="enrich-prometheus",
-            help="add a bounded Prometheus HTTP API response",
-            configure=_configure,
-            execute=_execute,
-        ),
+COMMANDS = (
+    ProviderCommand(
+        name="enrich-prometheus",
+        help="add a bounded Prometheus HTTP API response",
     ),
 )

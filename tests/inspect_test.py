@@ -193,6 +193,74 @@ def test_causal_tree_orders_unknown_timestamps_before_the_unix_epoch(tmp_path: P
     assert tree.index("z-unknown") < tree.index("a-epoch")
 
 
+def test_causal_tree_groups_operations_by_callsite_and_reserves_raw_profile_graph(
+    tmp_path: Path,
+) -> None:
+    runpack = tmp_path / "semantic-tree.runpack"
+    with RunpackWriter(runpack) as writer:
+        writer.add_execution(Execution("run", "run", 0, 10_000_000, (), str(tmp_path), 0, None, {}))
+        writer.add_entity(Entity("worker", "process", "python", None, {}))
+        writer.add_events(
+            (
+                Event(
+                    "process", "process.run", "python", "worker", 0, 10_000_000, None, None, 0, {}
+                ),
+                Event(
+                    "aggregate",
+                    "python.call.aggregate",
+                    "application.work",
+                    "worker",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    {},
+                ),
+                Event(
+                    "callsite",
+                    "python.callsite",
+                    "application.work",
+                    "worker",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    {},
+                ),
+                Event(
+                    "database",
+                    "database.execute",
+                    "Database execute",
+                    "worker",
+                    1_000_000,
+                    2_000_000,
+                    None,
+                    None,
+                    1,
+                    {"error": True, "error.type": "OperationalError"},
+                ),
+            )
+        )
+        writer.add_causal_edges(
+            (
+                CausalEdge("aggregate", "callsite", "calls", 1.0, {}),
+                CausalEdge("callsite", "database", "performs", 1.0, {}),
+            )
+        )
+
+    tree = render_causal_tree(runpack)
+    raw_tree = render_causal_tree(runpack, raw=True)
+
+    assert "python :: application.work [application callsite]" in tree
+    assert "  python :: Database execute [database.execute] 1.000ms, error OperationalError" in tree
+    assert "python.call.aggregate" not in tree
+    assert "[performs" not in tree
+    assert "python :: application.work [python.call.aggregate] duration unknown" in raw_tree
+    assert "application.work → Database execute [performs, confidence 1.00]" in raw_tree
+
+
 def test_text_inspection_escapes_terminal_control_characters(tmp_path: Path) -> None:
     runpack = tmp_path / "controls.runpack"
     with RunpackWriter(runpack) as writer:

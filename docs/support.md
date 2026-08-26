@@ -1,6 +1,6 @@
 # Support and current limits
 
-Contrail `0.9` is a POSIX developer tool.
+Contrail `0.10` is a POSIX developer tool.
 
 ## Qualified platforms
 
@@ -81,15 +81,12 @@ and [performance](performance.md).
 
 ## Providers
 
-Built-in OpenTelemetry, Kubernetes, Prometheus, and Temporal providers import
-exported files; they are not live collectors. Third-party providers use the
-`contrail.providers` entry-point group, are disabled by default, and execute in
-the host process when enabled. The supported extension API is
-`runtime_tools.providers`; built-ins have canonical paths below
-`runtime_tools.providers.builtins`. No legacy top-level provider aliases are
-maintained in this beta.
+Built-in OpenTelemetry, Kubernetes, Prometheus, and Temporal integrations import
+exported files; they are not live collectors. They are always available through
+the fixed command catalog and have canonical paths below
+`runtime_tools.providers.builtins`.
 
-See [provider development](providers.md) for selection and validation rules.
+See [built-in evidence integrations](providers.md).
 
 ## Jobs and recovery
 
@@ -105,21 +102,18 @@ inherited descriptors; detached capture has no stdin.
 ## Other requirements
 
 - Git is optional for capture, import, inspection, analysis, and verification
-  of existing artifacts. It is required for `proofline run` and `search`.
-- Node.js is test-only for UI semantic regression; the packaged local UI needs
-  no Node runtime.
-- The UI targets current evergreen Chrome, Firefox, and Safari.
+  of existing artifacts. It is required for `contrail run` and `contrail search`.
 - Optional JSON queries depend on JSON support in CPython's bundled SQLite;
   core reading and analysis do not.
 
 ## Compatibility and fixes
 
-Runpack major schema `1`, structured document format `1`, the read-only
-`open_runpack` API, and the provider contracts are documented compatibility
+Runpack schema `1.1`, structured document format `2`, and the read-only
+`open_runpack` API are documented compatibility
 surfaces. Human output and internal modules are not. See
 [compatibility](compatibility.md).
 
-Security fixes target the current `0.9` line; development snapshots receive no
+Security fixes target the current `0.10` line; development snapshots receive no
 backports. Report issues through [SECURITY.md](../SECURITY.md).
 
 Release benchmarks assume at least two CPU cores and 4 GiB available memory.

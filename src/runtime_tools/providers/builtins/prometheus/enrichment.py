@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Never, cast
+from typing import cast
 
-from runtime_tools.json_support import reject_duplicate_object
+from runtime_tools.json_support import JsonInputError, load_bounded_json
 from runtime_tools.model import Entity, JsonValue, Measurement
 from runtime_tools.providers.enrichment import (
     EnrichmentError,
@@ -121,37 +120,18 @@ def _entity_for(labels: dict[str, str], entities: tuple[Entity, ...]) -> str | N
     return None
 
 
-def _reject_json_constant(value: str) -> Never:
-    raise ValueError(f"non-finite JSON constant: {value}")
-
-
 def _load(source: Path) -> Iterator[tuple[dict[str, str], object, object]]:
     try:
-        with source.open("rb") as stream:
-            raw = stream.read(MAX_PROMETHEUS_RESPONSE_BYTES + 1)
-    except OSError as exc:
-        raise PrometheusImportError(f"could not read Prometheus response: {source}") from exc
-    if len(raw) > MAX_PROMETHEUS_RESPONSE_BYTES:
-        raise PrometheusImportError(
-            f"Prometheus response exceeds the {MAX_PROMETHEUS_RESPONSE_BYTES}-byte input limit"
-        )
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise PrometheusImportError("Prometheus response must be UTF-8") from exc
-    try:
-        document = json.loads(
-            text,
+        document, _ = load_bounded_json(
+            source,
+            label="Prometheus response",
+            syntax_label="Prometheus",
+            max_bytes=MAX_PROMETHEUS_RESPONSE_BYTES,
+            include_column=False,
             parse_float=Decimal,
-            parse_constant=_reject_json_constant,
-            object_pairs_hook=reject_duplicate_object,
         )
-    except json.JSONDecodeError as exc:
-        raise PrometheusImportError(f"invalid Prometheus JSON at line {exc.lineno}") from exc
-    except RecursionError as exc:
-        raise PrometheusImportError("Prometheus JSON nesting is too deep") from exc
-    except ValueError as exc:
-        raise PrometheusImportError(f"invalid Prometheus JSON: {exc}") from exc
+    except JsonInputError as exc:
+        raise PrometheusImportError(str(exc)) from exc
     root = _object(document, "Prometheus response")
     if root.get("status") != "success":
         raise PrometheusImportError("Prometheus response status is not success")

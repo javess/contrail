@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Never, cast
+from typing import cast
 
-from runtime_tools.json_support import reject_duplicate_object
+from runtime_tools.json_support import JsonInputError, load_bounded_json, parse_rfc3339_nanoseconds
 from runtime_tools.model import CausalEdge, Event, JsonValue
 from runtime_tools.providers.enrichment import (
     EnrichmentError,
@@ -62,14 +59,7 @@ class _History:
     activities: tuple[_Activity, ...]
 
 
-_RFC3339_TIMESTAMP = re.compile(
-    r"^(?P<whole>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
-    r"(?:\.(?P<fraction>\d{1,9}))?(?P<zone>Z|[+-]\d{2}:\d{2})$"
-)
-_RFC3339_WITHOUT_ZONE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$")
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MAX_RUNPACK_INTEGER = (1 << 63) - 1
-_MIN_RUNPACK_INTEGER = -(1 << 63)
 _WORKFLOW_STARTED = "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED"
 _ACTIVITY_SCHEDULED = "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED"
 _ACTIVITY_STARTED = "EVENT_TYPE_ACTIVITY_TASK_STARTED"
@@ -146,57 +136,23 @@ def _optional_event_reference(value: object, label: str) -> int | None:
 
 
 def _timestamp(value: object) -> int:
-    if not isinstance(value, str):
-        raise TemporalHistoryImportError("Temporal eventTime must be an RFC 3339 string")
-    match = _RFC3339_TIMESTAMP.fullmatch(value)
-    if match is None:
-        if _RFC3339_WITHOUT_ZONE.fullmatch(value):
-            raise TemporalHistoryImportError(f"Temporal eventTime requires a timezone: {value}")
-        raise TemporalHistoryImportError(f"invalid Temporal eventTime: {value}")
-    zone = "+00:00" if match.group("zone") == "Z" else match.group("zone")
     try:
-        parsed = datetime.fromisoformat(f"{match.group('whole')}{zone}")
+        timestamp = parse_rfc3339_nanoseconds(value, label="Temporal eventTime")
     except ValueError as exc:
-        raise TemporalHistoryImportError(f"invalid Temporal eventTime: {value}") from exc
-    delta = parsed.astimezone(UTC) - _EPOCH
-    seconds = delta.days * 86_400 + delta.seconds
-    fraction = match.group("fraction") or ""
-    timestamp_ns = seconds * 1_000_000_000 + int(fraction.ljust(9, "0") or "0")
-    if not _MIN_RUNPACK_INTEGER <= timestamp_ns <= _MAX_RUNPACK_INTEGER:
-        raise TemporalHistoryImportError(f"Temporal eventTime exceeds runpack range: {value}")
-    return timestamp_ns
-
-
-def _reject_json_constant(value: str) -> Never:
-    raise ValueError(f"non-finite JSON constant: {value}")
+        raise TemporalHistoryImportError(str(exc)) from exc
+    assert timestamp is not None
+    return timestamp
 
 
 def _load(source: Path) -> list[dict[str, object]]:
     try:
-        with source.open("rb") as stream:
-            raw = stream.read(MAX_TEMPORAL_HISTORY_BYTES + 1)
-    except OSError as exc:
-        raise TemporalHistoryImportError(f"could not read Temporal history: {source}") from exc
-    if len(raw) > MAX_TEMPORAL_HISTORY_BYTES:
-        raise TemporalHistoryImportError(
-            f"Temporal history exceeds the {MAX_TEMPORAL_HISTORY_BYTES}-byte input limit"
+        document, _ = load_bounded_json(
+            source,
+            label="Temporal history",
+            max_bytes=MAX_TEMPORAL_HISTORY_BYTES,
         )
-    try:
-        document = json.loads(
-            raw.decode("utf-8"),
-            parse_constant=_reject_json_constant,
-            object_pairs_hook=reject_duplicate_object,
-        )
-    except UnicodeDecodeError as exc:
-        raise TemporalHistoryImportError("Temporal history must be UTF-8") from exc
-    except json.JSONDecodeError as exc:
-        raise TemporalHistoryImportError(
-            f"invalid Temporal history JSON at line {exc.lineno}, column {exc.colno}"
-        ) from exc
-    except RecursionError as exc:
-        raise TemporalHistoryImportError("Temporal history JSON nesting is too deep") from exc
-    except ValueError as exc:
-        raise TemporalHistoryImportError(f"invalid Temporal history JSON: {exc}") from exc
+    except JsonInputError as exc:
+        raise TemporalHistoryImportError(str(exc)) from exc
     events = _list(_object(document, "Temporal history").get("events"), "Temporal events")
     if len(events) > MAX_TEMPORAL_HISTORY_EVENTS:
         raise TemporalHistoryImportError(

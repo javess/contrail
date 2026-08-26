@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 _PACKAGE = "runtime_tools"
+_MAX_MODULE_LINES = 1_000
 _LAYER_NAMES = ("foundation", "adapter", "analysis", "presentation")
 _FOUNDATION = frozenset(
     {
@@ -28,6 +29,7 @@ _ADAPTERS = frozenset(
     {
         "annotations",
         "_deep_profile_bootstrap",
+        "_profile_bootstrap_support",
         "_sampling_profile_bootstrap",
         "_semantic_capture_bootstrap",
         "capture",
@@ -39,7 +41,17 @@ _ADAPTERS = frozenset(
 )
 _ANALYSES = frozenset({"inspect", "query", "batchscope", "rundiff", "proofline"})
 _PRESENTATION = frozenset(
-    {"capture_jobs", "capture_worker", "cli", "contrail_cli", "demo", "suite_report", "ui"}
+    {
+        "_cli_support",
+        "capture_jobs",
+        "capture_worker",
+        "cli",
+        "console",
+        "contrail_cli",
+        "demo",
+        "provider_cli",
+        "suite_report",
+    }
 )
 _PRESENTATION_MODULES = frozenset(
     {
@@ -182,7 +194,14 @@ def check_architecture(source_root: Path) -> tuple[str, ...]:
     for path in paths:
         module = _module_name(path, source_root)
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            source = path.read_text(encoding="utf-8")
+            line_count = len(source.splitlines())
+            if line_count > _MAX_MODULE_LINES:
+                errors.append(
+                    f"{module} has {line_count} lines; split cohesive concerns below "
+                    f"{_MAX_MODULE_LINES} lines"
+                )
+            tree = ast.parse(source, filename=str(path))
         except (OSError, SyntaxError, UnicodeError) as error:
             errors.append(f"cannot inspect {path}: {error}")
             continue

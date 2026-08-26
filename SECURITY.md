@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are made for the current 0.9 release series. Development snapshots
+Security fixes are made for the current 0.10 release series. Development snapshots
 and older pre-release series are not guaranteed backports. Platform and artifact
 compatibility details are in `docs/support.md`; security boundaries are in
 `docs/threat-model.md`.
@@ -31,12 +31,12 @@ project. Credit is offered when requested and safe.
 
 Examples of in-scope reports include arbitrary file overwrite or deletion,
 publication of partial or attacker-substituted artifacts, mutation through the
-read-only query/UI surface, parser behavior that escapes documented resource
+read-only query surface, parser behavior that escapes documented resource
 bounds, secret exposure contrary to documented defaults, or cross-run evidence
 contamination.
 
 The arbitrary effects of an explicitly executed workload, a hostile process
-already running as the same user, intentional non-loopback UI exposure, secrets
+already running as the same user, secrets
 placed in argv/imported logs/opt-in attachments, and behavior on unsupported
 filesystems are documented limitations rather than vulnerabilities by
 themselves. Reports that show an additional boundary crossing remain welcome.

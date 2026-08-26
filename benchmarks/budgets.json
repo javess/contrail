@@ -16,7 +16,6 @@
       "native_call_capture": {"count": 1000, "max_seconds": 5.0, "max_rss_mib": 512, "max_capture_overhead_ratio": 5.0},
       "python_exception_capture": {"count": 1000, "max_seconds": 5.0, "max_rss_mib": 512, "max_capture_overhead_ratio": 5.0},
       "batchscope_analyze": {"count": 10000, "max_seconds": 5.0, "max_rss_mib": 512},
-      "ui_payload": {"count": 10000, "max_seconds": 8.0, "max_rss_mib": 768},
       "retained_report": {"count": 10000, "max_seconds": 12.0, "max_rss_mib": 1024}
     },
     "release": {
@@ -35,7 +34,6 @@
       "native_call_capture": {"count": 5000, "max_seconds": 5.0, "max_rss_mib": 512, "max_capture_overhead_ratio": 5.0},
       "python_exception_capture": {"count": 5000, "max_seconds": 5.0, "max_rss_mib": 512, "max_capture_overhead_ratio": 5.0},
       "batchscope_analyze": {"count": 50000, "max_seconds": 15.0, "max_rss_mib": 1536},
-      "ui_payload": {"count": 50000, "max_seconds": 25.0, "max_rss_mib": 2048},
       "retained_report": {"count": 50000, "max_seconds": 40.0, "max_rss_mib": 2560}
     }
   }

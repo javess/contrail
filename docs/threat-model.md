@@ -11,8 +11,7 @@ Treat these as untrusted input:
 
 - `.runpack`, OTLP, Kubernetes, Prometheus, Temporal, JSON, JSONL, and YAML;
 - Proofline contracts and explained reports;
-- installed third-party provider entry points;
-- browser-visible event attributes and log bodies.
+- event attributes and log bodies rendered by terminal commands.
 
 Parsers enforce byte, count, depth, field, and archive-path limits; reject
 ambiguous duplicate keys where relevant; and normalize failures to bounded
@@ -23,10 +22,8 @@ Workloads and Git refs executed by Proofline are trusted arbitrary code. They
 run with the invoking user's filesystem, network, environment, and credentials.
 Contrail isolates evidence and cleanup, not authority.
 
-Providers run in the Contrail host process after explicit enablement. Install
-and enable only trusted distributions. Provider metadata can be discovered
-without importing the implementation, and third-party providers are disabled
-by default, but execution is not sandboxed.
+Bundled evidence integrations parse their input in the Contrail host process;
+they are validation boundaries, not sandboxes.
 
 ## Filesystem safety
 
@@ -91,22 +88,16 @@ does not encrypt, authenticate, or establish custody. Use operating-system
 permissions, encrypted storage, trusted artifact retention, and signing or
 attestation where the risk requires them.
 
-## Local UI and queries
-
-The UI binds only to loopback, serves immutable snapshots, and does not load
-remote assets. Values are rendered as text rather than injected HTML. Loopback
-does not protect against another same-user process or a malicious browser
-extension; stop the server when finished.
+## Local queries and reports
 
 Query input is parsed into a restricted AST with allowlisted fields/operators,
 row limits, expression depth limits, and a virtual-machine step budget. It is
 not interpolated as SQL. This is a bounded inspection surface, not a general
 database console.
 
-Explained reports bind to runpack byte size and SHA-256 and are semantically
-replayed by the local server. If an attacker can replace both report and
-runpacks, binding alone provides no authenticity. CI retention, signatures, or
-attestations supply stronger provenance.
+Explained reports bind to runpack byte size and SHA-256. If an attacker can
+replace both report and runpacks, binding alone provides no authenticity. CI
+retention, signatures, or attestations supply stronger provenance.
 
 ## Availability and completeness
 
@@ -128,8 +119,8 @@ or inherited resources.
 
 ## Non-goals
 
-Contrail does not sandbox workloads or providers, authenticate UI users,
-encrypt artifacts, guarantee redaction or secure deletion, defend against a
+Contrail does not sandbox workloads or providers, encrypt artifacts, guarantee
+redaction or secure deletion, defend against a
 hostile local administrator, capture native programs comprehensively, or
 provide remote collection and multi-tenant isolation.
 

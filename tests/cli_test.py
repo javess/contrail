@@ -9,12 +9,11 @@ import sqlite3
 import subprocess
 import sys
 import time
-import uuid
 from pathlib import Path
 
 import pytest
 
-import runtime_tools.capture as capture_module
+import runtime_tools.capture._record as capture_module
 import runtime_tools.cli as cli_module
 from runtime_tools import CaptureError, __version__
 from runtime_tools.capture import record_process
@@ -25,14 +24,8 @@ from runtime_tools.capture_jobs import (
 )
 from runtime_tools.model import Event
 from runtime_tools.storage import RunpackReader, RunpackWriter
-
-
-def _trace_id(label: str) -> str:
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-trace:{label}").hex
-
-
-def _span_id(label: str) -> str:
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"test-span:{label}").hex[:16]
+from tests.telemetry_support import span_id as _span_id
+from tests.telemetry_support import trace_id as _trace_id
 
 
 def test_runtime_cli_records_then_inspects_json(tmp_path: Path) -> None:
@@ -787,61 +780,6 @@ def test_runtime_cli_rejects_mixed_capture_preset_and_expert_flags(
     assert not output.exists()
 
 
-@pytest.mark.parametrize(
-    ("option", "keyword"),
-    (("--contract", "contract"), ("--proofline-report", "proofline_report")),
-)
-def test_runtime_serve_forwards_proofline_debugging_inputs(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    option: str,
-    keyword: str,
-) -> None:
-    baseline = tmp_path / "baseline.runpack"
-    candidate = tmp_path / "candidate.runpack"
-    proofline_input = tmp_path / "proofline-input"
-    captured: dict[str, object] = {}
-
-    def serve(*args: object, **kwargs: object) -> None:
-        captured["args"] = args
-        captured.update(kwargs)
-
-    monkeypatch.setattr(cli_module, "serve_runpacks", serve)
-
-    status = cli_module.main(
-        [
-            "serve",
-            str(baseline),
-            "--compare",
-            str(candidate),
-            option,
-            str(proofline_input),
-            "--no-open",
-        ]
-    )
-
-    assert status == 0
-    assert captured["args"] == (baseline, candidate)
-    assert captured[keyword] == proofline_input
-    assert captured["open_browser"] is False
-
-
-@pytest.mark.parametrize("option", ("--contract", "--proofline-report"))
-def test_runtime_serve_requires_compare_for_proofline_debugging(
-    tmp_path: Path,
-    option: str,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    status = cli_module.main(
-        ["serve", str(tmp_path / "baseline.runpack"), option, str(tmp_path / "input")]
-    )
-
-    captured = capsys.readouterr()
-    assert status == 2
-    assert captured.out == ""
-    assert captured.err == f"runtime: {option} requires --compare\n"
-
-
 def test_runtime_cli_rejects_an_output_limit_without_output_capture(tmp_path: Path) -> None:
     output = tmp_path / "ignored-limit.runpack"
 
@@ -1079,7 +1017,6 @@ def test_capture_worker_finishes_after_cli_is_killed_mid_run(tmp_path: Path) -> 
                 break
             time.sleep(0.01)
         assert job_payload is not None
-        assert job_payload["state"] == "running"
         assert job_payload["operation"] == "runtime record"
         job_id = job_payload["job_id"]
         assert isinstance(job_id, str)

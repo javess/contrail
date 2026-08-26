@@ -4,21 +4,24 @@ from __future__ import annotations
 
 import json
 import shlex
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
-from runtime_tools.json_support import output_document
-from runtime_tools.model import Event, JsonValue
+from runtime_tools.json_support import JsonDocumentModel
+from runtime_tools.model import CausalEdge, Event, JsonValue
 from runtime_tools.storage import RunpackReader
 from runtime_tools.terminal import terminal_text
 
 _MAX_TREE_INDENT_DEPTH = 40
 MAX_CAUSAL_TREE_ITEMS = 10_000
 _MAX_COMPLETENESS_COUNT = (1 << 63) - 1
+_PROFILE_EVENT_KINDS = frozenset({"python.call.aggregate", "python.callsite"})
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionSummary:
+class ExecutionSummary(JsonDocumentModel):
+    document_type = "runtime.inspect"
+
     schema_version: str
     producer_version: str
     id: str
@@ -45,11 +48,6 @@ class ExecutionSummary:
     missing_causal_references: int | None
     dropped_attribute_count: int | None
     record_counts: dict[str, int]
-
-    def as_json_value(self) -> dict[str, JsonValue]:
-        value = asdict(self)
-        value["command"] = list(self.command)
-        return output_document("runtime.inspect", value)
 
 
 def _nested_output(metadata: dict[str, JsonValue], stream: str, field: str) -> str | int | None:
@@ -119,14 +117,17 @@ def inspect_runpack(path: Path) -> ExecutionSummary:
         return inspect_reader(reader)
 
 
-def render_causal_tree_reader(reader: RunpackReader) -> str:
-    """Render causal structure from the reader's stable snapshot."""
+def render_causal_tree_reader(reader: RunpackReader, *, raw: bool = False) -> str:
+    """Render semantic causal structure, or every stored event when ``raw``."""
     events = reader.events()
     all_edges = reader.causal_edges()
+    if not raw:
+        events, all_edges = _semantic_causal_graph(events, all_edges)
     entity_names = {entity.id: entity.name for entity in reader.entities()}
     inconsistency_count = reader.clock_inconsistency_count()
-    edges = tuple(edge for edge in all_edges if edge.kind == "parent")
-    other_edges = tuple(edge for edge in all_edges if edge.kind != "parent")
+    hierarchy_kinds = {"parent"} if raw else {"parent", "performs"}
+    edges = tuple(edge for edge in all_edges if edge.kind in hierarchy_kinds)
+    other_edges = tuple(edge for edge in all_edges if edge.kind not in hierarchy_kinds)
     by_id = {event.id: event for event in events}
     children: dict[str, list[str]] = {event.id: [] for event in events}
     incoming: set[str] = set()
@@ -136,9 +137,15 @@ def render_causal_tree_reader(reader: RunpackReader) -> str:
             incoming.add(edge.target_event_id)
     roots = [event.id for event in events if event.id not in incoming]
 
-    def sort_key(event_id: str) -> tuple[int, str]:
-        started_at_ns = by_id[event_id].started_at_ns
-        return (-1 if started_at_ns is None else started_at_ns, by_id[event_id].name)
+    def sort_key(event_id: str) -> tuple[int, int, str]:
+        event = by_id[event_id]
+        started_at_ns = event.started_at_ns
+        context_priority = 1 if not raw and event.kind == "python.callsite" else 0
+        return (
+            context_priority,
+            -1 if started_at_ns is None else started_at_ns,
+            event.name,
+        )
 
     for child_ids in children.values():
         child_ids.sort(key=sort_key)
@@ -169,10 +176,14 @@ def render_causal_tree_reader(reader: RunpackReader) -> str:
             else:
                 marker = ""
             service = terminal_text(entity_names.get(event.entity_id or "", "unowned"))
-            label = (
-                f"{service} :: {terminal_text(event.name)} "
-                f"[{terminal_text(event.kind)}] {_event_duration(event)}{marker}"
-            )
+            if not raw and event.kind == "python.callsite":
+                label = f"{service} :: {terminal_text(event.name)} [application callsite]{marker}"
+            else:
+                label = (
+                    f"{service} :: {terminal_text(event.name)} "
+                    f"[{terminal_text(event.kind)}] {_event_duration(event)}"
+                    f"{_event_status(event) if not raw else ''}{marker}"
+                )
             visible_depth = min(depth, _MAX_TREE_INDENT_DEPTH)
             depth_marker = f"… depth {depth} … " if depth > _MAX_TREE_INDENT_DEPTH else ""
             lines.append(f"{'  ' * visible_depth}{depth_marker}{label}")
@@ -214,15 +225,46 @@ def render_causal_tree_reader(reader: RunpackReader) -> str:
     return "\n".join(lines)
 
 
-def render_causal_tree(path: Path) -> str:
+def render_causal_tree(path: Path, *, raw: bool = False) -> str:
     with RunpackReader(path) as reader:
-        return render_causal_tree_reader(reader)
+        return render_causal_tree_reader(reader, raw=raw)
+
+
+def _semantic_causal_graph(
+    events: tuple[Event, ...],
+    edges: tuple[CausalEdge, ...],
+) -> tuple[tuple[Event, ...], tuple[CausalEdge, ...]]:
+    by_id = {event.id: event for event in events}
+    visible_ids = {event.id for event in events if event.kind not in _PROFILE_EVENT_KINDS}
+    for edge in edges:
+        if edge.kind != "performs" or edge.target_event_id not in visible_ids:
+            continue
+        source = by_id.get(edge.source_event_id)
+        if source is not None and source.kind == "python.callsite":
+            visible_ids.add(source.id)
+    visible_events = tuple(event for event in events if event.id in visible_ids)
+    visible_edges = tuple(
+        edge
+        for edge in edges
+        if edge.kind != "calls"
+        and edge.source_event_id in visible_ids
+        and edge.target_event_id in visible_ids
+    )
+    return visible_events, visible_edges
 
 
 def _event_duration(event: Event) -> str:
     if event.started_at_ns is None or event.finished_at_ns is None:
         return "duration unknown"
     return f"{(event.finished_at_ns - event.started_at_ns) / 1_000_000:.3f}ms"
+
+
+def _event_status(event: Event) -> str:
+    if event.attributes.get("error") is not True:
+        return ""
+    error_type = event.attributes.get("error.type")
+    label = terminal_text(error_type) if isinstance(error_type, str) else "unknown"
+    return f", error {label}"
 
 
 def _as_int(value: str | int | None) -> int | None:

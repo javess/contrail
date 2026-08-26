@@ -28,9 +28,9 @@ def test_contrail_root_help_and_version_present_one_product() -> None:
 
     assert help_result.returncode == 0
     assert help_result.stderr == ""
-    assert "usage: contrail COMMAND" in help_result.stdout
+    assert "Usage: contrail [OPTIONS] COMMAND [ARGS]..." in help_result.stdout
     assert "demo" in help_result.stdout
-    assert "record → verify → serve" in help_result.stdout
+    assert "record → compare → verify" in help_result.stdout
     assert no_argument_result.returncode == 0
     assert no_argument_result.stdout == help_result.stdout
     assert no_argument_result.stderr == ""
@@ -69,19 +69,7 @@ def test_contrail_demo_is_a_self_contained_successful_walkthrough(tmp_path: Path
             "--explain",
         )
     )
-    serve_command = shlex.join(
-        (
-            "contrail",
-            "serve",
-            str(output / "baseline.runpack"),
-            "--compare",
-            str(output / "candidate.runpack"),
-            "--proofline-report",
-            str(output / "proofline-report.json"),
-        )
-    )
     assert f"  {verify_command}\n" in result.stdout
-    assert f"  {serve_command}\n" in result.stdout
     assert (
         f"  {shlex.join(('contrail', 'analyze', str(output / 'candidate.runpack')))}\n"
         in result.stdout
@@ -143,7 +131,9 @@ def test_contrail_unknown_command_is_a_branded_usage_error() -> None:
 
     assert result.returncode == 2
     assert result.stdout == ""
-    assert result.stderr == "contrail: unknown command: unknown\nTry 'contrail --help'.\n"
+    assert "Usage: contrail [OPTIONS] COMMAND [ARGS]..." in result.stderr
+    assert "No such command 'unknown'." in result.stderr
+    assert "Try 'contrail --help' for help." in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -156,7 +146,6 @@ def test_contrail_unknown_command_is_a_branded_usage_error() -> None:
         "compare",
         "analyze",
         "report",
-        "serve",
         "query",
         "import-otel",
         "enrich-kubernetes",
@@ -174,11 +163,30 @@ def test_contrail_subcommand_help_keeps_the_branded_command_name(command: str) -
 
     assert result.returncode == 0
     assert result.stderr == ""
-    assert result.stdout.startswith(f"usage: contrail {command} ")
+    assert f"Usage: contrail {command} " in result.stdout
     if command in {"run", "search"}:
         assert "--python" in result.stdout
     if command in {"verify", "run"}:
         assert "--report" in result.stdout
+    if command == "analyze":
+        assert "--verbose" in result.stdout
+    if command == "inspect":
+        assert "--raw-tree" in result.stdout
+
+
+def test_contrail_analyze_defaults_to_summary_and_retains_verbose_report(tmp_path: Path) -> None:
+    runpack = tmp_path / "run.runpack"
+    record_process((sys.executable, "-c", "pass"), runpack, name="readable")
+
+    summary = _contrail("analyze", str(runpack))
+    verbose = _contrail("analyze", str(runpack), "--verbose")
+
+    assert summary.returncode == verbose.returncode == 0
+    assert summary.stdout.startswith("BATCHSCOPE readable (")
+    assert "details: use --verbose" in summary.stdout
+    assert "\nObservation\n" not in summary.stdout
+    assert verbose.stdout.startswith("BATCHSCOPE\n")
+    assert "\nObservation\n" in verbose.stdout
 
 
 def test_contrail_report_combines_candidate_analysis_diff_and_contract_evidence(
@@ -338,16 +346,11 @@ def test_contrail_explanation_keeps_the_debug_workflow_branded(tmp_path: Path) -
     assert result.returncode == 1
     assert f"contrail analyze {shlex.quote(str(candidate))}" in result.stdout
     assert f"contrail inspect {shlex.quote(str(candidate))} --tree" in result.stdout
-    assert (
-        f"contrail serve {shlex.quote(str(baseline))} "
-        f"--compare {shlex.quote(str(candidate))} --contract {shlex.quote(str(contract))}"
-        in result.stdout
-    )
     assert "batchscope inspect" not in result.stdout
-    assert "runtime serve" not in result.stdout
+    assert not any(line.startswith("contrail serve ") for line in result.stdout.splitlines())
 
 
-def test_contrail_report_next_step_replays_the_retained_failure(tmp_path: Path) -> None:
+def test_contrail_report_is_retained_with_artifact_bindings(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"
     contract = tmp_path / "contract.yaml"
@@ -377,9 +380,4 @@ def test_contrail_report_next_step_replays_the_retained_failure(tmp_path: Path) 
     assert result.returncode == 1
     assert result.stderr == ""
     assert json.loads(report.read_text(encoding="utf-8"))["artifact_bindings"]
-    assert (
-        f"contrail serve {shlex.quote(str(baseline))} "
-        f"--compare {shlex.quote(str(candidate))} "
-        f"--proofline-report {shlex.quote(str(report))}" in result.stdout
-    )
-    assert "runtime serve" not in result.stdout
+    assert not any(line.startswith("contrail serve ") for line in result.stdout.splitlines())

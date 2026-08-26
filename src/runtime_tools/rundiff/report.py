@@ -17,16 +17,16 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
         return json.dumps(diff.as_json_value(), allow_nan=False, indent=2, sort_keys=True)
     lines = [
         "RUNTIME DIFF",
-        f"baseline:  {terminal_text(diff.baseline_name)} ({terminal_text(diff.baseline_id[:8])})",
-        f"candidate: {terminal_text(diff.candidate_name)} ({terminal_text(diff.candidate_id[:8])})",
+        f"baseline:  {terminal_text(diff.baseline.name)} ({terminal_text(diff.baseline.id[:8])})",
+        f"candidate: {terminal_text(diff.candidate.name)} ({terminal_text(diff.candidate.id[:8])})",
         f"matching:  {diff.match_level}",
     ]
     warnings: list[str] = []
-    if not diff.timing_comparable:
+    if not diff.instrumentation.timing_comparable:
         warnings.append(
             "  timing is not comparable across "
-            f"{terminal_text(diff.baseline_instrumentation_mode)} and "
-            f"{terminal_text(diff.candidate_instrumentation_mode)} instrumentation"
+            f"{terminal_text(diff.instrumentation.baseline_mode)} and "
+            f"{terminal_text(diff.instrumentation.candidate_mode)} instrumentation"
         )
     annotation_errors = (
         ("baseline", diff.baseline_annotation_error),
@@ -206,8 +206,8 @@ def render_diff(diff: ExecutionDiff, output_format: str) -> str:
             "Outcome",
             f"  {diff.outcome}",
             (
-                f"  exit status: {_exit_status(diff.baseline_exit_code)} → "
-                f"{_exit_status(diff.candidate_exit_code)} "
+                f"  exit status: {_exit_status(diff.baseline.exit_code)} → "
+                f"{_exit_status(diff.candidate.exit_code)} "
                 f"({_equivalence(diff.exit_code_equivalent)})"
             ),
             f"  stdout:      {_equivalence(diff.output_equivalent)}",

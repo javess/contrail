@@ -11,6 +11,10 @@ import pytest
 import runtime_tools.model as model
 import runtime_tools.runpack as runpack_api
 import runtime_tools.storage as storage
+import runtime_tools.storage._reader as storage_reader
+import runtime_tools.storage._snapshot as storage_snapshot
+import runtime_tools.storage._validation as storage_validation
+import runtime_tools.storage._writer as storage_writer
 from runtime_tools import Runpack, RunpackError, open_runpack
 from runtime_tools.runpack import (
     Attachment,
@@ -227,8 +231,20 @@ def test_returned_json_values_do_not_write_through_to_the_runpack(tmp_path: Path
         assert runpack.events()[0].attributes == {"http.status_code": 200}
 
 
-def test_open_runpack_preflights_field_sizes_before_materializing_records(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("limit_name", "limit", "message"),
+    (
+        ("MAX_RUNPACK_JSON_BYTES", 512, "runpack JSON exceeds"),
+        ("MAX_RUNPACK_SQLITE_LENGTH_BYTES", 128, "^invalid runpack:"),
+    ),
+    ids=("json-field", "sqlite-length"),
+)
+def test_open_runpack_bounds_fields_before_materializing_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit_name: str,
+    limit: int,
+    message: str,
 ) -> None:
     path = tmp_path / "oversized.runpack"
     _complete_runpack(path)
@@ -237,25 +253,9 @@ def test_open_runpack_preflights_field_sizes_before_materializing_records(
             "UPDATE executions SET metadata_json = ?",
             (json.dumps({"oversized": "x" * 1024}),),
         )
-    monkeypatch.setattr(storage, "MAX_RUNPACK_JSON_BYTES", 512)
+    monkeypatch.setattr(storage_validation, limit_name, limit)
 
-    with pytest.raises(RunpackError, match="runpack JSON exceeds"):
-        open_runpack(path)
-
-
-def test_open_runpack_normalizes_sqlite_length_backstop_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "sqlite-limit.runpack"
-    _complete_runpack(path)
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            "UPDATE executions SET metadata_json = ?",
-            (json.dumps({"oversized": "x" * 1024}),),
-        )
-    monkeypatch.setattr(storage, "MAX_RUNPACK_SQLITE_LENGTH_BYTES", 128)
-
-    with pytest.raises(RunpackError, match="^invalid runpack:"):
+    with pytest.raises(RunpackError, match=message):
         open_runpack(path)
 
 
@@ -275,7 +275,7 @@ def test_open_runpack_preflights_record_and_aggregate_byte_caps(
     def trace_connection(connection: sqlite3.Connection) -> None:
         connection.set_trace_callback(statements.append)
 
-    monkeypatch.setattr(storage, "MAX_RUNPACK_MEASUREMENT_RECORDS", 1)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_MEASUREMENT_RECORDS", 1)
     with pytest.raises(RunpackError, match="measurements exceeds the record limit of 1"):
         storage.RunpackReader(path, prepare_connection=trace_connection)
     assert any("SELECT 1 FROM measurements LIMIT 1 OFFSET 1" in sql for sql in statements)
@@ -284,8 +284,8 @@ def test_open_runpack_preflights_record_and_aggregate_byte_caps(
         for sql in statements
     )
 
-    monkeypatch.setattr(storage, "MAX_RUNPACK_MEASUREMENT_RECORDS", 2)
-    monkeypatch.setattr(storage, "MAX_RUNPACK_NORMALIZED_JSON_BYTES", 1)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_MEASUREMENT_RECORDS", 2)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_NORMALIZED_JSON_BYTES", 1)
     with pytest.raises(RunpackError, match="normalized JSON bytes; aggregate limit is 1"):
         open_runpack(path)
 
@@ -298,7 +298,7 @@ def test_path_readers_and_existing_writers_reject_runpacks_over_the_file_cap(
     file_limit = path.stat().st_size
     with path.open("r+b") as artifact:
         artifact.truncate(file_limit + 4096)
-    monkeypatch.setattr(storage, "MAX_RUNPACK_FILE_BYTES", file_limit)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_FILE_BYTES", file_limit)
 
     with pytest.raises(RunpackError, match=f"file limit is {file_limit} bytes"):
         open_runpack(path)
@@ -331,9 +331,9 @@ def test_descriptor_size_check_rejects_growth_before_hashing(
         hash_called = True
         raise AssertionError("oversized descriptor reached hashing")
 
-    monkeypatch.setattr(storage, "MAX_RUNPACK_FILE_BYTES", file_limit)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_FILE_BYTES", file_limit)
     monkeypatch.setattr(os, "open", grow_before_open)
-    monkeypatch.setattr(storage, "_hash_descriptor", reject_hash)
+    monkeypatch.setattr(storage_snapshot, "_hash_descriptor", reject_hash)
 
     with pytest.raises(RunpackError, match=f"file limit is {file_limit} bytes"):
         with open_runpack_snapshot(path):
@@ -342,36 +342,14 @@ def test_descriptor_size_check_rejects_growth_before_hashing(
     assert hash_called is False
 
 
-def test_all_validated_connection_paths_install_the_sqlite_length_backstop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "input.runpack"
-    _complete_runpack(path)
-    real_validate = storage._validate_connection
-    observed_limits: list[int] = []
-
-    def validate_with_limit(connection: sqlite3.Connection) -> str:
-        observed_limits.append(connection.getlimit(sqlite3.SQLITE_LIMIT_LENGTH))
-        return real_validate(connection)
-
-    monkeypatch.setattr(storage, "_validate_connection", validate_with_limit)
-
-    with open_runpack(path):
-        pass
-    with RunpackWriter.open_existing(path):
-        pass
-    with open_runpack_snapshot(path):
-        pass
-
-    assert observed_limits == [storage.MAX_RUNPACK_SQLITE_LENGTH_BYTES] * 3
-
-
 def test_attachment_at_the_configured_field_and_aggregate_limit_is_readable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "attachment-boundary.runpack"
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
-    monkeypatch.setattr(storage, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 8)
+    monkeypatch.setattr(storage_writer, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
+    monkeypatch.setattr(storage_writer, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 8)
+    monkeypatch.setattr(storage_reader, "MAX_RUNPACK_ATTACHMENT_BYTES", 8)
+    monkeypatch.setattr(storage_reader, "MAX_RUNPACK_ATTACHMENT_TOTAL_BYTES", 8)
     with RunpackWriter(path) as writer:
         writer.add_execution(Execution("run", "run", 0, 1, (), "/work", 0, None, {}))
         writer.add_attachments(

@@ -23,6 +23,7 @@ from runtime_tools.storage import (
     RunpackError,
     RunpackReader,
     RunpackWriter,
+    UnsupportedSchemaError,
     open_runpack_snapshot,
 )
 from runtime_tools.storage import (
@@ -361,7 +362,7 @@ def test_read_snapshot_path_replacement_during_hash_cannot_mix_generations(
             os.replace(replacement, source)
         return real_pread(descriptor, byte_count, offset)
 
-    monkeypatch.setattr("runtime_tools.storage.os.pread", replace_on_first_read)
+    monkeypatch.setattr("runtime_tools.storage._snapshot.os.pread", replace_on_first_read)
 
     with open_runpack_snapshot(source) as (reader, identity):
         assert reader.execution().name == "original"
@@ -410,7 +411,7 @@ def test_read_snapshot_rechecks_the_descriptor_after_sqlite_closes(
             pass
 
 
-def test_read_snapshot_accepts_a_readable_future_minor_schema(tmp_path: Path) -> None:
+def test_read_snapshot_rejects_a_different_schema(tmp_path: Path) -> None:
     source = tmp_path / "source.runpack"
     with RunpackWriter(source) as writer:
         writer.add_execution(Execution("run", "run", 0, 1, (), str(tmp_path), 0, None, {}))
@@ -418,9 +419,9 @@ def test_read_snapshot_accepts_a_readable_future_minor_schema(tmp_path: Path) ->
         connection.execute("UPDATE manifest SET value = '1.7' WHERE key = 'schema_version'")
         connection.execute("ALTER TABLE events ADD COLUMN future_optional TEXT")
 
-    with open_runpack_snapshot(source) as (reader, identity):
-        assert reader.manifest()["schema_version"] == "1.7"
-        assert identity.sha256 == hashlib.sha256(source.read_bytes()).hexdigest()
+    with pytest.raises(UnsupportedSchemaError, match="supported schema: 1.1"):
+        with open_runpack_snapshot(source):
+            pass
 
 
 def test_artifact_bound_verification_uses_the_same_reader_snapshots(tmp_path: Path) -> None:
@@ -443,8 +444,8 @@ def test_artifact_bound_verification_uses_the_same_reader_snapshots(tmp_path: Pa
         candidate,
     )
 
-    assert report.baseline_id == diff.baseline_id == "baseline"
-    assert report.candidate_id == diff.candidate_id == "candidate"
+    assert report.baseline_id == diff.baseline.id == "baseline"
+    assert report.candidate_id == diff.candidate.id == "candidate"
     assert bindings.baseline.sha256 == hashlib.sha256(baseline.read_bytes()).hexdigest()
     assert bindings.candidate.sha256 == hashlib.sha256(candidate.read_bytes()).hexdigest()
     assert (

@@ -1,71 +1,224 @@
-"""One branded command surface for the Contrail workflow."""
+"""The single installed Contrail command tree."""
 
 from __future__ import annotations
 
-import argparse
 import os
 import shlex
 import sys
 from pathlib import Path
+from typing import Annotated
 
+import typer
+
+from runtime_tools._cli_support import fail, finish, run_cli
 from runtime_tools._version import __version__
-from runtime_tools.batchscope.cli import main as batchscope_main
-from runtime_tools.cli import CORE_COMMANDS
-from runtime_tools.cli import main as runtime_main
-from runtime_tools.proofline.cli import main as proofline_main
-from runtime_tools.providers import ProviderError, ProviderRegistry, resolve_provider_registry
-from runtime_tools.rundiff.cli import main as rundiff_main
+from runtime_tools.batchscope.cli import analyze_command
+from runtime_tools.cli import app as runtime_app
+from runtime_tools.console import print_text
+from runtime_tools.proofline.cli import app as proofline_app
+from runtime_tools.rundiff.cli import compare_command
 from runtime_tools.storage import RunpackError
 from runtime_tools.terminal import broken_pipe_safe, terminal_text
 
-_RUNTIME_COMMANDS = frozenset(
-    {
-        "record",
-        "recover",
-        "inspect",
-        "job",
-        "serve",
-        "query",
-        "providers",
-    }
+app = typer.Typer(
+    name="contrail",
+    help=(
+        "Capture runtime evidence, enforce behavioral contracts, and follow failures "
+        "to the exact candidate events that explain them."
+    ),
+    epilog=(
+        "Start with [bold]contrail demo[/bold] for a complete local walkthrough. "
+        "The core workflow is [bold]record → compare → verify[/bold]."
+    ),
+    no_args_is_help=True,
+    add_completion=False,
+    rich_markup_mode="rich",
+    pretty_exceptions_enable=False,
 )
-_PROOFLINE_COMMANDS = frozenset({"validate", "verify", "run", "search"})
+app.add_typer(runtime_app, name=None)
+app.add_typer(proofline_app, name=None)
+app.command(
+    "compare",
+    help="Compare baseline and candidate runpacks.",
+    rich_help_panel="Analyze",
+)(compare_command)
+app.command(
+    "analyze",
+    help="Explain lifecycle, critical path, and bottlenecks.",
+    rich_help_panel="Analyze",
+)(analyze_command)
 
 
-def _help(provider_registry: ProviderRegistry) -> str:
-    provider_lines = "\n".join(
-        f"  {command.name:<27} {command.help}" for command in provider_registry.commands
+def _show_version(value: bool) -> None:
+    if value:
+        print_text(f"contrail {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def root_options(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=_show_version,
+            is_eager=True,
+            help="Show the installed Contrail version and exit",
+        ),
+    ] = False,
+) -> None:
+    """One terminal surface for capture, analysis, and verification."""
+
+
+@app.command("demo", help="Run the installed five-minute walkthrough.", rich_help_panel="Start")
+def demo_command(
+    output_dir: Annotated[
+        Path, typer.Option("--output-dir", help="Directory for generated demo artifacts")
+    ] = Path("contrail-demo"),
+) -> None:
+    from runtime_tools.demo import DemoError, run_demo
+
+    try:
+        result = run_demo(output_dir)
+    except KeyboardInterrupt:
+        print_text(
+            "contrail: demo interrupted; completed artifacts were retained",
+            stderr=True,
+            style="yellow",
+        )
+        finish(130)
+        return
+    except DemoError as exc:
+        fail(exc)
+        finish(2)
+        return
+
+    print_text("CONTRAIL DEMO READY", style="bold green")
+    print_text()
+    print_text("The candidate preserves its result but violates two runtime contracts:")
+    print_text("  db.write operations:       3 → 30")
+    print_text("  new metadata-db dependency: 0 → 1")
+    print_text()
+    print_text(f"baseline: {terminal_text(result.baseline_runpack)}")
+    print_text(f"candidate: {terminal_text(result.candidate_runpack)}")
+    print_text(f"adaptable workload: {terminal_text(result.workload)}")
+    print_text(f"contract: {terminal_text(result.contract)}")
+    print_text(f"explained report: {terminal_text(result.proofline_report)}")
+    print_text()
+    print_text("Compare the runtime change:", style="bold")
+    print_text(
+        "  " + _command("contrail", "compare", result.baseline_runpack, result.candidate_runpack)
     )
-    if not provider_lines:
-        provider_lines = "  (no evidence providers enabled)"
-    return f"""\
-usage: contrail COMMAND [ARGS...]
+    print_text()
+    print_text("Explain where the candidate spent its time:", style="bold")
+    print_text("  " + _command("contrail", "analyze", result.candidate_runpack))
+    print_text()
+    print_text("Review one integrated diagnostic report:", style="bold")
+    print_text(
+        "  "
+        + _command(
+            "contrail",
+            "report",
+            result.baseline_runpack,
+            result.candidate_runpack,
+            "--contract",
+            result.contract,
+        )
+    )
+    print_text()
+    _print_recapture_steps(result)
 
-Capture runtime evidence, enforce behavioral contracts, and follow failures to
-the exact candidate events that explain them.
 
-Start here:
-  contrail demo              run the installed five-minute walkthrough
+def _print_recapture_steps(result: object) -> None:
+    from runtime_tools.demo import DemoResult
 
-Core workflow (record → verify → serve):
-  record                     capture one local process as a .runpack
-  recover                    finish a retained post-exit capture checkpoint
-  job                        discover, wait for, replay, or cancel a capture worker
-  compare                    compare baseline and candidate runpacks
-  report                     combine candidate analysis, diff, and contract evidence
-  verify                     evaluate a behavioral contract
-  serve                      open the local evidence timeline
-  inspect                    inspect normalized execution evidence
-  analyze                    explain lifecycle, critical path, and bottlenecks
+    if not isinstance(result, DemoResult):
+        raise TypeError("unexpected demo result")
+    recaptured_baseline = result.output_dir / "recaptured-baseline.runpack"
+    recaptured_candidate = result.output_dir / "recaptured-candidate.runpack"
+    recaptured_report = result.output_dir / "recaptured-report.json"
+    print_text("Adapt workload.py and contract.yaml, then capture the two variants again:")
+    print_text(
+        "  "
+        + _command(
+            "contrail",
+            "record",
+            "--name",
+            "demo-baseline",
+            "--output",
+            recaptured_baseline,
+            "--",
+            sys.executable,
+            result.workload,
+            "baseline",
+        )
+    )
+    print_text(
+        "  "
+        + _command(
+            "contrail",
+            "record",
+            "--name",
+            "demo-candidate",
+            "--output",
+            recaptured_candidate,
+            "--",
+            sys.executable,
+            result.workload,
+            "candidate",
+        )
+    )
+    print_text(
+        "  "
+        + _command(
+            "contrail",
+            "verify",
+            result.contract,
+            "--baseline",
+            recaptured_baseline,
+            "--candidate",
+            recaptured_candidate,
+            "--report",
+            recaptured_report,
+        )
+    )
+    print_text()
+    print_text("Re-run the contract gate (expected exit 1):")
+    print_text(
+        "  "
+        + _command(
+            "contrail",
+            "verify",
+            result.contract,
+            "--baseline",
+            result.baseline_runpack,
+            "--candidate",
+            result.candidate_runpack,
+            "--explain",
+        )
+    )
 
-Automation:
-  validate, run, search, query
 
-Enabled provider commands:
-{provider_lines}
+@app.command(
+    "report",
+    help="Combine candidate analysis, diff, and optional contract evidence.",
+    rich_help_panel="Analyze",
+)
+def report_command(
+    baseline: Annotated[Path, typer.Argument()],
+    candidate: Annotated[Path, typer.Argument()],
+    contract: Annotated[Path | None, typer.Option("--contract")] = None,
+) -> None:
+    from runtime_tools.proofline.contracts import ContractError
+    from runtime_tools.suite_report import build_suite_report, render_suite_report
 
-Run 'contrail COMMAND --help' for command-specific options.
-"""
+    try:
+        report = build_suite_report(baseline, candidate, contract=contract)
+    except (ContractError, RunpackError) as exc:
+        fail(exc)
+        finish(2)
+        return
+    print_text(render_suite_report(report))
 
 
 def _shell_argument(argument: object) -> str:
@@ -89,245 +242,14 @@ def _command(*arguments: object) -> str:
     return " ".join(_shell_argument(argument) for argument in arguments)
 
 
-def _demo_main(arguments: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        prog="contrail demo",
-        description="generate a self-contained baseline-to-evidence walkthrough",
-    )
-    parser.add_argument("--output-dir", type=Path, default=Path("contrail-demo"))
-    args = parser.parse_args(arguments)
-    from runtime_tools.demo import DemoError, run_demo
-
-    try:
-        result = run_demo(args.output_dir)
-    except KeyboardInterrupt:
-        print("contrail: demo interrupted; completed artifacts were retained", file=sys.stderr)
-        return 130
-    except DemoError as exc:
-        print(f"contrail: {terminal_text(exc)}", file=sys.stderr)
-        return 2
-
-    print("CONTRAIL DEMO READY")
-    print()
-    print("The candidate preserves its result but violates two runtime contracts:")
-    print("  db.write operations:       3 → 30")
-    print("  new metadata-db dependency: 0 → 1")
-    print()
-    print(f"baseline: {terminal_text(result.baseline_runpack)}")
-    print(f"candidate: {terminal_text(result.candidate_runpack)}")
-    print(f"adaptable workload: {terminal_text(result.workload)}")
-    print(f"contract: {terminal_text(result.contract)}")
-    print(f"explained report: {terminal_text(result.proofline_report)}")
-    print()
-    print("Compare the runtime change:")
-    print("  " + _command("contrail", "compare", result.baseline_runpack, result.candidate_runpack))
-    print()
-    print("Explain where the candidate spent its time:")
-    print("  " + _command("contrail", "analyze", result.candidate_runpack))
-    print()
-    print("Review one integrated diagnostic report:")
-    print(
-        "  "
-        + _command(
-            "contrail",
-            "report",
-            result.baseline_runpack,
-            result.candidate_runpack,
-            "--contract",
-            result.contract,
-        )
-    )
-    print()
-    recaptured_baseline = result.output_dir / "recaptured-baseline.runpack"
-    recaptured_candidate = result.output_dir / "recaptured-candidate.runpack"
-    recaptured_report = result.output_dir / "recaptured-report.json"
-    print("Adapt workload.py and contract.yaml, then capture the two variants again:")
-    print(
-        "  "
-        + _command(
-            "contrail",
-            "record",
-            "--name",
-            "demo-baseline",
-            "--output",
-            recaptured_baseline,
-            "--",
-            sys.executable,
-            result.workload,
-            "baseline",
-        )
-    )
-    print(
-        "  "
-        + _command(
-            "contrail",
-            "record",
-            "--name",
-            "demo-candidate",
-            "--output",
-            recaptured_candidate,
-            "--",
-            sys.executable,
-            result.workload,
-            "candidate",
-        )
-    )
-    print(
-        "  "
-        + _command(
-            "contrail",
-            "verify",
-            result.contract,
-            "--baseline",
-            recaptured_baseline,
-            "--candidate",
-            recaptured_candidate,
-            "--report",
-            recaptured_report,
-        )
-    )
-    print()
-    print("Re-run the contract gate (expected exit 1):")
-    print(
-        "  "
-        + _command(
-            "contrail",
-            "verify",
-            result.contract,
-            "--baseline",
-            result.baseline_runpack,
-            "--candidate",
-            result.candidate_runpack,
-            "--explain",
-        )
-    )
-    print()
-    print("Open the retained failure without rerunning the workload:")
-    print(
-        "  "
-        + _command(
-            "contrail",
-            "serve",
-            result.baseline_runpack,
-            "--compare",
-            result.candidate_runpack,
-            "--proofline-report",
-            result.proofline_report,
-        )
-    )
-    return 0
-
-
-def _report_main(arguments: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        prog="contrail report",
-        description=(
-            "combine candidate BatchScope analysis, RunDiff comparison, and optional "
-            "Proofline evidence"
-        ),
-    )
-    parser.add_argument("baseline", type=Path)
-    parser.add_argument("candidate", type=Path)
-    parser.add_argument("--contract", type=Path)
-    args = parser.parse_args(arguments)
-    from runtime_tools.proofline.contracts import ContractError
-    from runtime_tools.suite_report import build_suite_report, render_suite_report
-
-    try:
-        report = build_suite_report(
-            args.baseline,
-            args.candidate,
-            contract=args.contract,
-        )
-    except (ContractError, RunpackError) as exc:
-        print(f"contrail: {terminal_text(exc)}", file=sys.stderr)
-        return 2
-    print(render_suite_report(report))
-    return 0
-
-
-def _dispatch(
-    command: str,
-    arguments: list[str],
-    *,
-    provider_registry: ProviderRegistry,
-    launch_capture_worker: bool = False,
-) -> int:
-    if command in _RUNTIME_COMMANDS | provider_registry.command_names:
-        return runtime_main(
-            [command, *arguments],
-            prog="contrail",
-            error_label="contrail",
-            _provider_registry=provider_registry,
-        )
-    if command == "compare":
-        return rundiff_main(
-            [command, *arguments],
-            prog="contrail",
-            error_label="contrail",
-        )
-    if command == "analyze":
-        return batchscope_main(
-            [command, *arguments],
-            prog="contrail",
-            error_label="contrail",
-            command_name="analyze",
-        )
-    if command in _PROOFLINE_COMMANDS:
-        return proofline_main(
-            [command, *arguments],
-            prog="contrail",
-            error_label="contrail",
-            branded_commands=True,
-            _launch_capture_worker=launch_capture_worker,
-        )
-    raise AssertionError(f"unhandled Contrail command: {command}")
-
-
 @broken_pipe_safe
 def main(argv: list[str] | None = None) -> int:
-    arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments == ["--version"]:
-        print(f"contrail {__version__}")
-        return 0
-    if arguments and arguments[0] == "demo":
-        _, *command_arguments = arguments
-        return _demo_main(command_arguments)
-    if arguments and arguments[0] == "report":
-        _, *command_arguments = arguments
-        return _report_main(command_arguments)
-    try:
-        provider_registry = resolve_provider_registry(
-            reserved_commands=(
-                *CORE_COMMANDS,
-                *_PROOFLINE_COMMANDS,
-                "compare",
-                "analyze",
-                "demo",
-                "report",
-            )
-        )
-    except ProviderError as exc:
-        print(f"contrail: {terminal_text(exc)}", file=sys.stderr)
-        return 2
-    if not arguments or arguments == ["--help"] or arguments == ["-h"]:
-        print(_help(provider_registry), end="")
-        return 0
-    command, *command_arguments = arguments
-    if command not in (
-        _RUNTIME_COMMANDS
-        | provider_registry.command_names
-        | _PROOFLINE_COMMANDS
-        | {"compare", "analyze"}
-    ):
-        print(f"contrail: unknown command: {terminal_text(command)}", file=sys.stderr)
-        print("Try 'contrail --help'.", file=sys.stderr)
-        return 2
-    return _dispatch(
-        command,
-        command_arguments,
-        provider_registry=provider_registry,
-        launch_capture_worker=argv is None,
+    return run_cli(
+        app,
+        argv,
+        prog="contrail",
+        module="runtime_tools.contrail_cli",
+        error_label="contrail",
     )
 
 

@@ -9,7 +9,8 @@ Start with the outcome you want:
 | Gate a regression | [Proofline contracts](contracts.md) |
 | Put the gate in CI | [Proofline in CI](ci.md) |
 | Query a runpack | [Querying](querying.md) |
-| Add an evidence provider | [Provider development](providers.md) |
+| Add a built-in evidence integration | [Built-in integrations](providers.md) |
+| Watch a code speedup | [Sorting example](../examples/sorting/) |
 
 Reference:
 

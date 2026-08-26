@@ -22,10 +22,6 @@ import runtime_tools
 _ROOT = Path(__file__).parents[1]
 _EXPECTED_SCRIPTS = {
     "contrail": "runtime_tools.contrail_cli:main",
-    "runtime": "runtime_tools.cli:main",
-    "rundiff": "runtime_tools.rundiff.cli:main",
-    "batchscope": "runtime_tools.batchscope.cli:main",
-    "proofline": "runtime_tools.proofline.cli:main",
 }
 _EXPECTED_PROJECT_URLS = {
     "Homepage": "https://github.com/javess/contrail",
@@ -82,20 +78,17 @@ def _named_step(job: dict[str, object], name: str) -> dict[str, object]:
 
 def test_distribution_version_and_entrypoints_have_one_release_value() -> None:
     project = _project()
-    assert project["version"] == runtime_tools.__version__ == "0.9.0"
+    assert project["version"] == runtime_tools.__version__ == "0.10.0"
     assert project["scripts"] == _EXPECTED_SCRIPTS
     assert project["urls"] == _EXPECTED_PROJECT_URLS
 
 
-def test_source_install_contains_typed_marker_and_ui_assets() -> None:
+def test_source_install_contains_typed_marker_and_builtin_commands() -> None:
     package = files("runtime_tools")
     assert package.joinpath("py.typed").is_file()
-    assert package.joinpath("schemas", "contrail-output-v1.schema.json").is_file()
     assert package.joinpath("providers", "contracts.py").is_file()
     assert package.joinpath("providers", "registry.py").is_file()
     assert package.joinpath("providers", "builtins", "otel", "commands.py").is_file()
-    static = package.joinpath("ui", "static")
-    assert all(static.joinpath(name).is_file() for name in ("index.html", "app.js", "styles.css"))
 
 
 def test_release_smoke_tool_has_a_standalone_help_surface() -> None:
@@ -174,7 +167,7 @@ def test_release_check_accepts_only_the_project_tag_and_current_changelog(
             "--ref-type",
             "tag",
             "--ref-name",
-            "v0.9.0",
+            "v0.10.0",
             "--github-output",
             str(output),
         ),
@@ -185,11 +178,11 @@ def test_release_check_accepts_only_the_project_tag_and_current_changelog(
     assert completed.returncode == 0
     assert json.loads(completed.stdout) == {
         "name": "contrail-runtime-tools",
-        "tag": "v0.9.0",
-        "version": "0.9.0",
+        "tag": "v0.10.0",
+        "version": "0.10.0",
     }
     assert output.read_text(encoding="utf-8") == (
-        "name=contrail-runtime-tools\nversion=0.9.0\ntag=v0.9.0\n"
+        "name=contrail-runtime-tools\nversion=0.10.0\ntag=v0.10.0\n"
     )
 
     wrong_tag = subprocess.run(
@@ -199,14 +192,14 @@ def test_release_check_accepts_only_the_project_tag_and_current_changelog(
             "--ref-type",
             "tag",
             "--ref-name",
-            "v0.9.1",
+            "v0.10.1",
         ),
         check=False,
         capture_output=True,
         text=True,
     )
     assert wrong_tag.returncode == 2
-    assert "expected 'v0.9.0'" in wrong_tag.stderr
+    assert "expected 'v0.10.0'" in wrong_tag.stderr
 
     stale_changelog = tmp_path / "CHANGELOG.md"
     stale_changelog.write_text("# Changelog\n\n## 0.8.0\n", encoding="utf-8")
@@ -226,7 +219,7 @@ def test_release_check_accepts_only_the_project_tag_and_current_changelog(
         text=True,
     )
     assert wrong_changelog.returncode == 2
-    assert "first changelog release is '0.8.0', expected '0.9.0'" in wrong_changelog.stderr
+    assert "first changelog release is '0.8.0', expected '0.10.0'" in wrong_changelog.stderr
 
 
 def test_ci_workflow_pins_the_release_and_proofline_gates() -> None:
@@ -389,7 +382,7 @@ def test_ci_workflow_pins_the_release_and_proofline_gates() -> None:
     assert isinstance(summary_command, str)
     assert "proofline-results/baseline.runpack" in summary_command
     assert "proofline-results/candidate.runpack" in summary_command
-    assert "uv run proofline verify examples/local/contracts.yaml" in summary_command
+    assert "uv run contrail verify examples/local/contracts.yaml" in summary_command
     assert "--explain" in summary_command
     assert "|| true" in summary_command
     assert '>> "$GITHUB_STEP_SUMMARY"' in summary_command
@@ -435,13 +428,6 @@ def test_opt_in_wheel_manifest_and_metadata() -> None:
         packaged_files = {name for name in names if name.startswith("runtime_tools/")}
         assert packaged_files == expected_package_files
         assert any(name.endswith("runtime_tools/py.typed") for name in names)
-        assert any(
-            name.endswith("runtime_tools/schemas/contrail-output-v1.schema.json") for name in names
-        )
-        assert all(
-            any(name.endswith(f"runtime_tools/ui/static/{asset}") for name in names)
-            for asset in ("index.html", "app.js", "styles.css")
-        )
         metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
         metadata = email.message_from_bytes(archive.read(metadata_name))
         assert metadata["Version"] == runtime_tools.__version__
@@ -483,6 +469,11 @@ def test_opt_in_sdist_has_no_workspace_or_cache_content() -> None:
             ".github/ISSUE_TEMPLATE/bug_report.yml",
             ".github/pull_request_template.md",
             "docs/ci.md",
+            "examples/sorting/README.md",
+            "examples/sorting/after.py",
+            "examples/sorting/before.py",
+            "examples/sorting/contract.yaml",
+            "examples/sorting/workload.py",
             "tests/package_metadata_test.py",
             "tools/release_check.py",
             "tools/release_smoke.py",

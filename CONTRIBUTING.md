@@ -11,8 +11,8 @@ uv run contrail demo --output-dir "$demo_root/contrail-demo"
 ```
 
 The demo is offline and exits 0 after proving its expected violations. It
-prints commands for verifying the contract and opening the local evidence
-timeline. Keep the temporary directory if you want to inspect its adaptable
+prints terminal commands for verifying the contract and inspecting the local
+evidence. Keep the temporary directory if you want to inspect its adaptable
 `workload.py`, `baseline.runpack`, `candidate.runpack`, `contract.yaml`, and
 `proofline-report.json`. The printed recapture commands turn those files into a
 starting point for a new runtime contract.
@@ -75,7 +75,7 @@ uv run python benchmarks/release.py --profile pr
 The [Python development guide](docs/development.md) defines the module layers,
 typing policy, package workflow, and testing expectations behind these checks.
 Evidence integrations belong behind the documented
-[provider contract](docs/providers.md); do not add provider-specific branches
+[fixed provider catalog](docs/providers.md); do not add provider-specific branches
 to the core CLI.
 
 The supported runpack boundary is documented in the

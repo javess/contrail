@@ -9,8 +9,6 @@ runtime behavior, and gates changes on evidence-backed invariants.
 
 No account. No hosted collector. No application changes for zero-touch capture.
 
-![Contrail showing artifact-bound Proofline failures from the built-in demo](docs/assets/contrail-proofline.png)
-
 ## What you get
 
 | Tool | Answers |
@@ -59,15 +57,45 @@ New runtime dependencies
   python → metadata-db [calls]: 0 → 1
 ```
 
-Open the retained evidence locally:
+Continue the investigation in the terminal without rerunning the workload:
 
 ```bash
-uv run contrail serve contrail-demo/baseline.runpack \
-  --compare contrail-demo/candidate.runpack \
-  --proofline-report contrail-demo/proofline-report.json
+uv run contrail compare \
+  contrail-demo/baseline.runpack contrail-demo/candidate.runpack
+uv run contrail analyze contrail-demo/candidate.runpack
+uv run contrail inspect contrail-demo/candidate.runpack --tree
+uv run contrail verify contrail-demo/contract.yaml \
+  --baseline contrail-demo/baseline.runpack \
+  --candidate contrail-demo/candidate.runpack --explain
 ```
 
-![Contrail structured diff and execution timeline with a selected database-write event](docs/assets/contrail-diff-timeline.png)
+`analyze` defaults to findings and the most useful hotspots; add `--verbose`
+for capture diagnostics and full evidence lists. `inspect --tree` groups
+application callsites with the operations they performed; use `--raw-tree`
+only when you need every stored profiler event and causal link.
+
+## Watch a terrible sort disappear
+
+The [sorting speedup example](examples/sorting/) replaces a worst-case bubble
+sort with Python's built-in Timsort. Both versions print the same result; Deep
+capture names the bad function and RunDiff makes the improvement obvious:
+
+```text
+Bottleneck
+  python_hotspot (60%)
+    __main__.bubble_sort accumulated 0.780s self time
+
+Outcome
+  equivalent
+  stdout:      equivalent
+
+Runtime
+  871.4ms → 90.3ms (-89.6%)
+```
+
+The full walkthrough captures both sides and finishes with five passing
+Proofline claims. Timings vary by machine; no annotation or Contrail import is
+added to the workload.
 
 ## Capture your own run
 
@@ -141,9 +169,9 @@ uv run contrail enrich-prometheus trace.runpack metrics.json \
   --output enriched.runpack
 ```
 
-Providers are modular. Installed third-party providers use standard Python
-entry points, remain disabled until explicitly enabled, and add commands without
-editing Contrail’s parser or dispatcher. See [provider development](docs/providers.md).
+These integrations are fixed parts of Contrail, so the available commands do
+not depend on installed entry points or selection environment variables. See
+[built-in evidence integrations](docs/providers.md).
 
 ## Local by design
 
@@ -164,13 +192,13 @@ reports; imported telemetry and opt-in attachments may still contain secrets.
 - [Write a Proofline contract](docs/contracts.md)
 - [Run Proofline in CI](docs/ci.md)
 - [Query a runpack](docs/querying.md)
-- [Build a provider](docs/providers.md)
+- [Work on a built-in integration](docs/providers.md)
 - [Understand the architecture](docs/architecture.md)
 - [Read support and current limits](docs/support.md)
 - [Use structured output](docs/machine-output.md)
 - [Develop Contrail](docs/development.md)
 
-Contrail is a bounded `0.9.0` beta, not a hosted observability service. Exported
+Contrail is a bounded `0.10.0` beta, not a hosted observability service. Exported
 provider inputs are files, not live collectors; logical reconstruction depends
 on available causal or correlation evidence.
 

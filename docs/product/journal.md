@@ -2150,9 +2150,9 @@ until explicitly selected.
 
 The public documentation was reorganized around the product journey: see the
 failure, run the demo, capture evidence, enforce a contract, then extend the
-tool. The README now uses real local-UI screenshots, while long architecture,
-capture, compatibility, machine-output, support, security, CI, and performance
-material is split into concise task and reference pages.
+tool. The README leads with reproducible terminal output, while long
+architecture, capture, compatibility, machine-output, support, security, CI,
+and performance material is split into concise task and reference pages.
 
 ### What we learned
 
@@ -2186,9 +2186,9 @@ public commitments.
 ### What remains uncertain
 
 The first extension boundary adds host-side commands only. Providers do not yet
-contribute UI panels, new normalized record schemas, workload-side capture
-hooks, or persistent configuration. Those are separate product and trust
-decisions, not incidental follow-ons to command discovery.
+contribute new normalized record schemas, workload-side capture hooks, or
+persistent configuration. Those are separate product and trust decisions, not
+incidental follow-ons to command discovery.
 
 ### Next highest-value action
 

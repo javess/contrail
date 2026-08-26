@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contrail-runtime-tools"
-version = "0.9.0"
+version = "0.10.0"
 description = "Trace runtime contract failures to exact execution evidence"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -24,8 +24,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "hypothesis>=6.140",
+    "pydantic>=2.11",
     "pyyaml>=6.0.2",
+    "rich>=14.1",
+    "typer>=0.20",
 ]
 
 [project.urls]
@@ -37,10 +39,6 @@ Security = "https://github.com/javess/contrail/security/policy"
 
 [project.scripts]
 contrail = "runtime_tools.contrail_cli:main"
-runtime = "runtime_tools.cli:main"
-rundiff = "runtime_tools.rundiff.cli:main"
-batchscope = "runtime_tools.batchscope.cli:main"
-proofline = "runtime_tools.proofline.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/runtime_tools"]
@@ -73,6 +71,7 @@ unsound-return-statement = "error"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.140",
     "pytest>=8.3",
     "ruff>=0.9",
     "ty>=0.0.72",

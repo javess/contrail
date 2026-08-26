@@ -15,7 +15,7 @@ from typing import Any, cast
 import pytest
 
 import runtime_tools.proofline.contracts as contracts_module
-import runtime_tools.storage as storage
+import runtime_tools.storage._validation as storage_validation
 from runtime_tools.model import CausalEdge, Entity, Event, Execution, Measurement
 from runtime_tools.proofline import ContractError, verify_contracts
 from runtime_tools.proofline import cli as proofline_cli
@@ -28,6 +28,7 @@ from runtime_tools.proofline.verify import (
     verify_contracts_with_diff,
 )
 from runtime_tools.storage import RunpackReader, RunpackWriter
+from tests.runpack_support import write_runpack
 
 _STDOUT_IDENTITY = "a" * 64
 _STDERR_IDENTITY = "b" * 64
@@ -79,29 +80,27 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
                 {"peer.service": "metadata-db"},
             )
         )
-    with RunpackWriter(path) as writer:
-        writer.add_execution(
-            Execution(
-                "candidate" if candidate else "baseline",
-                "candidate" if candidate else "baseline",
-                0,
-                finished_at_ns,
-                (),
-                str(path.parent),
-                0,
-                None,
-                {
-                    "output": {
-                        "stdout": {"bytes": 4, "sha256": _STDOUT_IDENTITY},
-                        "stderr": {"bytes": 0, "sha256": _STDERR_IDENTITY},
-                    }
-                },
-            )
-        )
-        writer.add_entity(Entity("app", "service", "app", None, {}))
-        for event in events:
-            writer.add_event(event)
-        writer.add_measurement(
+    write_runpack(
+        path,
+        Execution(
+            "candidate" if candidate else "baseline",
+            "candidate" if candidate else "baseline",
+            0,
+            finished_at_ns,
+            (),
+            str(path.parent),
+            0,
+            None,
+            {
+                "output": {
+                    "stdout": {"bytes": 4, "sha256": _STDOUT_IDENTITY},
+                    "stderr": {"bytes": 0, "sha256": _STDERR_IDENTITY},
+                }
+            },
+        ),
+        entities=(Entity("app", "service", "app", None, {}),),
+        events=events,
+        measurements=(
             Measurement(
                 "process.memory.peak",
                 110.0 if candidate else 100.0,
@@ -109,28 +108,25 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
                 finished_at_ns,
                 "app",
                 {},
-            )
-        )
-        writer.add_measurements(
-            (
-                Measurement(
-                    "process.cpu.user",
-                    2.0 if candidate else 1.0,
-                    "s",
-                    finished_at_ns,
-                    "app",
-                    {},
-                ),
-                Measurement(
-                    "process.cpu.system",
-                    1.0 if candidate else 0.5,
-                    "s",
-                    finished_at_ns,
-                    "app",
-                    {},
-                ),
-            )
-        )
+            ),
+            Measurement(
+                "process.cpu.user",
+                2.0 if candidate else 1.0,
+                "s",
+                finished_at_ns,
+                "app",
+                {},
+            ),
+            Measurement(
+                "process.cpu.system",
+                1.0 if candidate else 0.5,
+                "s",
+                finished_at_ns,
+                "app",
+                {},
+            ),
+        ),
+    )
 
 
 def _write_contract(path: Path) -> None:
@@ -654,7 +650,7 @@ def test_proofline_cli_returns_failure_and_machine_readable_evidence(tmp_path: P
         "results",
     }
     assert payload["document_type"] == "proofline.verification"
-    assert payload["format_version"] == "1"
+    assert payload["format_version"] == "2"
     assert payload["claim_count"] == 5
     assert payload["passed"] is False
     assert payload["results"][3]["observed"] == "candidate count=1"
@@ -702,7 +698,6 @@ def test_proofline_verify_explain_connects_a_failed_claim_to_deeper_tools(
     assert tuple(tuple(command.split(" ", 2)[:2]) for command in commands) == (
         ("batchscope", "inspect"),
         ("runtime", "inspect"),
-        ("runtime", "serve"),
     )
 
     shell = shutil.which("bash")
@@ -895,11 +890,7 @@ def test_proofline_verify_report_retains_the_exact_explained_json(
     assert json.loads(retained.read_text(encoding="utf-8"))["artifact_bindings"]
     assert retained.stat().st_mode & 0o777 == 0o600
     assert result.stdout.startswith("PROOFLINE\n\n5 claims evaluated")
-    serve_command = next(
-        line for line in result.stdout.splitlines() if line.startswith("runtime serve ")
-    )
-    assert f"--proofline-report {shlex.quote(str(retained))}" in serve_command
-    assert "--contract" not in serve_command
+    assert not any(line.startswith("runtime serve ") for line in result.stdout.splitlines())
 
 
 def test_proofline_verify_json_stdout_matches_the_retained_report_bytes(
@@ -955,7 +946,7 @@ def test_proofline_invalid_runpack_preflight_publishes_no_report(
             "UPDATE executions SET metadata_json = ?",
             (json.dumps({"oversized": "x" * 1024}),),
         )
-    monkeypatch.setattr(storage, "MAX_RUNPACK_JSON_BYTES", 512)
+    monkeypatch.setattr(storage_validation, "MAX_RUNPACK_JSON_BYTES", 512)
 
     status = proofline_cli.main(
         [
@@ -1170,10 +1161,7 @@ def test_proofline_run_explain_uses_the_captured_artifact_paths(
     assert "\n\nRUNTIME DIFF\n" in captured.out
     assert f"batchscope inspect {shlex.quote(str(candidate))}" in captured.out
     assert f"runtime inspect {shlex.quote(str(candidate))} --tree" in captured.out
-    assert (
-        f"runtime serve {shlex.quote(str(baseline))} --compare {shlex.quote(str(candidate))} "
-        f"--contract {shlex.quote(str(contract))}" in captured.out
-    )
+    assert not any(line.startswith("runtime serve ") for line in captured.out.splitlines())
     assert f"baseline artifact:  {baseline}" in captured.out
     assert f"candidate artifact: {candidate}" in captured.out
 
@@ -1285,10 +1273,7 @@ def test_proofline_run_report_implies_an_artifact_bound_explanation(
     assert payload["artifact_bindings"] == bindings.as_json_value()
     assert payload["diff"]["document_type"] == "rundiff.compare"
     assert payload["verification"]["results"][-1]["evidence"]
-    serve_command = next(
-        line for line in captured.out.splitlines() if line.startswith("runtime serve ")
-    )
-    assert f"--proofline-report {shlex.quote(str(retained))}" in serve_command
+    assert not any(line.startswith("runtime serve ") for line in captured.out.splitlines())
 
 
 @pytest.mark.parametrize("destination", ("existing", "dangling", "missing-parent"))
@@ -1426,8 +1411,17 @@ def test_proofline_run_default_text_remains_the_report_and_artifact_paths(
     assert captured.err == ""
 
 
-@pytest.mark.parametrize("subcommand", ("verify", "run"))
-def test_proofline_help_advertises_explanations(subcommand: str) -> None:
+@pytest.mark.parametrize(
+    ("subcommand", "expected_options"),
+    (
+        ("verify", ("--explain",)),
+        ("run", ("--explain", "--python")),
+        ("search", ("--python",)),
+    ),
+)
+def test_proofline_help_advertises_subcommand_options(
+    subcommand: str, expected_options: tuple[str, ...]
+) -> None:
     result = subprocess.run(
         (sys.executable, "-m", "runtime_tools.proofline.cli", subcommand, "--help"),
         check=False,
@@ -1436,21 +1430,7 @@ def test_proofline_help_advertises_explanations(subcommand: str) -> None:
     )
 
     assert result.returncode == 0
-    assert "--explain" in result.stdout
-    assert result.stderr == ""
-
-
-@pytest.mark.parametrize("subcommand", ("run", "search"))
-def test_proofline_help_advertises_workload_python_selection(subcommand: str) -> None:
-    result = subprocess.run(
-        (sys.executable, "-m", "runtime_tools.proofline.cli", subcommand, "--help"),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0
-    assert "--python" in result.stdout
+    assert all(option in result.stdout for option in expected_options)
     assert result.stderr == ""
 
 
@@ -1488,7 +1468,7 @@ def test_proofline_cli_returns_success_with_machine_readable_evidence(tmp_path: 
     assert result.stderr == ""
     payload = json.loads(result.stdout)
     assert payload["document_type"] == "proofline.verification"
-    assert payload["format_version"] == "1"
+    assert payload["format_version"] == "2"
     assert payload["passed"] is True
     assert payload["results"][0]["type"] == "candidate_exit_success"
     assert "assertion" not in payload["results"][0]
@@ -1560,7 +1540,7 @@ def test_proofline_validate_parses_inputs_without_execution(tmp_path: Path) -> N
         ],
         "contract_count": 1,
         "document_type": "proofline.validation",
-        "format_version": "1",
+        "format_version": "2",
         "parameter_count": 1,
     }
 
@@ -1681,52 +1661,33 @@ def test_proofline_validates_assertion_fields_before_loading_runpacks(
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 
-def test_proofline_rejects_yaml_aliases_before_expansion(tmp_path: Path) -> None:
-    contract = tmp_path / "recursive.yaml"
-    contract.write_text(
-        """
-name: recursive
-assertions:
-  - &claim
-    type: output_equivalent
-    nested: *claim
-""".strip(),
-        encoding="utf-8",
-    )
+@pytest.mark.parametrize(
+    ("document", "message"),
+    (
+        (
+            "name: recursive\nassertions:\n"
+            "  - &claim\n    type: output_equivalent\n    nested: *claim\n",
+            "YAML aliases are not supported",
+        ),
+        (
+            "name: negative\nassertions:\n  - type: max_runtime_regression\n    percent: -1\n",
+            "percent cannot be negative",
+        ),
+        (
+            "name: duplicate\nassertions:\n"
+            "  - type: max_runtime_regression\n    percent: 10\n    percent: 100\n",
+            "found duplicate key 'percent'",
+        ),
+    ),
+    ids=("yaml-alias", "negative-threshold", "duplicate-key"),
+)
+def test_proofline_rejects_invalid_contract_documents(
+    tmp_path: Path, document: str, message: str
+) -> None:
+    contract = tmp_path / "invalid.yaml"
+    contract.write_text(document, encoding="utf-8")
 
-    with pytest.raises(ContractError, match="YAML aliases are not supported"):
-        verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
-
-
-def test_proofline_rejects_negative_regression_thresholds(tmp_path: Path) -> None:
-    baseline = tmp_path / "baseline.runpack"
-    candidate = tmp_path / "candidate.runpack"
-    contract = tmp_path / "negative.yaml"
-    _write_runpack(baseline, candidate=False)
-    _write_runpack(candidate, candidate=True)
-    contract.write_text(
-        "name: negative\nassertions:\n  - type: max_runtime_regression\n    percent: -1\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ContractError, match="percent cannot be negative"):
-        verify_contracts(contract, baseline, candidate)
-
-
-def test_proofline_rejects_duplicate_contract_keys(tmp_path: Path) -> None:
-    contract = tmp_path / "duplicate.yaml"
-    contract.write_text(
-        """
-name: duplicate
-assertions:
-  - type: max_runtime_regression
-    percent: 10
-    percent: 100
-""".strip(),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ContractError, match="found duplicate key 'percent'"):
+    with pytest.raises(ContractError, match=message):
         verify_contracts(contract, tmp_path / "missing-a", tmp_path / "missing-b")
 
 

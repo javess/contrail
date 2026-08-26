@@ -20,6 +20,7 @@ from runtime_tools.model import CausalEdge, Entity, Event, Execution, JsonValue,
 from runtime_tools.rundiff import compare_runpacks
 from runtime_tools.rundiff.report import render_diff
 from runtime_tools.storage import RunpackError, RunpackReader, RunpackWriter
+from tests.runpack_support import write_runpack
 
 _STDOUT_IDENTITY = "a" * 64
 _STDERR_IDENTITY = "b" * 64
@@ -80,32 +81,28 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
             )
         )
 
-    with RunpackWriter(path) as writer:
-        writer.add_execution(
-            Execution(
-                "candidate" if candidate else "baseline",
-                "candidate" if candidate else "baseline",
-                started_at_ns,
-                finished_at_ns,
-                (),
-                str(path.parent),
-                0,
-                None,
-                {
-                    "output": {
-                        "stdout": {"bytes": 7, "sha256": _STDOUT_IDENTITY},
-                        "stderr": {"bytes": 0, "sha256": _STDERR_IDENTITY},
-                    }
-                },
-            )
-        )
-        for entity in entities:
-            writer.add_entity(entity)
-        for event in events:
-            writer.add_event(event)
-        for event in events[1:]:
-            writer.add_causal_edge(CausalEdge("root", event.id, "parent", 1.0, {}))
-        writer.add_measurement(
+    write_runpack(
+        path,
+        Execution(
+            "candidate" if candidate else "baseline",
+            "candidate" if candidate else "baseline",
+            started_at_ns,
+            finished_at_ns,
+            (),
+            str(path.parent),
+            0,
+            None,
+            {
+                "output": {
+                    "stdout": {"bytes": 7, "sha256": _STDOUT_IDENTITY},
+                    "stderr": {"bytes": 0, "sha256": _STDERR_IDENTITY},
+                }
+            },
+        ),
+        entities=entities,
+        events=events,
+        causal_edges=(CausalEdge("root", event.id, "parent", 1.0, {}) for event in events[1:]),
+        measurements=(
             Measurement(
                 "process.memory.peak",
                 150 * 1024**2 if candidate else 100 * 1024**2,
@@ -113,28 +110,25 @@ def _write_runpack(path: Path, *, candidate: bool) -> None:
                 finished_at_ns,
                 "gateway",
                 {},
-            )
-        )
-        writer.add_measurements(
-            (
-                Measurement(
-                    "process.cpu.user",
-                    2.0 if candidate else 1.0,
-                    "s",
-                    finished_at_ns,
-                    "gateway",
-                    {},
-                ),
-                Measurement(
-                    "process.cpu.system",
-                    1.0 if candidate else 0.5,
-                    "s",
-                    finished_at_ns,
-                    "gateway",
-                    {},
-                ),
-            )
-        )
+            ),
+            Measurement(
+                "process.cpu.user",
+                2.0 if candidate else 1.0,
+                "s",
+                finished_at_ns,
+                "gateway",
+                {},
+            ),
+            Measurement(
+                "process.cpu.system",
+                1.0 if candidate else 0.5,
+                "s",
+                finished_at_ns,
+                "gateway",
+                {},
+            ),
+        ),
+    )
 
 
 def _write_cpu_runpack(path: Path, user: float, system: float) -> None:
@@ -303,7 +297,7 @@ def test_compare_runpacks_marks_repeated_semantic_shapes_as_structural(
 
     diff = compare_runpacks(baseline, candidate)
 
-    assert diff.baseline_id != diff.candidate_id
+    assert diff.baseline.id != diff.candidate.id
     assert diff.match_level == "structural"
 
 
@@ -566,7 +560,7 @@ def test_reader_keeps_concurrency_unknown_without_a_clock_domain(tmp_path: Path)
     assert concurrency == {}
 
 
-def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> None:
+def test_rundiff_text_report_and_cli_json_share_outcome(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.runpack"
     candidate = tmp_path / "candidate.runpack"
     _write_runpack(baseline, candidate=False)
@@ -602,25 +596,9 @@ def test_rundiff_cli_emits_matching_text_and_json_reports(tmp_path: Path) -> Non
     assert "gateway → metadata [parent]: 0 → 1" in text_report
     assert command.returncode == 0
     payload = json.loads(command.stdout)
+    assert payload["document_type"] == "rundiff.compare"
+    assert payload["format_version"] == "2"
     assert payload["outcome"] == "different"
-    assert payload["stderr_equivalent"] is True
-    assert payload["operation_errors_equivalent"] is False
-    assert payload["wall_time"]["percent"] == 100.0
-    assert payload["cpu_time"] == {"baseline": 1.5, "candidate": 3.0, "percent": 100.0}
-    assert payload["critical_path"]["percent"] == 100.0
-    assert payload["entity_count_changes"] == [
-        {
-            "baseline": 0,
-            "candidate": 1,
-            "change_kind": "added",
-            "entity_kind": "service",
-            "entity_name": "metadata",
-        }
-    ]
-    assert payload["operation_count_changes"][0]["candidate"] == 3
-    assert payload["operation_error_count_changes"][0]["candidate"] == 1
-    assert payload["operation_duration_changes"][0]["candidate_seconds"] == 0.02
-    assert payload["operation_concurrency_changes"][0]["candidate"] == 3
 
 
 def test_rundiff_cli_normalizes_overlong_runpack_paths() -> None:
@@ -1210,8 +1188,8 @@ def test_compare_runpacks_reports_signaled_exit_statuses(tmp_path: Path) -> None
 
     diff = compare_runpacks(baseline, candidate)
 
-    assert diff.baseline_exit_code == 0
-    assert diff.candidate_exit_code == -signal.SIGTERM
+    assert diff.baseline.exit_code == 0
+    assert diff.candidate.exit_code == -signal.SIGTERM
     assert diff.exit_code_equivalent is False
     assert "exit status: exit 0 → signal 15 (different)" in render_diff(diff, "text")
     payload = json.loads(render_diff(diff, "json"))

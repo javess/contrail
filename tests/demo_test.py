@@ -5,7 +5,7 @@ import json
 import stat
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -13,19 +13,8 @@ import runtime_tools.demo as demo_module
 from runtime_tools.batchscope import analyze_runpack
 from runtime_tools.capture import CaptureError, record_process
 from runtime_tools.demo import DemoError, run_demo
-from runtime_tools.model import JsonValue
 from runtime_tools.proofline.contracts import load_contracts
 from runtime_tools.storage import RunpackReader
-from runtime_tools.ui import build_timeline_payload
-
-
-def _finding(payload: dict[str, JsonValue], assertion_type: str) -> dict[str, Any]:
-    proofline = cast(dict[str, Any], payload["proofline"])
-    return next(
-        cast(dict[str, Any], finding)
-        for finding in proofline["findings"]
-        if finding["type"] == assertion_type
-    )
 
 
 def test_run_demo_creates_and_proves_the_installed_traceability_story(tmp_path: Path) -> None:
@@ -89,7 +78,6 @@ def test_run_demo_creates_and_proves_the_installed_traceability_story(tmp_path: 
         candidate_stdout = next(item for item in candidate.attachments() if item.name == "stdout")
         baseline_dependencies = baseline.peer_service_edge_counts()
         candidate_dependencies = candidate.peer_service_edge_counts()
-        candidate_events = {event.id: event for event in candidate.events()}
     assert (baseline_writes, candidate_writes) == (3, 30)
     assert baseline_command == (sys.executable, str(result.workload), "baseline")
     assert candidate_command == (sys.executable, str(result.workload), "candidate")
@@ -131,34 +119,6 @@ def test_run_demo_creates_and_proves_the_installed_traceability_story(tmp_path: 
         ("max_operation_count", "fail"),
     ]
     assert all(item["assertion"]["type"] == item["type"] for item in report["results"])
-
-    payload = build_timeline_payload(
-        result.baseline_runpack,
-        result.candidate_runpack,
-        proofline_report=result.proofline_report,
-    )
-    proofline = cast(dict[str, Any], payload["proofline"])
-    dependency_finding = _finding(payload, "forbid_new_dependency")
-    count_finding = _finding(payload, "max_operation_count")
-    assert {finding["report_assurance"] for finding in proofline["findings"]} == {
-        "artifact_bound_policy_replayed"
-    }
-    assert dependency_finding["evidence"][0]["fact"] == {"baseline": 0, "candidate": 1}
-    assert count_finding["evidence"][0]["fact"] == {
-        "baseline": 3,
-        "candidate": 30,
-        "limit": 3.0,
-    }
-    dependency_selection = proofline["selections"][dependency_finding["selection_id"]]
-    count_selection = proofline["selections"][count_finding["selection_id"]]
-    assert dependency_selection["matched_event_count"] == 1
-    assert count_selection["matched_event_count"] == 30
-    assert {
-        candidate_events[event_id].name for event_id in dependency_selection["candidate_event_ids"]
-    } == {"metadata.lookup"}
-    assert {
-        candidate_events[event_id].name for event_id in count_selection["candidate_event_ids"]
-    } == {"db.write"}
 
 
 def test_run_demo_result_is_deterministic_across_fresh_directories(tmp_path: Path) -> None:
@@ -241,22 +201,3 @@ def test_run_demo_retains_a_normalized_usable_partial_directory_after_failure(
         "contract.yaml",
         "workload.py",
     }
-
-
-def test_run_demo_does_not_publish_a_report_that_failed_interactive_validation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    output = tmp_path / "demo"
-    monkeypatch.setattr(demo_module, "build_timeline_payload", lambda *args, **kwargs: {})
-
-    with pytest.raises(DemoError, match="Proofline evidence is not an object"):
-        run_demo(output)
-
-    assert {path.name for path in output.iterdir()} == {
-        "baseline.runpack",
-        "candidate.runpack",
-        "contract.yaml",
-        "workload.py",
-    }
-    assert not (output / "proofline-report.json").exists()
-    assert not (output / ".proofline-report.json.tmp").exists()

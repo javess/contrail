@@ -16,14 +16,14 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from runtime_tools.capture import (
+from runtime_tools.capture import CaptureError
+from runtime_tools.capture._common import (
     _CAPTURE_JOB_ID_ENV,
     _CAPTURE_JOB_ROOT_ENV,
     _CAPTURE_WORKER_CLIENT_FD_ENV,
     _CAPTURE_WORKER_DETACHED_ENV,
     _CAPTURE_WORKER_STDERR_FD_ENV,
     _CAPTURE_WORKER_STDOUT_FD_ENV,
-    CaptureError,
 )
 from runtime_tools.capture_jobs import (
     CAPTURE_JOB_OUTPUT_HEAD_LIMIT_BYTES,
